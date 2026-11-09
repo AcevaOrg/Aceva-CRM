@@ -17,7 +17,7 @@ export const activityKeys = {
 };
 
 /**
- * Who is signed in right now (CEO / Founder, Director, CTO — each within their reporting line). Returns OnlineSession[]:
+ * Who is signed in right now (CEO / Founder / Owner: everyone; Director, CTO: their reporting line). Returns OnlineSession[]:
  * { sessionId, empId, since, currentScreen, state: "active" | "idle", device, city, newDevice? }.
  * Disabled (no data) for viewers without activity.view_all.
  */
@@ -30,7 +30,7 @@ export function useOnlineNow() {
 /**
  * Security alerts. Returns SecurityAlert[] filtered by status (default "open"):
  * { id, rule, severity: "low" | "medium" | "high", empId, at, details, status, checkedBy?, note?, kind? }.
- * CTO, Director and CEO / Founder (activity.security). Disabled for everyone else.
+ * CTO, Director and CEO / Founder / Owner (activity.security; only the Director and CTO check them). Disabled for everyone else.
  */
 export function useSecurityAlerts(status: "open" | "checked" | "all" = "open") {
   const empId = useSession((s) => s.empId);

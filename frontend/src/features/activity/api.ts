@@ -11,7 +11,7 @@ import { liveHeartbeats, liveScreens } from "@/lib/telemetry";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedAlerts, seedEvents, seedLocks, seedOnline, seedSummaries } from "@/mocks/seed/activity";
-import { activityAccess, canActOn, canCheckAlert } from "./logic";
+import { activityAccess, alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert } from "./logic";
 import type { AccountLock, ActivityEvent, ActivityQuery, DailySummary, MyActivity, OnlineSession, SecurityAlert } from "./types";
 
 const eventsTable = () => table<ActivityEvent>("activity.events", seedEvents);
@@ -20,7 +20,7 @@ const summariesTable = () => table<DailySummary>("activity.summaries", () => see
 const alertsTable = () => table<SecurityAlert>("activity.alerts", seedAlerts);
 const locksTable = () => table<AccountLock>("activity.locks", seedLocks);
 
-/** Everyone the viewer may see (self + reporting line below; the CEO / Founder sees all). */
+/** Everyone the viewer may see (self + reporting line below; the CEO / Founder / Owner sees all). */
 function scope() {
   return scopeOf(getViewer().employee.empId, employeesTable());
 }
@@ -47,7 +47,7 @@ function inRange(at: string, from?: string, to?: string) {
 }
 
 export const activityApi = {
-  /** GET /activity/online (CEO / Founder, Director, CTO — each within their reporting line) */
+  /** GET /activity/online (CEO / Founder / Owner: everyone; Director, CTO: their reporting line) */
   online: () =>
     mock(() => {
       if (!activityAccess(getViewer()).online) return [];
@@ -55,7 +55,7 @@ export const activityApi = {
       return onlineTable().filter((o) => s.has(o.empId) && o.empId !== getViewer().employee.empId);
     }),
 
-  /** GET /activity/events?empId&from&to&module&action&source — others' events for the Director and above, within their reporting line */
+  /** GET /activity/events?empId&from&to&module&action&source — others' events for the CEO / Founder / Owner and the Director, within their reporting line */
   events: (q: ActivityQuery) =>
     mock(() => {
       const v = getViewer();
@@ -81,7 +81,7 @@ export const activityApi = {
       return summariesTable().filter((d) => s.has(d.empId) && d.empId !== v.employee.empId && d.date >= from && d.date <= to);
     }),
 
-  /** GET /activity/timeline?empId&date — own, or people below you (CTO: engineers; Director: their line; CEO / Founder: everyone) */
+  /** GET /activity/timeline?empId&date — own, or people below you (CTO: developers; Director: their line; CEO / Founder / Owner: everyone) */
   timeline: (empId: string, date: string) =>
     mock(() => {
       const v = getViewer();
@@ -93,7 +93,7 @@ export const activityApi = {
       };
     }),
 
-  /** GET /activity/alerts?status — CTO, Director and CEO / Founder (security duty sees every alert) */
+  /** GET /activity/alerts?status — CTO, Director and CEO / Founder / Owner (activity.security sees every alert) */
   alerts: () =>
     mock(() => {
       const v = getViewer();
@@ -101,15 +101,23 @@ export const activityApi = {
       return alertsTable();
     }),
 
-  /** POST /activity/alerts/:id/check { note } — never your own alert; checked from above (spec §3.5.6 maker-checker) */
+  /** POST /activity/alerts/:id/check { note } — Director or CTO; never your own alert; checked from above (spec §3.5.6 maker-checker) */
   checkAlert: (id: string, note: string) =>
     mock(() => {
       const a = alertsTable().find((x) => x.id === id);
       if (!a) return;
       const v = getViewer();
       const list = employeesTable();
-      if (!activityAccess(v).alerts || !canCheckAlert(v.employee, a.empId, descendantsOf(v.employee.empId, list), list))
-        throw new ApiError("forbidden", a.empId === v.employee.empId ? "This alert is about you, so someone above you checks it." : "Someone above this person in their reporting line checks this alert.", 403);
+      if (!activityAccess(v).alerts || !canCheckAlert(v, a.empId, descendantsOf(v.employee.empId, list), list))
+        throw new ApiError(
+          "forbidden",
+          !canActOnAlerts(v)
+            ? "View only. The Director and the CTO check alerts."
+            : a.empId === v.employee.empId
+              ? `This alert is about you, so ${alertCheckerLabel(a.empId, list)} checks it.`
+              : `This alert is checked by ${alertCheckerLabel(a.empId, list)}, above this person.`,
+          403,
+        );
       Object.assign(a, { status: "checked", checkedBy: getViewer().employee.empId, checkedAt: new Date().toISOString(), note });
       recordActivity({ action: "edit", module: "Activity", target: id, description: `Marked alert “${a.rule}” as checked` });
     }),

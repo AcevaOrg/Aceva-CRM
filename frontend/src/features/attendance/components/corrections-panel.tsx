@@ -99,7 +99,7 @@ export function CorrectionsPanel() {
         <section>
           <SectionTitle
             title="Team requests"
-            description="Each request is approved by the person's manager: the CTO for Engineering, the Director for the CTO, Sales and Finance, and the CEO / Founder / Owner only for the Director's own. The rest are view only."
+            description="Each request is approved by the person's manager: the CTO for Development, the Director for the CTO, Sales and Finance, and the CEO / Founder / Owner only for the Director's own. The rest are view only."
           />
           <QueryState
             query={team}

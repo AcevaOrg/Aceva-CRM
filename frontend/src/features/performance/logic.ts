@@ -14,7 +14,7 @@ export function canReviewWork(e: Employee | undefined | null) {
 
 /**
  * Who reviews and releases a person's monthly scorecard (plan §10): their manager, one level further up if the
- * manager has left. CTO → Engineering; Director → the CTO, Sales and Finance. The Director's manager is the
+ * manager has left. CTO → Development; Director → the CTO, Sales and Finance. The Director's manager is the
  * CEO / Founder / Owner, who reviews nothing, so the Director has no reviewer (null): their scorecard is released
  * automatically and the CEO / Founder / Owner views it.
  */

@@ -73,7 +73,7 @@ export interface Scorecard {
   smallSample: boolean;
   status: ScorecardStatus;
   /**
-   * The person's manager, who reviews and releases it: the CTO for Engineering, the Director for the CTO, Sales and
+   * The person's manager, who reviews and releases it: the CTO for Development, the Director for the CTO, Sales and
    * Finance. Empty for the Director: the CEO / Founder / Owner reviews nothing, so the Director's scorecard is
    * released automatically when the month closes and the CEO / Founder / Owner views it.
    */

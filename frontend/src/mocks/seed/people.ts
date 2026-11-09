@@ -12,13 +12,13 @@ export const OFFICES: Office[] = [
 ];
 
 /**
- * Aceva structure (strict, spec §2): L1 CEO / Founder / Owner → L2 Director → L3 CTO, L4 Sales, L4 Finance → L5 Engineering.
+ * Aceva structure (strict, spec §2): L1 CEO / Founder / Owner → L2 Director → L3 CTO, L4 Sales, L4 Finance → L5 Development.
  * The CEO / Founder / Owner sees everything and approves nothing; the Director approves. The Director heads Sales
- * and Finance and holds HR and sales-manager duty; the finance person holds finance duty; the CTO heads Engineering.
+ * and Finance and holds HR and sales-manager duty; the finance person holds finance duty; the CTO heads Development.
  */
 export const DEPARTMENTS: Department[] = [
   { id: "dep-mgmt", name: "Management", headEmpId: "ACV-0001", color: "var(--level-1)", officeIds: ["off-dadu"] },
-  { id: "dep-eng", name: "Engineering and development", headEmpId: "ACV-0004", color: "var(--zone-work)", officeIds: ["off-dadu", "off-khi", "off-remote"] },
+  { id: "dep-eng", name: "Software Development", headEmpId: "ACV-0004", color: "var(--zone-work)", officeIds: ["off-dadu", "off-khi", "off-remote"] },
   { id: "dep-sales", name: "Sales", headEmpId: "ACV-0003", color: "var(--zone-sales)", officeIds: ["off-khi", "off-remote"] },
   { id: "dep-fin", name: "Finance", headEmpId: "ACV-0003", color: "var(--zone-finance)", officeIds: ["off-dadu"] },
 ];
@@ -40,12 +40,12 @@ const RAW: Seed[] = [
   { empId: "ACV-0014", name: "Saad Mirza", designation: "Senior Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "saad", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-500), avatarHue: 40 },
   // L4 Finance (reports to the Director): prepares entries, payroll, bills and the month close
   { empId: "ACV-0010", name: "Sana Malik", designation: "Finance Officer", departmentId: "dep-fin", officeId: "off-dadu", email: "sana", level: 4, role: "finance", duties: ["finance"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-640), avatarHue: 292 },
-  // L5 Engineering and development (report to the CTO)
-  { empId: "ACV-0006", name: "Fahad Khan", designation: "Senior Software Engineer", departmentId: "dep-eng", officeId: "off-khi", email: "fahad", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-760), avatarHue: 180 },
-  { empId: "ACV-0007", name: "Mariam Shah", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-khi", email: "mariam", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-420), avatarHue: 150 },
-  { empId: "ACV-0008", name: "Ali Raza", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-remote", email: "ali", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-380), avatarHue: 30 },
-  { empId: "ACV-0011", name: "Danish Iqbal", designation: "UI/UX Developer", departmentId: "dep-eng", officeId: "off-khi", email: "danish", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-260), avatarHue: 200 },
-  { empId: "ACV-0013", name: "Nida Aslam", designation: "Software Intern", departmentId: "dep-eng", officeId: "off-dadu", email: "nida", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-60), avatarHue: 120, type: "intern", weeklyCapacityHours: 20 },
+  // L5 Software Development (report to the CTO)
+  { empId: "ACV-0006", name: "Fahad Khan", designation: "Senior Backend Developer", departmentId: "dep-eng", officeId: "off-khi", email: "fahad", level: 5, role: "developer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-760), avatarHue: 180 },
+  { empId: "ACV-0007", name: "Mariam Shah", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-khi", email: "mariam", level: 5, role: "developer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-420), avatarHue: 150 },
+  { empId: "ACV-0008", name: "Ali Raza", designation: "Backend Developer", departmentId: "dep-eng", officeId: "off-remote", email: "ali", level: 5, role: "developer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-380), avatarHue: 30 },
+  { empId: "ACV-0011", name: "Danish Iqbal", designation: "SQA Engineer", departmentId: "dep-eng", officeId: "off-khi", email: "danish", level: 5, role: "developer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-260), avatarHue: 200 },
+  { empId: "ACV-0013", name: "Nida Aslam", designation: "SQA Intern", departmentId: "dep-eng", officeId: "off-dadu", email: "nida", level: 5, role: "developer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-60), avatarHue: 120, type: "intern", weeklyCapacityHours: 20 },
 ];
 
 export function seedEmployees(): Employee[] {

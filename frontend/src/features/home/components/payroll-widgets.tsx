@@ -38,7 +38,13 @@ export function PayrollStageWidget() {
               <li key={s.key} title={s.label} className={cn("h-1.5 flex-1 rounded-full", i <= idx ? "bg-zone-finance" : "bg-muted")} />
             ))}
           </ol>
-          <p className="text-[12px] text-muted-foreground">{STAGES[idx + 1] ? `Next step: ${STAGES[idx + 1].label.toLowerCase()}` : "Done for this month"}</p>
+          <p className="text-[12px] text-muted-foreground">
+            {!STAGES[idx + 1]
+              ? "Done for this month"
+              : STAGES[idx + 1].key === "approved"
+                ? "Next step: the Director approves it"
+                : `Next step: ${STAGES[idx + 1].label.toLowerCase()}`}
+          </p>
         </div>
       )}
     </Widget>

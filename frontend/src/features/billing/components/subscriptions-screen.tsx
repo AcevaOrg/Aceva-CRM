@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { useRenewalDecisions, useSubscriptions } from "../hooks";
 import { daysUntil, monthlyCostPkr, SUB_CATEGORY, SUB_PERIOD, usageFlag, usagePercent, USD_TO_PKR } from "../logic";
 import type { Subscription } from "../types";
-import { Countdown, Sparkline, SubStatusBadge } from "./bits";
+import { Countdown, Sparkline, SubStatusBadge, ViewOnlyNote } from "./bits";
 import { RenewalDecisionDialog, SubscriptionSheet, UsageReadingDialog } from "./subscription-forms";
 
 type Tab = "register" | "renewals" | "usage";
@@ -66,6 +66,9 @@ function SubscriptionsBody() {
         }
       />
 
+      <Can permission="subscriptions.manage" fallback={<ViewOnlyNote className="mb-4">View only. The Director adds subscriptions, records usage and decides renewals.</ViewOnlyNote>}>
+        {null}
+      </Can>
       {q.isPending ? (
         <CardsSkeleton className="mb-6" />
       ) : q.isError ? (

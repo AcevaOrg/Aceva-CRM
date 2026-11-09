@@ -118,9 +118,9 @@ function assertScope(empId: string) {
 
 /**
  * The people a viewer sees on team boards and the leave calendar.
- * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Engineering).
- * CTO: Engineering. Sales, Finance and Engineering manage no one: their peers in the same department with the
- * same manager (so Sales never see Finance or the CTO, and Engineering never see Sales).
+ * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Development).
+ * CTO: Development. Sales, Finance and Development manage no one: their peers in the same department with the
+ * same manager (so Sales never see Finance or the CTO, and Development never see Sales).
  */
 function teamOf(me: string) {
   const below = descendantsOf(me);
@@ -215,8 +215,8 @@ export const attendanceApi = {
   teamToday: () =>
     mock<TeamTodayRow[]>(() => {
       const me = getViewer().employee.empId;
-      // The CEO / Founder / Owner sees everyone, the Director everyone below, the CTO Engineering.
-      // Sales, Finance and Engineering only see their own day.
+      // The CEO / Founder / Owner sees everyone, the Director everyone below, the CTO Development.
+      // Sales, Finance and Development only see their own day.
       const below = descendantsOf(me);
       const ids = below.length ? below : [me];
       const today = isoDay(new Date());
@@ -401,7 +401,7 @@ export const attendanceApi = {
       const me = getViewer().employee.empId;
       // Full detail (type, waiting requests, task clashes) for the viewer and everyone below them.
       const scope = new Set([me, ...descendantsOf(me)]);
-      // Sales and Engineering also see who in their own team (and their manager) is away: approved leave only,
+      // Sales and Development also see who in their own team (and their manager) is away: approved leave only,
       // without the leave type or anyone else's tasks.
       const away = new Set(teamOf(me).filter((id) => !scope.has(id)));
       const self = employeesTable().find((e) => e.empId === me);

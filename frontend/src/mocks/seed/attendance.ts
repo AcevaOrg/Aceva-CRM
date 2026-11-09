@@ -2,7 +2,7 @@
  * Seed: attendance history, corrections, leave types, balances and requests (Module 7).
  * Deterministic per Emp-ID + date, and relative to today so it never looks stale.
  * Aceva structure: CEO / Founder / Owner (ACV-0001) → Director (ACV-0003) → CTO (ACV-0004), Sales, Finance (ACV-0010)
- * → Engineering (report to the CTO). Leave chains come from buildLeaveChain: Engineering CTO → Director;
+ * → Development (report to the CTO). Leave chains come from buildLeaveChain: Development CTO → Director;
  * CTO, Sales and Finance: Director; Director: CEO / Founder / Owner (the only CEO sign-off).
  */
 import type { AttendanceCorrection, AttendanceDay, LeaveRequest, LeaveType } from "@/features/attendance/types";
@@ -195,7 +195,7 @@ export function seedBaseUsed(): { empId: string; leaveTypeId: string; used: numb
 type ReqSeed = [empId: string, type: string, fromWd: number, toWd: number, status: LeaveRequest["status"], reason: string, minAgo: number, opts?: { halfDay?: boolean; note?: string }];
 
 const REQS: ReqSeed[] = [
-  // Engineering: CTO first, then the Director.
+  // Development: CTO first, then the Director.
   ["ACV-0008", "lt-casual", 3, 4, "pending_manager", "Family wedding in Hyderabad.", 25],
   ["ACV-0013", "lt-sick", 1, 1, "pending_manager", "Doctor's appointment, fever since last night.", 200],
   ["ACV-0006", "lt-annual", 15, 16, "pending_director", "Brother's wedding in Multan.", 60 * 30],

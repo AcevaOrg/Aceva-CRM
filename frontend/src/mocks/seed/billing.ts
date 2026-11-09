@@ -1,6 +1,7 @@
 /**
  * Seed: customers, invoices, payments, reminders, subscriptions (Module 13).
- * Invoices, payments, renewal decisions and manual usage readings are done by the Director (finance duty).
+ * Invoices and payments are recorded by the finance person (ACV-0010); the Director and the CEO / Founder / Owner view them.
+ * Renewal decisions and manual usage readings are the Director's (subscriptions.manage).
  * The CTO is the responsible person for technical subscriptions (hosting, domains, AI, dev tools, APIs)
  * and gets their renewal reminders, but does not see the register or its costs (no subscriptions.view).
  */
@@ -10,6 +11,9 @@ import type {
 import { computeStatus, DEFAULT_REMINDERS, invoiceTotals, money, reminderSchedule } from "@/features/billing/logic";
 import type { Currency } from "@/types";
 import { daysFromNow, minutesAgo, monthFromNow } from "../time";
+
+/** The finance person: creates invoices and records payments. */
+const FINANCE = "ACV-0010";
 
 export const CUSTOMERS: Customer[] = [
   { id: "cus-northwind", name: "Northwind Studio", contactName: "James Whitaker", email: "accounts@northwindstudio.co.uk", country: "United Kingdom", currency: "USD", termsDays: 14, address: "14 Baltic Street, London EC1Y 0UJ" },
@@ -98,7 +102,7 @@ function build(s: Seed): Invoice {
     source: s.source,
     ledgerEntryNumber: s.status ? undefined : `JE-2026-0${240 + s.n}`,
     notes: s.notes,
-    createdBy: "ACV-0003",
+    createdBy: FINANCE,
     createdAt: daysFromNow(s.issued - 1, "16:00"),
     sentAt: s.status ? undefined : daysFromNow(s.issued, "11:05"),
     cancelReason: s.status === "cancelled" ? s.notes : undefined,
@@ -129,7 +133,7 @@ export function seedPayments(): Payment[] {
         method: inv.currency === "USD" ? "bank_transfer" : (["bank_transfer", "cheque", "bank_transfer"] as const)[k % 3],
         reference: inv.currency === "USD" ? `WISE-${48210 + k * 37}` : `IBFT ${7731200 + k * 911}`,
         ledgerEntryNumber: `JE-2026-0${300 + k}`,
-        recordedBy: "ACV-0003",
+        recordedBy: FINANCE,
       });
     });
   }

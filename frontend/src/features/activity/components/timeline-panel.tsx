@@ -66,7 +66,7 @@ export function TimelinePanel() {
             </CardHeader>
             <CardContent>
               {query.data.events === null ? (
-                <p className="rounded-lg bg-muted px-3 py-3 text-[13px] text-muted-foreground">You see the daily summary. The full timeline of screens and actions is visible to the managers above this person (CTO, Director, CEO / Founder).</p>
+                <p className="rounded-lg bg-muted px-3 py-3 text-[13px] text-muted-foreground">You see the daily summary. The full timeline of screens and actions is visible to the managers above this person (CTO, Director) and the CEO / Founder / Owner.</p>
               ) : query.data.events.length === 0 ? (
                 <EmptyState compact title="No events" description="Nothing was recorded for this person on this day." />
               ) : (

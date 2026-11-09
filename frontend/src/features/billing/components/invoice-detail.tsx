@@ -29,7 +29,7 @@ import { formatMoney } from "@/lib/format";
 import { useCancelInvoice, useInvoice, useRecordPayment, useSendInvoice } from "../hooks";
 import { PAYMENT_METHOD, reminderLabel } from "../logic";
 import type { Invoice, PaymentMethod, ReminderEvent } from "../types";
-import { InvoiceStatusBadge, InvoiceTypeLabel } from "./bits";
+import { InvoiceStatusBadge, InvoiceTypeLabel, ViewOnlyNote } from "./bits";
 import { InvoicePreview } from "./invoice-preview";
 
 export function InvoiceDetail({ id }: { id: string }) {
@@ -111,7 +111,7 @@ function InvoiceDetailBody({ id }: { id: string }) {
             <Button variant="outline" onClick={() => exportData({ title: `${inv.number} PDF`, seal: "confidential", formats: ["pdf"] })}>
               <Download /> PDF
             </Button>
-            <Can permission="billing.manage">
+            <Can permission="billing.manage" fallback={inv.status === "draft" || open ? <ViewOnlyNote className="py-1.5">View only. The finance person sends invoices and records payments.</ViewOnlyNote> : null}>
               {(inv.status === "draft" || (open && paid === 0)) && (
                 <Button variant="ghost" onClick={onCancel}>
                   <Ban /> Cancel

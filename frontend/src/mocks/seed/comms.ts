@@ -20,14 +20,14 @@ export function seedConversations(): ConversationRecord[] {
     ...extra,
   });
   /*
-   * Channels follow the structure: #general (everyone), #engineering (CTO moderates, engineers),
+   * Channels follow the structure: #general (everyone), #development (CTO moderates, developers),
    * #sales (Director as sales manager, sales), #finance (Director and the finance person),
    * #management (CEO / Founder / Owner, Director, CTO), plus project channels.
    * Channels are created by managers (Director, CTO); the CEO / Founder / Owner reads and posts but moderates nothing.
    */
   return [
     c("ch-general", "channel", ALL, { name: "general", topic: "Company-wide news and questions", moderatorEmpIds: ["ACV-0003", "ACV-0004"], createdBy: "ACV-0003", pinnedMessageIds: ["m_gen_1"] }),
-    c("ch-eng", "channel", ["ACV-0004", "ACV-0006", "ACV-0007", "ACV-0008", "ACV-0011", "ACV-0013"], { name: "engineering", topic: "Build of the Aceva Digital System", scope: { departmentId: "dep-eng" }, moderatorEmpIds: ["ACV-0004"], createdBy: "ACV-0004", pinnedMessageIds: ["m_eng_1"] }),
+    c("ch-eng", "channel", ["ACV-0004", "ACV-0006", "ACV-0007", "ACV-0008", "ACV-0011", "ACV-0013"], { name: "development", topic: "Build of the Aceva Digital System", scope: { departmentId: "dep-eng" }, moderatorEmpIds: ["ACV-0004"], createdBy: "ACV-0004", pinnedMessageIds: ["m_eng_1"] }),
     c("ch-sales", "channel", ["ACV-0003", "ACV-0009", "ACV-0012", "ACV-0014"], { name: "sales", topic: "Pipeline, replies and daily targets", scope: { departmentId: "dep-sales" }, moderatorEmpIds: ["ACV-0003"], createdBy: "ACV-0003" }),
     c("ch-fin", "channel", ["ACV-0003", "ACV-0010"], { name: "finance", topic: "Entries, payroll and the month close. Finance prepares, the Director approves.", scope: { departmentId: "dep-fin" }, moderatorEmpIds: ["ACV-0003"], createdBy: "ACV-0003", pinnedMessageIds: ["m_fin_1"] }),
     c("ch-mgmt", "channel", ["ACV-0001", "ACV-0003", "ACV-0004"], { name: "management", topic: "Company updates and go-live planning", moderatorEmpIds: ["ACV-0003"], createdBy: "ACV-0003" }),
@@ -64,7 +64,7 @@ const ROWS: Row[] = [
   ["m_gen_4", "ch-general", "ACV-0003", 290, "It's on the Home screen and in the top bar, @Nida. The time comes from the server, so your phone clock doesn't matter.", { mentions: ["ACV-0013"] }],
   ["m_gen_5", "ch-general", "ACV-0010", 180, "From Finance: November payslips will appear under Payroll once Bilal approves the run. Questions about your payslip can come to me.", { reactions: [{ emoji: "👍", empIds: ["ACV-0006", "ACV-0009", "ACV-0012"] }] }],
   ["m_gen_6", "ch-general", "ACV-0004", 60, "Heads-up: the test system will be down from 19:00 to 19:30 tonight for a database upgrade."],
-  // #engineering (the CTO runs it)
+  // #development (the CTO runs it)
   ["m_eng_1", "ch-eng", "ACV-0004", 2400, "Cycle 2 demo is on day 6. Each of you: one screen, two minutes, live on the test system. Pinning the order here.", { reactions: [{ emoji: "✅", empIds: ["ACV-0006", "ACV-0007", "ACV-0008", "ACV-0011", "ACV-0013"] }] }],
   ["m_eng_1r1", "ch-eng", "ACV-0007", 2380, "I'll show the leave balance widget.", { parentId: "m_eng_1" }],
   ["m_eng_1r2", "ch-eng", "ACV-0008", 2370, "Checkout flow for Harbor, if the sandbox keys arrive.", { parentId: "m_eng_1" }],
@@ -73,7 +73,7 @@ const ROWS: Row[] = [
   ["m_eng_2", "ch-eng", "ACV-0008", 900, "PR for the product listing filters is up. Could someone review before lunch?", { reactions: [{ emoji: "👀", empIds: ["ACV-0007"] }] }],
   ["m_eng_3", "ch-eng", "ACV-0007", 870, "On it. Left two small comments, otherwise good to merge.", { editedAt: minutesAgo(860) }],
   ["m_eng_4", "ch-eng", "ACV-0008", 600, "", { deleted: true }],
-  ["m_eng_5", "ch-eng", "ACV-0004", 42, "@Mariam can you pair with Nida on the check-in card? She's close but the grace ring needs the server time.", { mentions: ["ACV-0007"], linkedTaskId: "tsk_16" }],
+  ["m_eng_5", "ch-eng", "ACV-0004", 42, "@Mariam can Nida test the check-in card on your branch? She's close but the grace ring needs the server time.", { mentions: ["ACV-0007"], linkedTaskId: "tsk_16" }],
   ["m_eng_6", "ch-eng", "ACV-0013", 30, "Thank you! I pushed what I have so far.", { attachments: [pdf("att_m1", "check-in-card-v2.png", 412_000, "ACV-0013", "image/png")] }],
   // #sales (the Director is the sales manager)
   ["m_sal_1", "ch-sales", "ACV-0003", 1440, "Daily target today: 30 emails sent each through Apollo, and log LinkedIn messages before check-out please."],
@@ -127,7 +127,7 @@ const ROWS: Row[] = [
   ["m_d6_4", "dm-03-01", "ACV-0003", 700, "October reconciliation is done. Sana found two missing lines and entered them; I'm approving them today."],
   ["m_d6_5", "dm-03-01", "ACV-0003", 95, "November payroll is prepared by Sana and waiting for my approval. You can open the run any time under Payroll."],
   ["m_d6_6", "dm-03-01", "ACV-0001", 80, "Thanks. I'll look through it tonight."],
-  // Group: Payslip layout review (Finance asks, Engineering builds; real pay figures stay with Finance)
+  // Group: Payslip layout review (Finance asks, Development builds; real pay figures stay with Finance)
   ["m_g1_1", "grp-payslip", "ACV-0010", 260, "Could every payslip show YTD totals? People keep asking me for them.", { attachments: [pdf("att_m5", "payslip-layout-v3.pdf", 310_000, "ACV-0010")] }],
   ["m_g1_2", "grp-payslip", "ACV-0011", 240, "Got it, I'll add a YTD column. That's why I asked for the extension.", { linkedTaskId: "tsk_12" }],
   ["m_g1_3", "grp-payslip", "ACV-0004", 200, "Fine by me. Danish, build it with the sample figures in the attachment; real pay data stays with Finance."],
@@ -214,7 +214,7 @@ export function seedMeetings(): Meeting[] {
     ...extra,
   });
   return [
-    m("mtg1", "Engineering check-in", workdaysFromNow(1, "09:15"), 15, "ACV-0004", ["ACV-0007", "ACV-0008", "ACV-0011", "ACV-0013", "ACV-0006"], "1. Yesterday\n2. Today\n3. Anything blocking", { location: "Online (Google Meet)" }),
+    m("mtg1", "Development check-in", workdaysFromNow(1, "09:15"), 15, "ACV-0004", ["ACV-0007", "ACV-0008", "ACV-0011", "ACV-0013", "ACV-0006"], "1. Yesterday\n2. Today\n3. Anything blocking", { location: "Online (Google Meet)" }),
     m("mtg2", "Payslip layout review", workdaysFromNow(1, "14:00"), 30, "ACV-0010", ["ACV-0011", "ACV-0004"], "1. YTD totals column\n2. Deductions order\n3. Layout ready for the November run", { linkedTaskIds: ["tsk_12"], attachments: [{ id: "ma1", fileName: "payslip-layout-v3.pdf", sizeBytes: 310_000, mimeType: "application/pdf", uploadedAt: minutesAgo(260), uploadedBy: "ACV-0010" }] }),
     m("mtg3", "1:1 Omar and Mariam", workdaysFromNow(2, "12:00"), 30, "ACV-0004", ["ACV-0007"], "Progress on the leave widget, the rework on the working-day tests, and goals for December.", { linkedTaskIds: ["tsk_1", "tsk_5"], location: "Online (Google Meet)" }),
     m("mtg4", "Cycle demo to management", workdaysFromNow(2, "16:00"), 60, "ACV-0004", ["ACV-0001", "ACV-0003", "ACV-0006", "ACV-0007", "ACV-0011"], "Demo of activity tracking, task management and performance. For the Director to decide afterwards: score weights and working hours."),

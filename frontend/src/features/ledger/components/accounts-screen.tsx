@@ -170,7 +170,7 @@ function AddAccountDialog({ accounts, onClose }: { accounts: Account[]; onClose:
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add an account</DialogTitle>
-          <DialogDescription>The accountant confirms new accounts. Codes follow the group: 1000 assets, 2000 liabilities, 3000 equity, 4000 income, 5000 expenses.</DialogDescription>
+          <DialogDescription>The finance person adds new accounts. Codes follow the group: 1000 assets, 2000 liabilities, 3000 equity, 4000 income, 5000 expenses.</DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"

@@ -7,13 +7,12 @@ import { PartyPopper } from "lucide-react";
 import { useNow } from "@/hooks/use-now";
 import { PageHeader } from "@/components/layout/page-header";
 import { LevelMark } from "@/components/shared/level-mark";
-import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { useViewer, type Viewer } from "@/lib/auth/viewer";
 import { formatWeekdayLong, greeting, isoDay } from "@/lib/dates";
 import { HOLIDAYS } from "@/mocks/seed/calendar";
 import { HomeLayout } from "./home-layouts";
 
-/** One home layout per role in the structure: CEO / Founder / Owner, Director, CTO, Sales, Finance, Engineering. */
+/** One home layout per role in the structure: CEO / Founder / Owner, Director, CTO, Sales, Finance, Development. */
 export type HomeVariant = "executive" | "director" | "cto" | "sales" | "finance" | "employee";
 
 export function homeVariant(v: Viewer): HomeVariant {
@@ -36,7 +35,7 @@ export function homeVariant(v: Viewer): HomeVariant {
 const SUBTITLE: Record<HomeVariant, string> = {
   executive: "The whole company at a glance. You see every activity; the Director approves.",
   director: "Everything waiting for your approval, plus finance, payroll and the sales team.",
-  cto: "Engineering today: who's in, workload, reviews and security alerts.",
+  cto: "Development today: who's in, workload, reviews and security alerts.",
   sales: "Your sales day: targets, follow-ups and new replies.",
   finance: "Entries to finish, payroll to prepare, bills and invoices. The Director approves what you prepare.",
   employee: "Your tasks, attendance and leave for today.",
@@ -60,7 +59,7 @@ export function HomeScreen() {
         meta={
           <>
             <span className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-              <LevelMark level={e.level} /> {ROLE_LABEL[e.role]} · <span className="font-mono">{e.empId}</span>
+              <LevelMark level={e.level} /> {e.designation} · <span className="font-mono">{e.empId}</span>
             </span>
             {holiday && (
               <span className="inline-flex items-center gap-1.5 rounded-full border border-signal/60 bg-signal/30 px-2.5 py-0.5 text-[12px] font-medium text-signal-foreground">

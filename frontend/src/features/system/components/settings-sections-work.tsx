@@ -239,7 +239,7 @@ export function LeaveTypesSection() {
               </table>
             </div>
             <p className="text-[12px] text-muted-foreground">
-              Who approves: Engineering → the CTO, then the Director. The CTO, Sales and Finance → the Director. The Director&apos;s own leave → the CEO / Founder / Owner. Nobody approves their own leave.
+              Who approves: Development → the CTO, then the Director. The CTO, Sales and Finance → the Director. The Director&apos;s own leave → the CEO / Founder / Owner. Nobody approves their own leave.
             </p>
             <p className="text-[12px] text-muted-foreground">Unpaid leave days are passed to payroll at month end and deducted as base ÷ working days × unpaid days.</p>
             {can && (
@@ -398,11 +398,11 @@ export function ScoreWeightsSection() {
   return (
     <div className="grid gap-5">
       <div className="grid gap-5 2xl:grid-cols-2">
-        <WeightsEditor key={latest("standard")?.id ?? "standard"} kind="standard" title="Standard scorecard" usedFor="Engineering and development, Finance and Management." fields={STANDARD} current={latest("standard")} canEdit={canEdit} />
+        <WeightsEditor key={latest("standard")?.id ?? "standard"} kind="standard" title="Standard scorecard" usedFor="Software Development, Finance and Management." fields={STANDARD} current={latest("standard")} canEdit={canEdit} />
         <WeightsEditor key={latest("sales")?.id ?? "sales"} kind="sales" title="Sales scorecard" usedFor="The Sales department." fields={SALES} current={latest("sales")} canEdit={canEdit} />
       </div>
       <p className="text-[12px] text-muted-foreground">
-        Each scorecard is reviewed and released by the person&apos;s manager: the CTO for Engineering; the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is shown to the CEO / Founder / Owner to view. Only the Director changes weights.
+        Each scorecard is reviewed and released by the person&apos;s manager: the CTO for Development; the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is shown to the CEO / Founder / Owner to view. Only the Director changes weights.
       </p>
       <section>
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Version history</h3>

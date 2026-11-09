@@ -1,7 +1,7 @@
 /**
  * Approvals provider for Module 7 (maker-checker, never the requester, plan §5):
  *  - leave requests: the person's manager first, then the Director when that first step was not the Director
- *    (Engineering: CTO → Director; CTO, Sales and Finance: Director; Director: CEO / Founder / Owner, the only CEO sign-off);
+ *    (Development: CTO → Director; CTO, Sales and Finance: Director; Director: CEO / Founder / Owner, the only CEO sign-off);
  *  - attendance corrections: the person's manager (the Director's own goes to the CEO / Founder / Owner).
  * Only the person whose step is waiting gets the item, so anyone else (the CEO / Founder / Owner included) only views it.
  */

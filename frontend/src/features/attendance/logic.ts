@@ -9,9 +9,9 @@ import type { ApprovalStep, Employee } from "@/types";
 import type { DayStatus, LeaveStatus, WorkSchedule } from "./types";
 
 /**
- * Who approves a leave request (plan §11, Aceva structure CEO / Founder / Owner → Director → CTO, Sales, Finance → Engineering):
- *   1. the person's manager: Engineering → CTO; CTO, Sales and Finance → Director; Director → CEO / Founder / Owner;
- *   2. then the Director, when that first step was not the Director (so Engineering goes CTO → Director).
+ * Who approves a leave request (plan §11, Aceva structure CEO / Founder / Owner → Director → CTO, Sales, Finance → Development):
+ *   1. the person's manager: Development → CTO; CTO, Sales and Finance → Director; Director → CEO / Founder / Owner;
+ *   2. then the Director, when that first step was not the Director (so Development goes CTO → Director).
  * The CEO / Founder / Owner approves nothing else: the Director's own leave is the only CEO sign-off.
  * Maker-checker: nobody approves their own leave. If the manager has left, the request goes one level up.
  * The CEO / Founder / Owner has no one above, so their chain is empty and the leave is recorded straight away.

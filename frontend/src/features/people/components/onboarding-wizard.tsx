@@ -72,7 +72,7 @@ function Wizard() {
   // You can only add people below your own level, into a department that fits their level (spec §2.1).
   const myLevel: Level = viewer?.employee.level ?? 5;
   const departments = lookup.departments.filter((d) => hireLevels(myLevel, d.id).length > 0);
-  /** The one person each level reports to in the fixed structure (Engineering → CTO; CTO, Sales and Finance → Director). */
+  /** The one person each level reports to in the fixed structure (Development → CTO; CTO, Sales and Finance → Director). */
   const bossesFor = (l: Level) => lookup.employees.filter((e) => e.status !== "left" && e.level === reportsToLevel(l));
   const [step, setStep] = React.useState(0);
   const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean } | null>(null);

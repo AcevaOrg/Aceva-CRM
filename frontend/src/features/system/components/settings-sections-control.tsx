@@ -246,7 +246,7 @@ export function SecuritySection() {
             <NativeSelect value={d.twoFactorFor} disabled={!can} onChange={(e) => set({ twoFactorFor: e.target.value })} aria-label="Two-step login required for">
               <option value="levels_1_3_and_finance">CEO / Founder / Owner, Director, CTO and Finance</option>
               <option value="levels_1_4_and_finance">CEO / Founder / Owner, Director, CTO, Finance and Sales</option>
-              <option value="everyone">Everyone (adds Engineering)</option>
+              <option value="everyone">Everyone (adds Development)</option>
             </NativeSelect>
           </SettingRow>
           <SettingRow label="“Remember me” for finance users" hint="Off by plan §6.">

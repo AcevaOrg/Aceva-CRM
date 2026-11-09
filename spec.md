@@ -25,7 +25,7 @@
 
 ### 1.1 What this frontend must do
 
-- Give each of the five roles (CEO / Founder / Owner, Director, CTO, Finance, Sales, Engineering) a home screen built for their day (§9.12).
+- Give each of the five roles (CEO / Founder / Owner, Director, CTO, Finance, Sales, Developers and SQA) a home screen built for their day (§9.12).
 - Put every feature of the 16 modules on a real screen, with mock data that behaves like the real thing: lists filter, forms validate, approvals move, balances update.
 - Make the hierarchy and confidentiality rules **visible**, so people understand why they can or cannot see something (§3.5).
 - Be quick to learn. A new employee should check in, find their tasks and request leave in their first 5 minutes without training.
@@ -58,8 +58,8 @@ Aceva follows one strict structure. Every person has exactly one role; the role 
 ```
 L1  CEO / Founder / Owner ─── one person · sees everything · approves nothing
  └─ L2  Director ──────────── the approver for the whole company · HR duty · sales manager
-     ├─ L3  CTO ───────────── runs engineering
-     │    └─ L5  Engineering and development employees
+     ├─ L3  CTO ───────────── runs development
+     │    └─ L5  Developers and SQA: Software Developer, Backend Developer, SQA
      ├─ L4  Sales
      └─ L4  Finance ───────── the finance person · prepares, never approves
 ```
@@ -68,28 +68,28 @@ L1  CEO / Founder / Owner ─── one person · sees everything · approves no
 |---|---|---|---|---|
 | 1 | CEO / Founder / Owner (`ceo`) | nobody | Management | `--level-1` gold |
 | 2 | Director (`director`) | CEO / Founder / Owner | Management | `--level-2` violet |
-| 3 | CTO (`cto`) | Director | Engineering and development | `--level-3` cobalt |
+| 3 | CTO (`cto`) | Director | Software Development | `--level-3` cobalt |
 | 4 | Sales (`sales`) | Director | Sales | `--level-4` teal |
 | 4 | Finance (`finance`) | Director | Finance | `--level-4` teal |
-| 5 | Engineering and development (`engineer`) | CTO | Engineering and development | `--level-5` slate |
+| 5 | Developer / SQA (`developer`): Software Developer, Backend Developer, SQA Engineer | CTO | Software Development | `--level-5` slate |
 
 - **CEO / Founder / Owner** is one person. They see every activity, every report and every record in the company (including exports), but they **approve nothing**, prepare nothing and change no settings. The only thing they sign off is the Director's own leave or attendance correction, because nobody approves their own request.
 - **Director** is the single approver: payroll, every journal entry, the month close and reopening it, Won deals, commission, sales targets, the final step of leave, settings (including ★ sections), and levels and reporting lines. The Director also holds **HR duty** and **sales-manager duty**, and never prepares finance items, so there is always a second person.
 - **Finance** (the finance person, finance duty) prepares: journal entries, payroll runs, bills and expenses, customer invoices and payments, bank reconciliation, salary advances and the month close. Finance approves nothing.
-- **CTO** manages engineering: assigns and reviews engineering tasks, gives the first approval on engineers' leave and corrections, sees security alerts, and runs backups and the sales-tool connections. No access to finance, payroll (except their own payslip) or sales data.
+- **CTO** manages development: assigns and reviews development tasks, gives the first approval on developers' leave and corrections, sees security alerts, and runs backups and the sales-tool connections. No access to finance, payroll (except their own payslip) or sales data.
 - **Sales** see only their own leads, deals, targets and reports.
-- **Engineering and development** employees see only their own work and data.
+- **Developers and SQA** (Software Developers, Backend Developers and SQA Engineers) see only their own work and data.
 
 Data scope (plan §5) still applies to every list: each person sees their own data and the data of everyone below them in their reporting line, never above or beside. The CEO / Founder / Owner's line is the whole company.
 
 ### 2.2 Access matrix
 
-| Area | CEO / Founder / Owner | Director | CTO | Finance | Sales | Engineering |
+| Area | CEO / Founder / Owner | Director | CTO | Finance | Sales | Developer / SQA |
 |---|---|---|---|---|---|---|
 | Own tasks, attendance, leave, scorecard, payslip, messages | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| See all activity, approvals in progress, reports | ✓ (view only) | reporting line | engineers | — | — | — |
-| Approvals inbox | Director's own leave only; everything else read-only | **approves** | engineers' tasks and first step of leave | — | — | — |
-| Assign and review tasks | — | CTO, Sales, Finance | Engineers | — | — | — |
+| See all activity, approvals in progress, reports | ✓ (view only) | reporting line | developers | — | — | — |
+| Approvals inbox | Director's own leave only; everything else read-only | **approves** | developers' tasks and first step of leave | — | — | — |
+| Assign and review tasks | — | CTO, Sales, Finance | Developers | — | — | — |
 | People: personal details, pay, onboarding, offboarding | view | manage (HR duty) | — | — | — | — |
 | Payroll | view | **approve** (step-up) | own payslip | **prepare** | own payslip | own payslip |
 | Ledger, statements, spreadsheet, insights | view + export | **approve** entries, export | — | **enter**, reconcile | — | — |
@@ -108,9 +108,9 @@ Nobody approves their own request. The Director is the approver; the CEO / Found
 
 | Item | Chain |
 |---|---|
-| Leave | Engineer: CTO → Director. CTO, Sales, Finance: Director. Director: CEO / Founder / Owner |
+| Leave | Developer: CTO → Director. CTO, Sales, Finance: Director. Director: CEO / Founder / Owner |
 | Attendance correction | The person's manager (the Director's own: CEO / Founder / Owner) |
-| Task review | The person who assigned it (CTO for engineers; Director for CTO, Sales and Finance) |
+| Task review | The person who assigned it (CTO for developers; Director for CTO, Sales and Finance) |
 | Deadline extension | The person who assigned the task |
 | Payroll | Prepared by Finance → approved by the Director with step-up |
 | Journal entry | Entered by Finance → approved by the Director (any amount). Above PKR 500,000 and all capital and loan entries also notify the CEO / Founder / Owner |
@@ -127,16 +127,16 @@ The login page lists these Emp-IDs in mock mode. Any password works; the CEO / F
 |---|---|---|---|---|---|
 | ACV-0001 | Hamza Qureshi | 1 | CEO / Founder / Owner | (none) | Company home, everything visible, approvals in progress (read-only) |
 | ACV-0003 | Bilal Ahmed | 2 | Director (HR duty, sales manager) | ACV-0001 | Every approval: payroll, entries, month close, leave, Won deals, commission; settings |
-| ACV-0004 | Omar Farooq | 3 | CTO | ACV-0003 | Engineering tasks and reviews, engineers' leave, security alerts, integrations |
+| ACV-0004 | Omar Farooq | 3 | CTO | ACV-0003 | Development tasks and reviews, developers' leave, security alerts, integrations |
 | ACV-0010 | Sana Malik | 4 | Finance officer (finance duty) | ACV-0003 | Journal entries, payroll preparation, invoices, reconciliation, month close (maker side) |
 | ACV-0009 | Hira Baig | 4 | Sales executive | ACV-0003 | My sales day, leads, pipeline, daily log |
 | ACV-0012 | Kamran Javed | 4 | Sales executive | ACV-0003 | Owns the Won deal waiting for the Director |
 | ACV-0014 | Saad Mirza | 4 | Senior sales executive | ACV-0003 | Third salesperson for team reports |
-| ACV-0006 | Fahad Khan | 5 | Senior software engineer | ACV-0004 | Engineer with a heavier workload |
-| ACV-0007 | Mariam Shah | 5 | Software developer | ACV-0004 | Employee home, my tasks, check-in, leave |
-| ACV-0008 | Ali Raza | 5 | Software developer | ACV-0004 | Second engineer for workload and reviews |
-| ACV-0011 | Danish Iqbal | 5 | UI/UX developer | ACV-0004 | Extension request waiting for the CTO |
-| ACV-0013 | Nida Aslam | 5 | Software intern (part-time) | ACV-0004 | Lower weekly capacity (20 h) |
+| ACV-0006 | Fahad Khan | 5 | Senior Backend Developer | ACV-0004 | Backend developer with a heavier workload |
+| ACV-0007 | Mariam Shah | 5 | Software Developer | ACV-0004 | Employee home, my tasks, check-in, leave |
+| ACV-0008 | Ali Raza | 5 | Backend Developer | ACV-0004 | API work, workload and reviews |
+| ACV-0011 | Danish Iqbal | 5 | SQA Engineer | ACV-0004 | Test work; extension request waiting for the CTO |
+| ACV-0013 | Nida Aslam | 5 | SQA Intern (part-time) | ACV-0004 | Lower weekly capacity (20 h) |
 
 ---
 
@@ -668,9 +668,9 @@ POST /employees/:empId/reveal { field } (logged)
 | Screen | Details | Who |
 |---|---|---|
 | Online now | Live list: person, logged in since, current screen, Active/Idle pill (citron pulse when active), device. Counters: online, active, idle. Row menu: Force logout (step-up), Lock account. | CEO / Founder / Owner, Director, CTO (each within their reporting line) |
-| Employee timeline | Pick a person and a day. Vertical timeline: login, screens opened, actions, idle spans (grey bars with duration), logout with reason. Day summary on top: first login, last logout, active hours, idle hours, actions, attendance check-in next to first login with the gap highlighted. | CTO (engineers), Director (reporting line), CEO / Founder / Owner (everyone) |
+| Employee timeline | Pick a person and a day. Vertical timeline: login, screens opened, actions, idle spans (grey bars with duration), logout with reason. Day summary on top: first login, last logout, active hours, idle hours, actions, attendance check-in next to first login with the gap highlighted. | CTO (developers), Director (reporting line), CEO / Founder / Owner (everyone) |
 | Activity search | Filters: person, department, module, action type, date range, source (Aceva / Apollo / MillionVerifier / Mailbox). Results table with old → new value diff for changes. Export (Excel/PDF), which itself is logged. | Director+ |
-| Reports | Daily and weekly tables: per person and per team login time, logout time, active hours, actions. Small bar chart of active vs idle per person. | CTO (engineers), Director, CEO / Founder / Owner |
+| Reports | Daily and weekly tables: per person and per team login time, logout time, active hours, actions. Small bar chart of active vs idle per person. | CTO (developers), Director, CEO / Founder / Owner |
 | Security alerts | Cards: severity, rule ("Login from a new city", "Large export", "Repeated finance access attempts", "Account locked", "Outside working hours"), who, when, details. "Mark as checked" with note. Filter open/checked. | CTO, Director, CEO / Founder / Owner |
 | My activity | Own login history, devices, today's active/idle time. Banner linking to the tracking policy. | Everyone |
 
@@ -896,9 +896,9 @@ GET /reports/{trial-balance|general-ledger|ar-aging|ap-due|profit-by-project|tax
 
 | Role | Home shows |
 |---|---|
-| Engineering | Greeting band with date and check-in card; My tasks by deadline (next 5); leave balance; latest scorecard dial; announcements to acknowledge; upcoming meetings |
+| Developer / SQA | Greeting band with date and check-in card; My tasks by deadline (next 5); leave balance; latest scorecard dial; announcements to acknowledge; upcoming meetings |
 | Sales | Check-in; **My sales day**: today's targets as progress rings (leads added, emails checked, emails sent, follow-ups done), follow-ups due today, new replies (with Apollo `FreshnessStamp`), mini pipeline; my tasks, leave, scorecard |
-| CTO | Check-in; engineering KPIs (people, present today, open and overdue tasks); who's in today; team workload; work waiting for my review; approvals; security alerts; who's online; backups |
+| CTO | Check-in; development KPIs (people, present today, open and overdue tasks); who's in today; team workload; work waiting for my review; approvals; security alerts; who's online; backups |
 | Finance | Check-in; finance KPI row; my tasks; payroll stage to prepare; billing; revenue vs expenses; leave; announcements |
 | Director | Check-in; reporting-line KPIs; finance KPI row; approvals; payroll stage; revenue vs expenses; sales pipeline; billing; who's in today; the sales team's day |
 | CEO / Founder / Owner | Finance KPI row (cash, revenue, expenses, profit, unpaid invoices); company KPIs; **Waiting for the Director** (every pending approval, read-only); revenue vs expenses; payroll stage; pipeline; security alerts; who's online; billing; backups |

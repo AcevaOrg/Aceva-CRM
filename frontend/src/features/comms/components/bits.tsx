@@ -20,7 +20,7 @@ export function useMediaQuery(query: string) {
   return match;
 }
 
-/** Display name for any conversation: "#engineering", a group name, or the other person in a DM. */
+/** Display name for any conversation: "#development", a group name, or the other person in a DM. */
 export function useConversationTitle() {
   const lookup = useLookup();
   const viewer = useViewer();

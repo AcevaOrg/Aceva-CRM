@@ -58,7 +58,7 @@ export function splitMentions(body: string) {
 
 /**
  * People who manage others day to day: the Director and the CTO.
- * The CEO / Founder / Owner oversees everything but manages nothing; Sales, Finance and Engineering don't manage.
+ * The CEO / Founder / Owner oversees everything but manages nothing; Sales, Finance and Development don't manage.
  */
 export function managesPeople(e: Pick<Employee, "role">) {
   return e.role === "director" || e.role === "cto";

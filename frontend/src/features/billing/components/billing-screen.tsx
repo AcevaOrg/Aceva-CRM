@@ -36,9 +36,12 @@ export function BillingScreen() {
         seal="confidential"
         actions={
           <>
-            <Button variant="outline" onClick={() => exportData({ title: "Invoice list", seal: "confidential", formats: ["xlsx", "csv", "pdf"] })}>
-              <Download /> Export
-            </Button>
+            {/* Finance data exports are for the CEO / Founder / Owner and the Director. */}
+            <Can permission="finance.export">
+              <Button variant="outline" onClick={() => exportData({ title: "Invoice list", seal: "confidential", formats: ["xlsx", "csv", "pdf"] })}>
+                <Download /> Export
+              </Button>
+            </Can>
             <Can permission="billing.manage">
               <Button asChild>
                 <Link href="/billing/invoices/new">

@@ -166,7 +166,7 @@ export function BillingOverviewPanel() {
       </Card>
 
       {!canManage && (
-        <p className="text-[12.5px] text-muted-foreground">You can view billing. Creating invoices and recording payments is done by the Director (finance duty).</p>
+        <p className="text-[12.5px] text-muted-foreground">View only. The finance person creates invoices and records payments.</p>
       )}
     </div>
   );

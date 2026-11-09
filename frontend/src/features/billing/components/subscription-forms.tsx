@@ -36,8 +36,11 @@ const schema = z.object({
 type Values = z.infer<typeof schema>;
 
 /** Add or edit an entry in the subscription register. */
-/** Responsible person: someone who manages others (CEO / Founder, Director, CTO). Sales and Engineering are not managers. */
-const canOwnSubscription = (e: Employee) => e.level <= 3 || e.duties.includes("finance");
+/**
+ * Responsible person (gets the renewal reminders): the Director, the CTO or the finance person.
+ * The CEO / Founder / Owner oversees but does not manage day-to-day work; Sales and Development don't own tools.
+ */
+const canOwnSubscription = (e: Employee) => e.status !== "left" && (e.role === "director" || e.role === "cto" || e.role === "finance");
 
 export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscription; open: boolean; onOpenChange: (o: boolean) => void }) {
   const save = useSaveSubscription();

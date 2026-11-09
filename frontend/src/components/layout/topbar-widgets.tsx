@@ -227,7 +227,7 @@ export function UserMenu() {
           <div className="min-w-0">
             <p className="truncate text-[13px] font-semibold">{e.name}</p>
             <p className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-              <LevelMark level={e.level} /> {ROLE_LABEL[e.role]} · <span className="font-mono">{e.empId}</span>
+              <LevelMark level={e.level} /> {e.designation} · <span className="font-mono">{e.empId}</span>
             </p>
           </div>
         </div>

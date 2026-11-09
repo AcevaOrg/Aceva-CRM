@@ -6,7 +6,7 @@ import type { Employee, EmploymentStatus, EmploymentType, Level } from "@/types"
 import type { DocumentKind, ProfileAccess } from "./types";
 
 /**
- * Structure (spec §2.1): CEO / Founder / Owner → Director (HR and sales-manager duty) → CTO → Engineering; Director → Sales, Finance.
+ * Structure (spec §2.1): CEO / Founder / Owner → Director (HR and sales-manager duty) → CTO → Development; Director → Sales, Finance.
  * - Basic: everyone (staff directory)
  * - Job: the employee, the managers above them in their reporting line, the Director (HR duty) and the CEO / Founder / Owner (view)
  * - Personal: the employee, the Director (HR duty) and the CEO / Founder / Owner (view)
@@ -56,8 +56,8 @@ export const STATUS_INFO: Record<EmploymentStatus, { label: string; tone: "succe
 export const DOC_LABEL: Record<DocumentKind, string> = { cv: "CV", contract: "Contract", cnic: "CNIC copy", certificate: "Certificate", other: "Other" };
 
 /**
- * Which levels belong in which department (spec §2.1): Management holds the Director, Engineering and development
- * holds the CTO and engineers, Sales holds Sales and Finance holds the finance person (both level 4).
+ * Which levels belong in which department (spec §2.1): Management holds the Director, Software Development
+ * holds the CTO and developers, Sales holds Sales and Finance holds the finance person (both level 4).
  * A department added later can take any level below the CEO / Founder / Owner.
  */
 const LEVELS_BY_DEPARTMENT: Record<string, Level[]> = { "dep-mgmt": [2], "dep-eng": [3, 5], "dep-sales": [4], "dep-fin": [4] };

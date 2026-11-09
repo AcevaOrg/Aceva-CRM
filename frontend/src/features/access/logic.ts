@@ -7,7 +7,7 @@ import type { OrgNode, Role, StandIn, StandInInput, StandInStatus } from "./type
 
 /**
  * The fixed structure (spec §2.1): who each level reports to.
- * Director → CEO / Founder / Owner; CTO, Sales and Finance → Director; Engineering → CTO.
+ * Director → CEO / Founder / Owner; CTO, Sales and Finance → Director; Development → CTO.
  */
 const REPORTS_TO_LEVEL: Record<Level, Level | null> = { 1: null, 2: 1, 3: 2, 4: 2, 5: 3 };
 
@@ -21,7 +21,7 @@ export const REPORTS_TO_HINT: Record<Level, string> = {
   2: "The Director reports to the CEO / Founder / Owner.",
   3: "The CTO reports to the Director.",
   4: "Sales and Finance report to the Director.",
-  5: "Engineering reports to the CTO.",
+  5: "Development reports to the CTO.",
 };
 
 /**

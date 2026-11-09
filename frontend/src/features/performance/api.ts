@@ -42,8 +42,8 @@ function latestFor(empId: string, includeDraft: boolean) {
 
 /**
  * Who may see a person's scorecards: themselves and the people above them in the reporting line.
- * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Engineering).
- * CTO: Engineering only (never Sales or Finance). Sales, Finance and Engineering: only their own.
+ * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Development).
+ * CTO: Development only (never Sales or Finance). Sales, Finance and Development: only their own.
  */
 function canSeePerson(empId: string) {
   const me = getViewer().employee.empId;
@@ -52,7 +52,7 @@ function canSeePerson(empId: string) {
 
 /**
  * Who decides a rating dispute: the level above the task's reviewer (plan §10).
- * The reviewer is whoever assigned and rated the task (the CTO for Engineering, the Director for the CTO, Sales
+ * The reviewer is whoever assigned and rated the task (the CTO for Development, the Director for the CTO, Sales
  * and Finance). Only people who review work decide, and the CEO / Founder / Owner reviews nothing, so a rating
  * the Director gave is looked at again by the Director; the CEO / Founder / Owner can view the dispute.
  * Null when there is no reviewer at all (the Director's own scorecard).
@@ -229,7 +229,7 @@ export const performanceApi = {
     mock<TeamPerformanceRow[]>(() => {
       const v = getViewer();
       const me = v.employee.empId;
-      // Reporting line only: CTO → Engineering; Director → CTO, Sales, Finance and Engineering;
+      // Reporting line only: CTO → Development; Director → CTO, Sales, Finance and Development;
       // CEO / Founder / Owner → everyone, view only (they release nothing).
       const active = new Set(employeesTable().filter((e) => e.status !== "left").map((e) => e.empId));
       const ids = v.can(["performance.view_team", "performance.view_all"]) ? descendantsOf(me).filter((id) => active.has(id)) : [];

@@ -28,10 +28,10 @@ export type Permission = (typeof PERMISSIONS)[number];
  * Aceva structure (strict, spec §2):
  *   L1 CEO / Founder / Owner — one person. Sees everything (all activity, all data) but APPROVES NOTHING.
  *   L2 Director              — the single approver for the whole company, plus HR duty and sales-manager duty.
- *   L3 CTO                   — runs engineering (assigns and reviews engineering work, first step of engineers' leave).
+ *   L3 CTO                   — runs development (assigns and reviews development work, first step of developers' leave).
  *   L4 Sales                 — own leads, deals and targets.
  *   L4 Finance               — the finance person (finance duty): prepares entries, payroll, bills, invoices, the month close.
- *   L5 Engineering           — own work.
+ *   L5 Development           — own work.
  * Maker-checker: the finance person (or anyone) prepares, the Director approves. The Director never
  * prepares finance items, so there is always a second person. The only thing that goes above the
  * Director is the Director's own leave or attendance correction, which the CEO / Founder / Owner signs off.
@@ -81,7 +81,7 @@ const DIRECTOR: Permission[] = [
   "integrations.view", "integrations.manage",
 ];
 
-/** L3 CTO: runs engineering, security events, backups and the sales tool connections. No finance, payroll or sales data. */
+/** L3 CTO: runs development, security events, backups and the sales tool connections. No finance, payroll or sales data. */
 const CTO: Permission[] = [
   ...MANAGER,
   "activity.security", "settings.view", "backup.view", "integrations.view", "integrations.manage",
@@ -98,8 +98,8 @@ const FINANCE: Permission[] = [
   "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view",
 ];
 
-/** L5 Engineering and development employees. */
-const ENGINEER: Permission[] = [...BASE];
+/** L5 Software Development employees. */
+const DEVELOPER: Permission[] = [...BASE];
 
 export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
   ceo: CEO,
@@ -107,7 +107,7 @@ export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
   cto: CTO,
   sales: SALES,
   finance: FINANCE,
-  engineer: ENGINEER,
+  developer: DEVELOPER,
 };
 
 /** Duties add permissions on top of a role. Finance duty: the finance person. HR and sales-manager duty: the Director. */
@@ -127,7 +127,7 @@ export const ROLE_LABEL: Record<RoleKey, string> = {
   cto: "CTO",
   sales: "Sales",
   finance: "Finance",
-  engineer: "Engineering",
+  developer: "Developer / SQA",
 };
 
 export const DUTY_LABEL: Record<Duty, string> = {
@@ -141,7 +141,7 @@ export const LEVEL_LABEL: Record<number, string> = {
   2: "Director",
   3: "CTO",
   4: "Sales and Finance",
-  5: "Engineering",
+  5: "Developers and SQA",
 };
 
 export function permissionsFor(role: RoleKey, duties: Duty[] = []): Set<Permission> {

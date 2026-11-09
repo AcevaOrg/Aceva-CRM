@@ -10,10 +10,12 @@ import * as echarts from "echarts/core";
 import { BarChart, LineChart, PieChart, FunnelChart, ScatterChart } from "echarts/charts";
 import { DatasetComponent, GridComponent, LegendComponent, TooltipComponent, MarkLineComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
+// ECharts 6 moved `grid.containLabel` (keeps axis labels inside the chart) into this opt-in feature.
+import { LegacyGridContainLabel } from "echarts/features";
 import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 
-echarts.use([BarChart, LineChart, PieChart, FunnelChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, DatasetComponent, MarkLineComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, PieChart, FunnelChart, ScatterChart, GridComponent, TooltipComponent, LegendComponent, DatasetComponent, MarkLineComponent, CanvasRenderer, LegacyGridContainLabel]);
 
 export type EChartOption = echarts.EChartsCoreOption;
 export type EChartClick = { name: string; seriesName?: string; value: unknown; dataIndex: number; data: unknown };

@@ -58,6 +58,9 @@ export function OnlinePanel() {
         <StatCard label="Idle" value={rows.length - active} icon={<Moon />} accent="var(--warning)" hint="no input for 5 min or more" />
         <StatCard label="New devices today" value={rows.filter((r) => r.newDevice).length} icon={<Smartphone />} accent="var(--danger)" hint="also raised as alerts" />
       </div>
+      {viewer && !viewer.can(["session.force_logout", "auth.unlock_account"]) && (
+        <p className="text-[12.5px] text-muted-foreground">View only. The Director and the CTO sign people out or lock accounts, for people below them.</p>
+      )}
       <DataTable<OnlineSession>
         rows={rows}
         loading={query.isPending}

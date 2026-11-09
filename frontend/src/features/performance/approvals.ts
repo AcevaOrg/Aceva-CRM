@@ -1,7 +1,7 @@
 /**
  * Approvals provider for Module 6:
  *  - draft scorecards: the person's manager reviews and releases them; they can add a remark, never change numbers
- *    (Engineering → CTO; CTO, Sales and Finance → Director). The Director's own scorecard has no reviewer: it is
+ *    (Development → CTO; CTO, Sales and Finance → Director). The Director's own scorecard has no reviewer: it is
  *    released automatically and the CEO / Founder / Owner views it (the CEO releases nothing).
  *  - rating disputes: decided by the level above the task's reviewer (plan §10); the CEO / Founder / Owner decides none.
  */

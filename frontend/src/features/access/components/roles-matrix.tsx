@@ -59,7 +59,7 @@ export function RolesMatrix() {
           <Info className="size-3.5" />
           {!canEdit
             ? "View only. The Director changes roles and permissions."
-            : "You can change the CTO, Sales, Finance and Engineering roles and the finance duty. The CEO / Founder / Owner role (view only, approves nothing), your own role and your own duties are fixed."}
+            : "You can change the CTO, Sales, Finance and Development roles and the finance duty. The CEO / Founder / Owner role (view only, approves nothing), your own role and your own duties are fixed."}
         </p>
       </div>
 

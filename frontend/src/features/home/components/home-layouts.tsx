@@ -1,7 +1,7 @@
 "use client";
 /**
  * Home layout per role (plan §17 "Home dashboards by level", adapted to Aceva's structure):
- * CEO / Founder / Owner (sees everything, approves nothing) · Director (approves) · CTO · Sales · Finance · Engineering.
+ * CEO / Founder / Owner (sees everything, approves nothing) · Director (approves) · CTO · Sales · Finance · Development.
  * Widgets hide themselves when the viewer lacks access, so each layout stays safe.
  */
 import type { HomeVariant } from "./home-screen";
@@ -19,7 +19,7 @@ const Stack = ({ children }: { children: React.ReactNode }) => <div className="g
 
 export function HomeLayout({ variant }: { variant: HomeVariant }) {
   switch (variant) {
-    /* L5 Engineering and development */
+    /* L5 Software Development */
     case "employee":
       return (
         <Stack>
@@ -66,7 +66,7 @@ export function HomeLayout({ variant }: { variant: HomeVariant }) {
         </Stack>
       );
 
-    /* L3 CTO: runs engineering */
+    /* L3 CTO: runs development */
     case "cto":
       return (
         <Stack>

@@ -34,7 +34,7 @@ const ICON: Record<NotificationType, React.ElementType> = {
 const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Permission | Permission[] }[] = [
   { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered"] },
   // Approvers: the Director and the CTO. The CEO / Founder / Owner only approves the Director's own leave or correction;
-  // Finance, Sales and Engineering approve nothing.
+  // Finance, Sales and Development approve nothing.
   { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"], permission: ["leave.approve", "payroll.approve", "finance.entry_approve"] },
   { title: "Pay and results", types: ["payslip_available", "scorecard_released"] },
   { title: "Messages", types: ["message_mention", "announcement"] },

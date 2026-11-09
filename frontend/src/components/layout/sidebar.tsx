@@ -7,7 +7,6 @@ import { Tip } from "@/components/ui/overlays";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { LevelMark } from "@/components/shared/level-mark";
 import { useApprovalsCount } from "@/features/approvals/hooks";
-import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { useViewer, type Viewer } from "@/lib/auth/viewer";
 import { FOOTER_NAV, matchNav, NAV, PHASE2_ENABLED, type NavItem } from "@/lib/nav";
 import { useUi } from "@/lib/ui-store";
@@ -123,7 +122,7 @@ function SidebarBody({ full, onNavigate }: { full: boolean; onNavigate?: () => v
               <span className="truncate text-[13px] font-medium text-white">{e.name}</span>
               <span className="flex items-center gap-1.5 text-[11px] text-sidebar-muted">
                 <LevelMark level={e.level} />
-                <span className="truncate">{ROLE_LABEL[e.role]}</span>
+                <span className="truncate">{e.designation}</span>
                 <span className="font-mono">{e.empId}</span>
               </span>
             </span>

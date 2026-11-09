@@ -103,7 +103,7 @@ function LeaveApprovals() {
     <section className="grid gap-3">
       <SectionTitle
         title="Waiting for you"
-        description="The person's manager approves first; Engineering leave then goes to the Director. Only the Director's own leave goes to the CEO / Founder / Owner. Nobody approves their own leave."
+        description="The person's manager approves first; Development leave then goes to the Director. Only the Director's own leave goes to the CEO / Founder / Owner. Nobody approves their own leave."
       />
       <QueryState query={q}>
         {(list) => {

@@ -43,9 +43,10 @@ export const ZONE_LABEL: Record<Zone, string> = {
   control: "Control",
 };
 
+/** Anyone holding one of these can have items in the Approvals inbox. (finance.close is not here: Finance runs the close, the Director approves it.) */
 export const APPROVER_PERMISSIONS: Permission[] = [
   "leave.approve", "task.review", "finance.entry_approve", "payroll.review", "payroll.approve",
-  "sales.team", "sales.commission_approve", "attendance.approve_correction", "finance.close",
+  "sales.team", "sales.commission_approve", "attendance.approve_correction",
 ];
 
 export const NAV: NavSection[] = [

@@ -1,5 +1,7 @@
 "use client";
 /** Small billing display pieces: status badges, countdown, sparkline. */
+import type * as React from "react";
+import { Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tip } from "@/components/ui/overlays";
 import { StatusBadge } from "@/components/shared/chips";
@@ -7,6 +9,16 @@ import { formatDate } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { daysUntil, INVOICE_STATUS, INVOICE_TYPE, PERIOD_LABEL, SUB_STATUS } from "../logic";
 import type { Invoice, InvoiceStatus, SubscriptionStatus } from "../types";
+
+/** "You can look but not act" note for readers without the manage permission (e.g. the CEO / Founder / Owner). */
+export function ViewOnlyNote({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <p className={cn("flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-[12.5px] text-muted-foreground", className)}>
+      <Eye className="mt-0.5 size-4 shrink-0" />
+      <span>{children}</span>
+    </p>
+  );
+}
 
 export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {
   const s = INVOICE_STATUS[status];

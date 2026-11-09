@@ -61,9 +61,9 @@ export interface LeaveBalanceView extends LeaveBalance {
 }
 
 /**
- * pending_manager: waiting for the person's manager (first step: the CTO for Engineering, the Director for the CTO,
+ * pending_manager: waiting for the person's manager (first step: the CTO for Development, the Director for the CTO,
  *   Sales and Finance, the CEO / Founder / Owner only for the Director's own leave).
- * pending_director: the CTO approved an engineer's leave and it now waits for the Director (second step).
+ * pending_director: the CTO approved an developer's leave and it now waits for the Director (second step).
  */
 export type LeaveStatus = "pending_manager" | "pending_director" | "approved" | "rejected" | "cancelled";
 

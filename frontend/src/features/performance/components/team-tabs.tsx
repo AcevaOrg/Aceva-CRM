@@ -42,7 +42,7 @@ export function TeamPerformance() {
       {!canRelease && (
         <p className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
           <Eye className="mt-0.5 size-4 shrink-0" />
-          View only. Each person&apos;s manager releases their scorecard: the CTO for Engineering, the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is released automatically.
+          View only. Each person&apos;s manager releases their scorecard: the CTO for Development, the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is released automatically.
         </p>
       )}
       <DataTable

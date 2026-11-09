@@ -3,7 +3,7 @@
  * Keys never come back to the browser: only the last 4 characters (plan §21).
  * Access: the CTO and the Director manage connections (integrations.manage): keys, tests, syncs, pauses and user
  * links. The CEO / Founder / Owner views everything (integrations.view) and changes nothing. Sales, Finance and
- * Engineering have no access. Tool users link only to people in Sales.
+ * Development have no access. Tool users link only to people in Sales.
  */
 import { ApiError, forbidden, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
@@ -118,7 +118,7 @@ export const integrationsApi = {
       const u = users().find((x) => x.tool === tool && x.externalUserId === externalUserId);
       if (!u) notFound("Tool user");
       if (empId) {
-        // Sales tool accounts only count work for people in Sales (L4), never managers or engineers.
+        // Sales tool accounts only count work for people in Sales (L4), never managers or developers.
         const e = findEmployee(empId);
         if (!e || e.status === "left") throw new ApiError("validation", "That Emp-ID doesn't exist.");
         if (e.role !== "sales") throw new ApiError("validation", "Tool users can only be linked to people in Sales.");

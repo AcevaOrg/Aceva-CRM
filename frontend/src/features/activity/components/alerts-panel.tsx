@@ -16,7 +16,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatRelative } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useAccountLocks, useCheckAlert, useSecurityAlerts, useUnlockAccount } from "../hooks";
-import { alertCheckerLabel, canActOn, canCheckAlert } from "../logic";
+import { alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert } from "../logic";
 import type { AlertSeverity, SecurityAlert } from "../types";
 
 const SEVERITY: Record<AlertSeverity, { label: string; tone: BadgeTone; bar: string }> = {
@@ -77,8 +77,11 @@ function AlertCard({ a }: { a: SecurityAlert }) {
   const stillLocked = a.kind === "account_locked" && locks.data?.some((l) => l.empId === a.empId);
   const me = viewer?.employee;
   const below = me ? descendantsOf(me.empId, lookup.employees) : [];
-  // Maker-checker: never your own alert; otherwise someone above the person checks it, and unlocks only go downward.
-  const canCheck = !!me && canCheckAlert(me, a.empId, below, lookup.employees);
+  // Maker-checker: never your own alert; otherwise a manager above the person checks it, and unlocks only go downward.
+  // The CEO / Founder / Owner sees every alert but acts on none (no security action permissions).
+  const canCheck = !!viewer && canCheckAlert(viewer, a.empId, below, lookup.employees);
+  const viewOnly = !canActOnAlerts(viewer);
+  const checker = alertCheckerLabel(a.empId, lookup.employees);
   const canUnlock = !!me && !!viewer?.can("auth.unlock_account") && canActOn(me.empId, a.empId, below);
 
   return (
@@ -124,7 +127,11 @@ function AlertCard({ a }: { a: SecurityAlert }) {
           )}
           {a.status === "open" && !canCheck && (
             <p className="max-w-56 text-[12px] text-muted-foreground">
-              {a.empId === me?.empId ? "This alert is about you, so someone above you checks it." : `To be checked by ${alertCheckerLabel(a.empId, lookup.employees)}, who is above this person.`}
+              {viewOnly
+                ? `View only. To be checked by ${checker}.`
+                : a.empId === me?.empId
+                  ? `This alert is about you, so ${checker} checks it.`
+                  : `To be checked by ${checker}, who is above this person.`}
             </p>
           )}
           {a.status === "open" && canCheck && (

@@ -1,7 +1,7 @@
 /**
  * Seed: monthly scorecards (6 closed months), score-weight versions and rating disputes (Module 6).
  * Task-based metrics are computed from the generated task list, so every scorecard adds up.
- * Each scorecard is reviewed and released by the person's manager: Engineering → CTO; CTO, Sales and Finance →
+ * Each scorecard is reviewed and released by the person's manager: Development → CTO; CTO, Sales and Finance →
  * Director. The CEO / Founder / Owner reviews nothing, so the Director's scorecard has no reviewer: it is released
  * automatically when the month closes and the CEO / Founder / Owner views it. Sales use the sales weights.
  */
@@ -79,7 +79,7 @@ function statusFor(empId: string, offset: number, hasReviewer: boolean): Scoreca
   if (offset < -1) return "acknowledged";
   // The Director's scorecard has no reviewer: released automatically, the CEO / Founder / Owner views it.
   if (!hasReviewer) return "released";
-  // Last month's drafts wait for the manager: engineers for the CTO, the CTO and Sales for the Director.
+  // Last month's drafts wait for the manager: developers for the CTO, the CTO and Sales for the Director.
   if (["ACV-0013", "ACV-0012", "ACV-0006", "ACV-0004"].includes(empId)) return "draft";
   if (["ACV-0007", "ACV-0011", "ACV-0009", "ACV-0008", "ACV-0010"].includes(empId)) return "released";
   return "acknowledged";

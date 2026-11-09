@@ -14,18 +14,18 @@ const D = 60 * 24;
 /*
  * Actors follow the structure: ACV-0001 CEO / Founder / Owner (views and exports, approves nothing),
  * ACV-0003 Director (approves everything; settings incl. ★, reporting lines; HR and sales-manager duty),
- * ACV-0004 CTO (engineering, security, backups, integrations), ACV-0010 Finance (prepares entries, payroll,
+ * ACV-0004 CTO (development, security, backups, integrations), ACV-0010 Finance (prepares entries, payroll,
  * invoices, the month close; approves nothing).
  */
 const ROWS: Row[] = [
   [12, "ACV-0004", "Tasks", "approve", "task", "TSK-0123", "Approved “Org chart tree component” with a 5-star rating"],
-  [48, "ACV-0011", "Tasks", "create", "extension", "TSK-0131", "Asked for 2 more days on “Payslip PDF layout”"],
+  [48, "ACV-0011", "Tasks", "create", "extension", "TSK-0131", "Asked for 2 more days on “Regression tests: payslip PDF”"],
   [2 * H, "ACV-0003", "People", "edit", "person", "ACV-0011", "Changed pay: internet allowance", [{ field: "Internet allowance", from: "PKR 3,000", to: "PKR 5,000" }], "Annual review"],
   [3 * H + 20, "ACV-0010", "Payroll", "reveal", "bank_account", "ACV-0007", "Viewed bank account number of ACV-0007 while checking November payroll"],
   [4 * H, "ACV-0001", "Payroll", "reveal", "payroll_run", "PR-2026-11", "Opened the November payroll run (view only)"],
   [5 * H, "ACV-0010", "Ledger", "create", "journal_entry", "JE-2026-0311", "Created entry “Annual hosting prepayment” PKR 120,000 and sent it to the Director"],
   [6 * H, "ACV-0003", "Ledger", "approve", "journal_entry", "JE-2026-0309", "Approved entry “Office rent November” PKR 85,000 made by ACV-0010"],
-  [7 * H, "ACV-0003", "Access", "permission_change", "role", "CTO", "Added task.review to the CTO role", [{ field: "task.review", from: "Off", to: "On" }], "The CTO reviews engineering tasks"],
+  [7 * H, "ACV-0003", "Access", "permission_change", "role", "CTO", "Added task.review to the CTO role", [{ field: "task.review", from: "Off", to: "On" }], "The CTO reviews development tasks"],
   [20 * H, "ACV-0004", "Access", "unlock", "account", "ACV-0008", "Unlocked account after 5 wrong passwords"],
   [26 * H, "ACV-0010", "Payroll", "create", "payroll_run", "PR-2026-11", "Prepared November payroll (12 people) and sent it to the Director"],
   [28 * H, "ACV-0010", "Payroll", "lock", "attendance", "2026-11", "Locked November attendance for payroll"],
@@ -48,7 +48,7 @@ const ROWS: Row[] = [
   [9 * D + H, "ACV-0003", "Payroll", "approve", "payroll_run", "PR-2026-10", "Approved October payroll prepared by ACV-0010"],
   [9 * D + 3 * H, "ACV-0010", "Payroll", "create", "payroll_run", "PR-2026-10", "Prepared October payroll (12 people) and sent it to the Director"],
   [10 * D, "ACV-0003", "Settings", "edit", "settings", "score-weights", "Saved new standard score weights", [{ field: "Quality", from: "40%", to: "35%" }, { field: "On-time", from: "20%", to: "25%" }], "Deadlines matter more after go-live"],
-  [12 * D, "ACV-0003", "Access", "edit", "reporting_line", "ACV-0013", "Moved ACV-0013 under ACV-0004", [{ field: "Reports to", from: "ACV-0003", to: "ACV-0004" }], "Joined the engineering team"],
+  [12 * D, "ACV-0003", "Access", "edit", "reporting_line", "ACV-0013", "Moved ACV-0013 under ACV-0004", [{ field: "Reports to", from: "ACV-0003", to: "ACV-0004" }], "Joined the development team"],
   [18 * D, "ACV-0003", "People", "create", "person", "ACV-0013", "Onboarded Nida Aslam (intern)"],
   [20 * D, "ACV-0004", "Access", "lock", "account", "ACV-0012", "Locked account after repeated finance access attempts"],
   [21 * D, "ACV-0003", "Access", "unlock", "account", "ACV-0012", "Unlocked account after review"],
