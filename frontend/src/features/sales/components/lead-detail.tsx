@@ -9,6 +9,7 @@ import { SegmentedControl } from "@/components/ui/controls";
 import { Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/misc";
 import { PageHeader } from "@/components/layout/page-header";
+import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { RequireAccess } from "@/components/shared/can";
 import { useReason } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
@@ -17,6 +18,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { Timeline } from "@/components/shared/timeline";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime } from "@/lib/dates";
+import { canWorkOn, isSalesManager } from "../api";
 import { useLead, useMarkDnc, useReassignLead, useUpdateLead } from "../hooks";
 import { SERVICE_LABEL } from "../logic";
 import type { LeadDetail as Detail } from "../types";
@@ -59,7 +61,7 @@ function LeadDetailInner({ id }: { id: string }) {
           title="This lead belongs to someone else"
           description={
             <span className="grid justify-items-center gap-3">
-              You can see that it exists and who owns it, but not the notes, activity or deal values. Ask the owner or the sales manager if you need to work with it.
+              You can see that it exists and who owns it, but not the notes, activity or deal values. Ask the owner or the Director (sales manager) if you need to work with it.
               <EmpChip empId={data.ownerEmpId} />
             </span>
           }
@@ -72,7 +74,10 @@ function LeadDetailInner({ id }: { id: string }) {
 function LeadBody({ d }: { d: Detail }) {
   const { lead, company, activities, deals } = d;
   const viewer = useViewer();
-  const team = !!viewer?.can(["sales.team", "sales.all"]);
+  // Moving a lead between salespeople is the sales manager's job: the Director.
+  const canReassign = !!viewer && isSalesManager(viewer);
+  // The owner and the Director work the lead; the CEO / Founder / Owner only views it.
+  const canWork = !!viewer && canWorkOn(viewer, lead.ownerEmpId);
   const [logOpen, setLogOpen] = React.useState(false);
   const [dealOpen, setDealOpen] = React.useState(false);
   const [verifyOpen, setVerifyOpen] = React.useState(false);
@@ -100,6 +105,7 @@ function LeadBody({ d }: { d: Detail }) {
           </>
         }
         actions={
+          canWork && (
           <>
             {lead.emailCheck === "unchecked" && !lead.doNotContact && (
               <Button variant="outline" onClick={() => setVerifyOpen(true)}>
@@ -130,8 +136,15 @@ function LeadBody({ d }: { d: Detail }) {
               <Plus /> Create deal
             </Button>
           </>
+          )
         }
       />
+
+      {!canWork && (
+        <div className="mb-5">
+          <MakerCheckerNote reason="View only. The salesperson who owns this lead works it; the Director (sales manager) can move it." />
+        </div>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Card>
@@ -178,9 +191,11 @@ function LeadBody({ d }: { d: Detail }) {
           <Card>
             <CardHeader>
               <CardTitle>Deals</CardTitle>
-              <Button size="sm" variant="ghost" onClick={() => setDealOpen(true)} disabled={lead.doNotContact}>
-                <Plus /> New
-              </Button>
+              {canWork && (
+                <Button size="sm" variant="ghost" onClick={() => setDealOpen(true)} disabled={lead.doNotContact}>
+                  <Plus /> New
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               {deals.length ? (
@@ -204,7 +219,7 @@ function LeadBody({ d }: { d: Detail }) {
                   ))}
                 </ul>
               ) : (
-                <p className="text-[13px] text-muted-foreground">No deals yet. Create one when the lead shows interest.</p>
+                <p className="text-[13px] text-muted-foreground">No deals yet.{canWork ? " Create one when the lead shows interest." : ""}</p>
               )}
             </CardContent>
           </Card>
@@ -231,9 +246,9 @@ function LeadBody({ d }: { d: Detail }) {
             </CardContent>
           </Card>
 
-          <NotesCard leadId={lead.id} notes={lead.notes} />
+          <NotesCard leadId={lead.id} notes={lead.notes} editable={canWork} />
 
-          {team && (
+          {canReassign && (
             <Card>
               <CardHeader>
                 <div>
@@ -246,7 +261,7 @@ function LeadBody({ d }: { d: Detail }) {
               <CardContent>
                 <EmployeeSelect
                   value={lead.ownerEmpId}
-                  filter={(e) => e.departmentId === "dep-sales"}
+                  filter={(e) => e.role === "sales"}
                   onChange={(empId) => empId && empId !== lead.ownerEmpId && reassign.mutate({ id: lead.id, empId }, { onSuccess: () => toast.success("Lead moved", { description: "Open deals moved with it." }) })}
                 />
               </CardContent>
@@ -255,14 +270,14 @@ function LeadBody({ d }: { d: Detail }) {
         </div>
       </div>
 
-      {logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} />}
-      <CreateDealSheet open={dealOpen} onOpenChange={setDealOpen} leadId={lead.id} leadName={lead.name} defaultCurrency={lead.country === "Pakistan" ? "PKR" : "USD"} />
-      {verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
+      {canWork && logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} />}
+      <CreateDealSheet open={canWork && dealOpen} onOpenChange={setDealOpen} leadId={lead.id} leadName={lead.name} defaultCurrency={lead.country === "Pakistan" ? "PKR" : "USD"} />
+      {canWork && verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
     </>
   );
 }
 
-function NotesCard({ leadId, notes }: { leadId: string; notes?: string }) {
+function NotesCard({ leadId, notes, editable }: { leadId: string; notes?: string; editable: boolean }) {
   const [editing, setEditing] = React.useState(false);
   const [text, setText] = React.useState(notes ?? "");
   const update = useUpdateLead();
@@ -271,9 +286,9 @@ function NotesCard({ leadId, notes }: { leadId: string; notes?: string }) {
       <CardHeader>
         <div>
           <CardTitle>Notes</CardTitle>
-          <p className="text-[12.5px] text-muted-foreground">Only the owner and the sales manager can read these.</p>
+          <p className="text-[12.5px] text-muted-foreground">Only the owner, the Director and the CEO can read these.</p>
         </div>
-        {!editing && (
+        {editable && !editing && (
           <Button
             size="sm"
             variant="ghost"
@@ -287,7 +302,7 @@ function NotesCard({ leadId, notes }: { leadId: string; notes?: string }) {
         )}
       </CardHeader>
       <CardContent>
-        {editing ? (
+        {editable && editing ? (
           <div className="grid gap-2">
             <Textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} />
             <div className="flex justify-end gap-2">

@@ -1,6 +1,6 @@
 "use client";
 import { toast } from "sonner";
-import { Check, TriangleAlert, Undo2, X } from "lucide-react";
+import { Check, Eye, TriangleAlert, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ApprovalRelay } from "@/components/shared/approval-relay";
@@ -14,7 +14,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatRelative, isoDay } from "@/lib/dates";
 import { currentLeaveApprover } from "../api";
 import { useCancelLeave, useDecideLeave, useLeaveBalances, useLeaveTypes } from "../hooks";
-import { LEAVE_STATUS } from "../logic";
+import { isPendingLeave, LEAVE_STATUS, leaveStatusLabel } from "../logic";
 import type { LeaveRequest } from "../types";
 
 export function leaveDates(r: Pick<LeaveRequest, "from" | "to" | "halfDay">) {
@@ -49,8 +49,11 @@ export function LeaveRequestCard({ r, showPerson }: { r: LeaveRequest; showPerso
   const type = types.data?.find((t) => t.id === r.leaveTypeId);
   const me = viewer?.employee.empId;
   const isMine = r.empId === me;
-  const canDecide = !isMine && currentLeaveApprover(r) === me;
-  const canCancel = isMine && (r.status === "pending_lead" || r.status === "pending_director" || (r.status === "approved" && r.from > isoDay(new Date())));
+  const canDecide = !isMine && !!viewer?.can("leave.approve") && currentLeaveApprover(r) === me;
+  // Someone above in the reporting line (the CEO / Founder / Owner, or the Director while the CTO decides) only views it.
+  const waitingStep = isPendingLeave(r.status) ? r.chain.find((s) => s.state === "waiting") : undefined;
+  const viewOnlyStep = !isMine && !canDecide ? waitingStep : undefined;
+  const canCancel = isMine && (r.status === "pending_manager" || r.status === "pending_director" || (r.status === "approved" && r.from > isoDay(new Date())));
   const st = LEAVE_STATUS[r.status];
 
   const act = async (approve: boolean) => {
@@ -58,7 +61,7 @@ export function LeaveRequestCard({ r, showPerson }: { r: LeaveRequest; showPerso
     if (!approve && !note) return;
     try {
       await decide.mutateAsync({ id: r.id, approve, note: note ?? undefined });
-      toast.success(approve ? (r.chain.length > 1 && r.status === "pending_lead" ? "Approved and sent to the Director" : "Leave approved") : "Leave rejected");
+      toast.success(approve ? (r.chain.length > 1 && r.status === "pending_manager" ? "Approved and sent to the Director" : "Leave approved") : "Leave rejected");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't save");
     }
@@ -79,7 +82,7 @@ export function LeaveRequestCard({ r, showPerson }: { r: LeaveRequest; showPerso
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge label={st.label} tone={st.tone} />
+          <StatusBadge label={leaveStatusLabel(r)} tone={st.tone} />
           {canCancel && (
             <Button
               size="sm"
@@ -101,6 +104,11 @@ export function LeaveRequestCard({ r, showPerson }: { r: LeaveRequest; showPerso
       </div>
       {canDecide && <ApproverContext r={r} />}
       {r.chain.length > 0 && <ApprovalRelay steps={r.chain} />}
+      {viewOnlyStep && (
+        <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <Eye className="size-3.5 shrink-0" /> View only. The {viewOnlyStep.label} approves this step.
+        </p>
+      )}
       {canDecide && (
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={() => act(false)} disabled={decide.isPending}>

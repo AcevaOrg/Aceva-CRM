@@ -11,6 +11,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Progress } from "@/components/ui/misc";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { RequireAccess } from "@/components/shared/can";
 import { StatusBadge } from "@/components/shared/chips";
 import { DataTable } from "@/components/shared/data-table";
@@ -20,10 +21,9 @@ import { Money } from "@/components/shared/money";
 import { EmployeeSelect } from "@/components/shared/pickers";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
-import { useCan } from "@/lib/auth/viewer";
 import { formatMonthKey, monthKey } from "@/lib/dates";
 import { formatMoney, toNumber } from "@/lib/format";
-import { useAdvances, useCreateAdvance } from "../hooks";
+import { useAdvances, useCanPreparePayroll, useCreateAdvance } from "../hooks";
 import { nextMonthKey } from "../logic";
 import type { SalaryAdvance } from "../types";
 
@@ -37,7 +37,7 @@ export function AdvancesScreen() {
 
 function AdvancesInner() {
   const q = useAdvances();
-  const canCreate = useCan("payroll.prepare");
+  const canCreate = useCanPreparePayroll();
   const lookup = useLookup();
   const [open, setOpen] = React.useState(false);
   const list = q.data ?? [];
@@ -60,6 +60,11 @@ function AdvancesInner() {
           )
         }
       />
+      {!canCreate && (
+        <div className="mb-4">
+          <MakerCheckerNote reason="View only. Finance records salary advances; each repayment goes through the monthly payroll the Director approves." />
+        </div>
+      )}
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard label="Active advances" value={active.length} icon={<HandCoins />} accent="var(--zone-finance)" />
         <StatCard label="Still to recover" value={<Money value={outstanding} compact />} accent="var(--zone-finance)" />
@@ -76,7 +81,7 @@ function AdvancesInner() {
           searchPlaceholder="Search by name or reason"
           searchText={(a) => `${lookup.employee(a.empId)?.name ?? ""} ${a.empId} ${a.reason}`}
           initialSort={{ key: "status", dir: "asc" }}
-          empty={<EmptyState icon={<HandCoins />} title="No salary advances" description="Advances recorded by the finance duty person appear here." />}
+          empty={<EmptyState icon={<HandCoins />} title="No salary advances" description="Advances recorded by Finance appear here." />}
           columns={[
             { key: "emp", header: "Employee", cell: (a) => <EmpChip empId={a.empId} size="sm" />, sortValue: (a) => lookup.employee(a.empId)?.name ?? a.empId },
             { key: "amount", header: "Advance", align: "right", cell: (a) => <Money value={a.amount} />, sortValue: (a) => toNumber(a.amount) },
@@ -165,7 +170,7 @@ function NewAdvanceSheet({ open, onOpenChange }: { open: boolean; onOpenChange: 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <SheetBody className="grid content-start gap-4">
             <Field label="Employee" htmlFor="adv-emp" error={formState.errors.empId?.message} required>
-              <EmployeeSelect id="adv-emp" value={empId} onChange={(v) => setValue("empId", v, { shouldValidate: true })} filter={(e) => e.level > 2} invalid={!!formState.errors.empId} />
+              <EmployeeSelect id="adv-emp" value={empId} onChange={(v) => setValue("empId", v, { shouldValidate: true })} filter={(e) => e.role !== "ceo"} invalid={!!formState.errors.empId} />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Advance (PKR)" htmlFor="adv-amount" error={formState.errors.amount?.message} required>

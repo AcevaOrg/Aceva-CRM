@@ -9,7 +9,7 @@ import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedNotifications } from "@/mocks/seed/notifications";
 import { seedAudit, seedBackupStatus, seedSettings, seedWeightVersions } from "@/mocks/seed/system";
-import { chainHash, diffValues, GENESIS_HASH, sectionMeta } from "./logic";
+import { canViewSection, chainHash, diffValues, GENESIS_HASH, sectionMeta } from "./logic";
 import type {
   AuditChange, AuditFilters, AuditIntegrity, AuditRecord, BackupStatus, Notification, NotificationPrefs, SettingsRecord,
   SettingsSectionKey, SettingsValues, WeightsVersion,
@@ -114,10 +114,21 @@ export const auditApi = {
 
 /* ---------------- Settings ---------------- */
 
-function canEditSection(section: SettingsSectionKey) {
+/** settings.view plus the section's own permission (finance and sales sections are hidden from the CTO). */
+function requireSectionView(section: SettingsSectionKey) {
   const v = getViewer();
-  if (!v.can("settings.manage")) return { ok: false, reason: "You can view settings but not change them." };
-  if (sectionMeta(section).protected && v.employee.level > 2) return { ok: false, reason: "Only the Owner or CEO can change this section." };
+  if (!v.can("settings.view") || !canViewSection(sectionMeta(section), v.can)) notFound("Settings");
+  return v;
+}
+
+/**
+ * The Director changes every section (settings.manage); ★ sections also need the Director role and a step-up
+ * in the UI. The CEO / Founder / Owner and everyone else with settings.view can only view.
+ */
+function canEditSection(section: SettingsSectionKey) {
+  const v = requireSectionView(section);
+  if (!v.can("settings.manage")) return { ok: false, reason: "View only. The Director changes settings." };
+  if (sectionMeta(section).protected && v.employee.role !== "director") return { ok: false, reason: "Only the Director changes this section, with step-up." };
   return { ok: true as const };
 }
 
@@ -125,7 +136,7 @@ export const settingsApi = {
   /** GET /settings/:section */
   get: (section: SettingsSectionKey) =>
     mock<SettingsRecord>(() => {
-      if (!getViewer().can("settings.view")) notFound("Settings");
+      requireSectionView(section);
       const rec = settingsTable().find((s) => s.section === section);
       if (!rec) notFound("Settings section");
       if (section === "tax-slabs") return { ...rec, values: { slabs: currentTaxSlabs() } };
@@ -154,7 +165,7 @@ export const settingsApi = {
   /** GET /audit?recordType=settings&recordId=:section (recent changes panel) */
   history: (section: SettingsSectionKey) =>
     mock(() => {
-      if (!getViewer().can("settings.view")) notFound("Settings");
+      requireSectionView(section);
       return auditTable()
         .filter((r) => r.recordType === "settings" && r.recordId === section)
         .sort((a, b) => b.seq - a.seq)
@@ -172,7 +183,7 @@ export const settingsApi = {
   saveWeights: (kind: WeightsVersion["kind"], weights: Record<string, number>, reason: string) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("performance.weights") && !v.can("settings.manage")) throw new ApiError("forbidden", "Only the Director and above set score weights.", 403);
+      if (!v.can("performance.weights")) throw new ApiError("forbidden", "Only the Director sets score weights.", 403);
       const total = Object.values(weights).reduce((a, b) => a + b, 0);
       if (total !== 100) throw new ApiError("validation", `Weights must add up to 100% (now ${total}%).`);
       const prev = weightsTable().filter((w) => w.kind === kind).sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
@@ -196,6 +207,11 @@ export const settingsApi = {
 
 /* ---------------- Backups ---------------- */
 
+/** The CTO runs backups and restore tests; the Director administers settings. The CEO / Founder / Owner views only. */
+export function canRunBackup(v: Pick<ReturnType<typeof getViewer>, "can" | "employee">) {
+  return v.can("settings.manage") || (v.employee.role === "cto" && v.can("backup.view"));
+}
+
 export const backupApi = {
   /** GET /backups/status */
   status: () =>
@@ -204,11 +220,11 @@ export const backupApi = {
       return backupTable()[0];
     }),
 
-  /** POST /backups/run (manual backup outside the nightly schedule) */
+  /** POST /backups/run (manual backup outside the nightly schedule): the Director or the CTO (who runs backups). */
   runNow: () =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("settings.manage")) throw new ApiError("forbidden", "Only the Director and above can start a backup.", 403);
+      if (!canRunBackup(v)) throw new ApiError("forbidden", "Only the CTO and the Director can start a backup.", 403);
       const s = backupTable()[0];
       const at = new Date().toISOString();
       s.recent.unshift({ id: uid("bk"), at, kind: "daily", sizeMb: (s.recent[0]?.sizeMb ?? 840) + 2, ok: true, durationMin: 8 });

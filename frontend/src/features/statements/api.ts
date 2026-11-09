@@ -118,11 +118,11 @@ export const statementsApi = {
       };
     }, { delay: 250 }),
 
-  /** POST /statements/:type/mark-final (only when every check passes) */
+  /** POST /statements/:type/mark-final (the Director only, when every check passes) */
   markFinal: (p: StatementParams) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("statements.view") || !(v.can("finance.entry_approve") || v.can("finance.close"))) throw new ApiError("forbidden", "You can't mark statements final.", 403);
+      if (!v.can("statements.view") || !v.can("finance.entry_approve")) throw new ApiError("forbidden", "Only the Director marks statements final.", 403);
       const from = dayStart(p.from);
       const to = dayEnd(p.to);
       const built = build(buildContext(), p, from, to);

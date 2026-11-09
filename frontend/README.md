@@ -29,24 +29,24 @@ npm run dev          # http://localhost:3000
 
 ## Demo personas (mock mode)
 
-The login page lists every persona; one click signs in. Levels 1–3 and the finance duty person also see the 2FA screen (any 6 digits).
+The login page lists every persona; one click signs in. The CEO / Founder / Owner, Director, CTO and Finance also see the 2FA screen (any 6 digits).
 
 - Switch persona without signing out: avatar menu → **View as…**
-- Open any page directly as a persona: add `?as=ACV-0007` to the URL, e.g. `http://localhost:3000/approvals?as=ACV-0006`
+- Open any page directly as a persona: add `?as=ACV-0003` to the URL, e.g. `http://localhost:3000/approvals?as=ACV-0003`
 - See every screen's error state: add `?mockError=1`
+
+The company structure is fixed (spec §2): **CEO / Founder / Owner → Director → CTO (→ Engineering), Sales, Finance**. The CEO / Founder / Owner sees everything and approves nothing; the **Director approves**; the **Finance** person prepares.
 
 | Emp-ID | Who | Good for |
 |---|---|---|
-| ACV-0001 | Owner | Everything, settings, reopen month |
-| ACV-0002 | CEO | Payroll and journal approvals, company home |
-| ACV-0003 | Director (acts as sales manager) | Pay fields, finance review, commission |
-| ACV-0004 | CTO | Activity, security alerts, integrations |
-| ACV-0005 | HR lead | Onboarding, personal details |
-| ACV-0006 | Engineering team lead | Assigning tasks, reviews, workload |
-| ACV-0007 | Developer | The employee experience |
-| ACV-0009 | Sales executive | My sales day, leads, pipeline |
-| ACV-0010 | Accounts officer (finance duty) | Journal entries, payroll prep (maker side) |
-| ACV-0014 | Sales team lead | Targets, confirming Won deals |
+| ACV-0001 | CEO / Founder / Owner (L1) | Seeing everything: company home, every approval in progress (read-only) |
+| ACV-0003 | Director (L2): the approver, HR duty, sales manager | Approving payroll, journal entries, month close, leave, Won deals, commission; settings |
+| ACV-0004 | CTO (L3) | Engineering tasks and reviews, engineers' leave, security alerts, integrations |
+| ACV-0010 | Finance (L4) | Journal entries, payroll preparation, invoices, reconciliation, month close |
+| ACV-0009 | Sales executive (L4) | My sales day, leads, pipeline |
+| ACV-0007 | Software developer (L5) | The engineering employee experience |
+
+Also available: ACV-0012 and ACV-0014 (Sales), ACV-0006, ACV-0008, ACV-0011 and ACV-0013 (Engineering).
 
 ## Where things are
 

@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { toast } from "sonner";
-import { BookOpen, CircleCheck, FileSpreadsheet, Landmark, Lock, Send, Undo2, CornerDownLeft, Calculator, ClipboardCheck, BadgeCheck } from "lucide-react";
+import { BookOpen, CircleCheck, FileSpreadsheet, Landmark, Lock, Send, Undo2, CornerDownLeft, Calculator, ClipboardCheck } from "lucide-react";
 import { PageHeader, SectionTitle } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,8 +20,8 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatMonthKey } from "@/lib/dates";
 import { formatMoney, toNumber } from "@/lib/format";
 import type { RunAction } from "../api";
-import { useAdjustments, usePayrollRun, useRunAction } from "../hooks";
-import { isLocked, journalPreview, nextMonthKey, stageIndex } from "../logic";
+import { useAdjustments, useCanPreparePayroll, usePayrollRun, useRunAction } from "../hooks";
+import { isLocked, journalPreview, nextMonthKey, PAYROLL_APPROVER, stageIndex } from "../logic";
 import type { PayrollLine, PayrollRun } from "../types";
 import { RunLinesTable } from "./run-lines-table";
 import { StageBadge, StagePipeline } from "./stage-pipeline";
@@ -106,6 +106,7 @@ function RunDetailInner({ id }: { id: string }) {
   const stepUp = useStepUp();
   const askReason = useReason();
   const exportData = useExport();
+  const canPrepare = useCanPreparePayroll();
   const [postOpen, setPostOpen] = React.useState(false);
 
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -121,6 +122,9 @@ function RunDetailInner({ id }: { id: string }) {
   const { run, lines } = q.data;
   const me = viewer.employee.empId;
   const isMaker = run.preparedBy === me;
+  const canApprove = viewer.can("payroll.approve");
+  // Oversight only (the CEO / Founder / Owner): sees every run, acts on none.
+  const viewOnly = !canPrepare && !canApprove;
   const name = (empId?: string) => lookup.employee(empId)?.name ?? empId ?? "—";
   const monthName = formatMonthKey(run.month);
   const carried = (adjustments.data ?? []).filter((a) => a.toMonth === run.month);
@@ -133,8 +137,8 @@ function RunDetailInner({ id }: { id: string }) {
     );
 
   const sendBack = async () => {
-    const reason = await askReason({ title: `Send ${monthName} payroll back`, description: "The finance duty person fixes it and prepares it again. Your reason is saved with the run.", confirmLabel: "Send back", destructive: true });
-    if (reason) run_("return", "Sent back to the finance duty person", reason);
+    const reason = await askReason({ title: `Send ${monthName} payroll back`, description: "Finance fixes it and prepares it again. Your reason is saved with the run.", confirmLabel: "Send back", destructive: true });
+    if (reason) run_("return", "Sent back to Finance", reason);
   };
 
   const approve = async () => {
@@ -147,7 +151,6 @@ function RunDetailInner({ id }: { id: string }) {
 
   // What the viewer can do now.
   let action: React.ReactNode = null;
-  const canPrepare = viewer.can("payroll.prepare");
   switch (run.stage) {
     case "draft":
       action = canPrepare ? (
@@ -158,27 +161,14 @@ function RunDetailInner({ id }: { id: string }) {
       break;
     case "calculated":
       action = canPrepare ? (
-        <Button onClick={() => run_("prepare", "Prepared and sent to the Director for review")} loading={act.isPending}>
-          <ClipboardCheck /> Mark prepared and send for review
+        <Button onClick={() => run_("prepare", "Prepared and sent to the Director for approval")} loading={act.isPending}>
+          <ClipboardCheck /> Mark prepared and send for approval
         </Button>
       ) : null;
       break;
     case "prepared":
       action =
-        viewer.can("payroll.review") && viewer.employee.level === 3 && !isMaker ? (
-          <>
-            <Button variant="outline" onClick={sendBack}>
-              <Undo2 /> Send back
-            </Button>
-            <Button onClick={() => run_("review", "Reviewed and sent to the CEO")} loading={act.isPending}>
-              <BadgeCheck /> Mark reviewed
-            </Button>
-          </>
-        ) : null;
-      break;
-    case "reviewed":
-      action =
-        viewer.can("payroll.approve") && !isMaker ? (
+        canApprove && !isMaker ? (
           <>
             <Button variant="outline" onClick={sendBack}>
               <Undo2 /> Send back
@@ -213,13 +203,12 @@ function RunDetailInner({ id }: { id: string }) {
   }
 
   const waitingFor: Record<string, string> = {
-    draft: "the finance duty person to lock attendance",
-    calculated: "the finance duty person to prepare it",
-    prepared: `${name("ACV-0003")} (Director) to review`,
-    reviewed: `${name("ACV-0002")} (CEO) to approve`,
-    approved: "the finance duty person to send payslips",
-    payslips_sent: "the finance duty person to post it",
-    posted: "the bank transfer",
+    draft: "Finance to lock attendance",
+    calculated: "Finance to prepare it",
+    prepared: `${name(PAYROLL_APPROVER)} (Director) to approve`,
+    approved: "Finance to send payslips",
+    payslips_sent: "Finance to post it",
+    posted: "Finance to record the bank transfer",
   };
 
   return (
@@ -242,7 +231,7 @@ function RunDetailInner({ id }: { id: string }) {
         }
         actions={
           stageIndex(run.stage) >= stageIndex("approved") &&
-          (viewer.can("payroll.export") || canPrepare) && (
+          viewer.can("payroll.export") && (
             <Button variant="outline" onClick={exportSheet}>
               <FileSpreadsheet /> Bank transfer sheet
             </Button>
@@ -270,14 +259,15 @@ function RunDetailInner({ id }: { id: string }) {
                     <p className="flex items-center gap-2 text-[13px] text-success">
                       <CircleCheck className="size-4" /> Paid and posted. This run is closed.
                     </p>
-                  ) : isMaker && (run.stage === "prepared" || run.stage === "reviewed") ? null : (
+                  ) : isMaker && run.stage === "prepared" ? null : (
                     <p className="text-[13px] text-muted-foreground">Waiting for {waitingFor[run.stage]}.</p>
                   ))}
               </div>
             </div>
-            {isMaker && (run.stage === "prepared" || run.stage === "reviewed") && (
-              <MakerCheckerNote reason={`You prepared this payroll, so you can't review or approve it. It is with ${run.stage === "prepared" ? `${name("ACV-0003")} (Director)` : `${name("ACV-0002")} (CEO)`}.`} />
+            {isMaker && run.stage === "prepared" && (
+              <MakerCheckerNote reason={`You prepared this payroll, so you can't approve it. It goes to ${name(PAYROLL_APPROVER)} (Director).`} />
             )}
+            {viewOnly && run.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll and the Director approves it." />}
           </CardContent>
         </Card>
 

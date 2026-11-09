@@ -59,7 +59,7 @@ export interface StageChange {
 
 export interface Handover {
   clientName: string;
-  /** Draft invoice created in Billing (Module 13), checked and sent by the finance duty person. */
+  /** Draft invoice created in Billing (Module 13), checked and sent by Finance. */
   invoiceNumber: string;
   ctoNotified: boolean;
   at: string;
@@ -79,7 +79,7 @@ export interface Deal {
   ownerEmpId: string;
   lostReason?: string;
   recontactAfter?: string;
-  /** Won by an executive waits for the sales manager (plan §20). */
+  /** Won by a salesperson waits for the Director (sales manager) to confirm (plan §20). */
   wonStatus?: "pending" | "confirmed";
   wonRequestedAt?: string;
   wonConfirmedBy?: string;

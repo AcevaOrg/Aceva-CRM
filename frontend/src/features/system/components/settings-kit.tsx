@@ -18,15 +18,18 @@ import { useSaveSettings, useSettings, useSettingsHistory } from "../hooks";
 import { sectionMeta } from "../logic";
 import type { SettingsRecord, SettingsSectionKey, SettingsValues } from "../types";
 
-/** Who may edit a section: settings.manage, and Owner/CEO for ★ sections. */
+/**
+ * Who may edit a section: settings.manage (the Director). ★ sections also need the Director role and a step-up.
+ * The CEO / Founder / Owner and others with settings.view see every value read-only.
+ */
 export function useSectionAccess(section: SettingsSectionKey) {
   const viewer = useViewer();
   const meta = sectionMeta(section);
   const canManage = !!viewer?.can("settings.manage");
-  const levelOk = !meta.protected || (viewer?.employee.level ?? 5) <= 2;
+  const roleOk = !meta.protected || viewer?.employee.role === "director";
   return {
-    canEdit: canManage && levelOk,
-    reason: !canManage ? "You can view settings but not change them." : !levelOk ? "Only the Owner or CEO can change this section." : undefined,
+    canEdit: canManage && roleOk,
+    reason: !canManage ? "View only. The Director changes settings." : !roleOk ? "Only the Director changes this section, with step-up." : undefined,
     protected: !!meta.protected,
   };
 }
@@ -40,7 +43,7 @@ export function useSectionSaver(section: SettingsSectionKey) {
   const run = async (values: SettingsValues) => {
     const reason = await askReason({ title: `Save ${meta.label.toLowerCase()}`, description: "Every settings change is saved in the audit log with your reason.", confirmLabel: "Save change" });
     if (!reason) return false;
-    if (meta.protected && !(await stepUp({ action: `Change ${meta.label.toLowerCase()}`, detail: "Owner or CEO only." }))) return false;
+    if (meta.protected && !(await stepUp({ action: `Change ${meta.label.toLowerCase()}`, detail: "★ section: the Director only." }))) return false;
     try {
       await save.mutateAsync({ section, values, reason });
       toast.success(`${meta.label} saved`, { description: "Logged in the audit trail." });
@@ -159,7 +162,7 @@ export function RecentChanges({ section }: { section: SettingsSectionKey }) {
 export function ProtectedBadge() {
   return (
     <Badge tone="warning">
-      <Star className="fill-current" /> Owner or CEO
+      <Star className="fill-current" /> Director only · step-up
     </Badge>
   );
 }

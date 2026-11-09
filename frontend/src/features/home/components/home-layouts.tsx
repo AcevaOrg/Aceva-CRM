@@ -1,10 +1,11 @@
 "use client";
 /**
- * Widget arrangement per persona (plan §17 "Home dashboards by level").
+ * Home layout per role (plan §17 "Home dashboards by level", adapted to Aceva's structure):
+ * CEO / Founder / Owner (sees everything, approves nothing) · Director (approves) · CTO · Sales · Finance · Engineering.
  * Widgets hide themselves when the viewer lacks access, so each layout stays safe.
  */
 import type { HomeVariant } from "./home-screen";
-import { ApprovalsWidget, MyTasksWidget, ReviewQueueWidget, TeamOverdueWidget, TeamWorkloadWidget } from "./core-widgets";
+import { ApprovalsWidget, MyTasksWidget, OversightWidget, ReviewQueueWidget, TeamOverdueWidget, TeamWorkloadWidget } from "./core-widgets";
 import { AnnouncementsWidget, BillingWidget, MeetingsWidget } from "./billing-comms-widgets";
 import { OnlineNowWidget, SecurityAlertsWidget } from "./control-widgets";
 import { FinanceKpiRow, RevenueExpenseWidget } from "./finance-widgets";
@@ -18,6 +19,7 @@ const Stack = ({ children }: { children: React.ReactNode }) => <div className="g
 
 export function HomeLayout({ variant }: { variant: HomeVariant }) {
   switch (variant) {
+    /* L5 Engineering and development */
     case "employee":
       return (
         <Stack>
@@ -32,6 +34,7 @@ export function HomeLayout({ variant }: { variant: HomeVariant }) {
         </Stack>
       );
 
+    /* L4 Sales */
     case "sales":
       return (
         <Stack>
@@ -46,6 +49,7 @@ export function HomeLayout({ variant }: { variant: HomeVariant }) {
         </Stack>
       );
 
+    /* L4 Finance: prepares; the Director approves */
     case "finance":
       return (
         <Stack>
@@ -55,86 +59,64 @@ export function HomeLayout({ variant }: { variant: HomeVariant }) {
             <MyTasksWidget />
             <PayrollStageWidget />
             <BillingWidget />
-            <AnnouncementsWidget />
+            <RevenueExpenseWidget />
             <LeaveBalanceWidget />
-            <MeetingsWidget />
+            <AnnouncementsWidget />
           </Grid>
         </Stack>
       );
 
-    case "lead":
+    /* L3 CTO: runs engineering */
+    case "cto":
       return (
         <Stack>
           <CheckInCard compact />
-          <TeamKpiRow />
+          <TeamKpiRow scopeLabel="team" />
           <Grid>
             <TeamTodayCard />
             <TeamWorkloadWidget />
             <ReviewQueueWidget />
             <ApprovalsWidget />
-            <TeamOverdueWidget />
-            <AnnouncementsWidget />
-          </Grid>
-        </Stack>
-      );
-
-    case "sales_lead":
-      return (
-        <Stack>
-          <CheckInCard compact />
-          <TeamKpiRow />
-          <MySalesDayWidget />
-          <Grid>
-            <PipelineWidget />
-            <ApprovalsWidget />
-            <TeamTodayCard />
-            <AnnouncementsWidget />
-          </Grid>
-        </Stack>
-      );
-
-    case "cto":
-      return (
-        <Stack>
-          <TeamKpiRow scopeLabel="department" />
-          <Grid>
-            <ApprovalsWidget />
             <SecurityAlertsWidget />
-            <OnlineNowWidget />
-            <TeamWorkloadWidget />
             <TeamOverdueWidget />
+            <OnlineNowWidget />
             <BackupWidget />
           </Grid>
         </Stack>
       );
 
+    /* L2 Director: the approver for the company; HR duty and sales manager */
     case "director":
       return (
         <Stack>
-          <TeamKpiRow scopeLabel="department" />
+          <CheckInCard compact />
+          <TeamKpiRow scopeLabel="reporting line" />
           <FinanceKpiRow />
           <Grid>
             <ApprovalsWidget />
-            <RevenueExpenseWidget />
             <PayrollStageWidget />
+            <RevenueExpenseWidget />
             <PipelineWidget />
             <BillingWidget />
-            <TeamOverdueWidget />
+            <TeamTodayCard />
           </Grid>
+          <MySalesDayWidget />
         </Stack>
       );
 
+    /* L1 CEO / Founder / Owner: sees every activity, approves nothing (the Director approves) */
     case "executive":
     default:
       return (
         <Stack>
           <FinanceKpiRow />
+          <TeamKpiRow scopeLabel="company" />
           <Grid>
+            <OversightWidget />
             <RevenueExpenseWidget />
-            <ApprovalsWidget />
-            <SecurityAlertsWidget />
-            <PipelineWidget />
             <PayrollStageWidget />
+            <PipelineWidget />
+            <SecurityAlertsWidget />
             <OnlineNowWidget />
             <BillingWidget />
             <BackupWidget />

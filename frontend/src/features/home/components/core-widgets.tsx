@@ -2,13 +2,13 @@
 /** Home widgets built on Tasks (M5) and the Approvals inbox. */
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlarmClock, ClipboardCheck, Gauge, Inbox, ListTodo } from "lucide-react";
+import { AlarmClock, ClipboardCheck, Eye, Gauge, Inbox, ListTodo } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DeadlineChip } from "@/components/shared/chips";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { Money } from "@/components/shared/money";
 import { WorkloadBar } from "@/components/shared/metrics";
-import { useApprovals } from "@/features/approvals/hooks";
+import { useApprovals, useOversight } from "@/features/approvals/hooks";
 import { APPROVAL_TYPE_LABEL } from "@/features/approvals/types";
 import { useTasks, useWorkload } from "@/features/tasks/hooks";
 import { isOpen } from "@/features/tasks/logic";
@@ -72,6 +72,41 @@ export function ApprovalsWidget({ limit = 5, title = "Waiting for you" }: { limi
         </ul>
       ) : (
         <WidgetEmpty>Nothing is waiting for your decision.</WidgetEmpty>
+      )}
+    </Widget>
+  );
+}
+
+/** CEO / Founder / Owner: everything waiting for the Director (and others), view only. */
+export function OversightWidget() {
+  const q = useOversight();
+  const items = q.data ?? [];
+  return (
+    <Widget title="Waiting for the Director" icon={<Eye />} href="/approvals" linkLabel={items.length ? `All ${items.length}` : "Open"}>
+      {q.isPending ? (
+        <WidgetSkeleton />
+      ) : items.length ? (
+        <>
+          <ul className="-mx-2 grid">
+            {items.slice(0, 5).map((i) => (
+              <li key={`${i.waitingFor}-${i.id}`}>
+                <Link href={i.href} className="flex items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-muted">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-medium">{i.title}</span>
+                    <span className="block truncate text-[11.5px] text-muted-foreground">
+                      {APPROVAL_TYPE_LABEL[i.type]} · waiting {formatRelative(i.createdAt).replace(" ago", "")}
+                    </span>
+                  </span>
+                  {i.amount && <Money value={i.amount} compact className="text-[12.5px]" />}
+                  <EmpChip empId={i.waitingFor} size="sm" showId={false} link={false} className="hidden w-28 sm:inline-flex" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[12px] text-muted-foreground">View only. You see every approval; the Director makes the decision.</p>
+        </>
+      ) : (
+        <WidgetEmpty>Nothing is waiting anywhere in the company.</WidgetEmpty>
       )}
     </Widget>
   );

@@ -5,6 +5,7 @@ import { Ban, Download, MailCheck, MailQuestion, Plus, Upload, Users } from "luc
 import { Button } from "@/components/ui/button";
 import { NativeSelect } from "@/components/ui/controls";
 import { PageHeader } from "@/components/layout/page-header";
+import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { Can, RequireAccess } from "@/components/shared/can";
 import { DataTable, type Column } from "@/components/shared/data-table";
 import { useExport } from "@/components/shared/dialogs";
@@ -14,7 +15,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative } from "@/lib/dates";
-import type { LeadRow } from "../api";
+import { canDoSalesWork, ownsSalesWork, type LeadRow } from "../api";
 import { useLeads } from "../hooks";
 import { CHECK_META, SOURCE_LABEL, STAGE_META } from "../logic";
 import type { EmailCheck, LeadSource } from "../types";
@@ -35,6 +36,10 @@ function LeadsInner() {
   const router = useRouter();
   const viewer = useViewer();
   const team = !!viewer?.can(["sales.team", "sales.all"]);
+  // Salespeople add and import their own leads; the Director (sales manager) can also check emails.
+  // The CEO / Founder / Owner sees every lead but changes nothing.
+  const canAdd = !!viewer && ownsSalesWork(viewer);
+  const canWork = !!viewer && canDoSalesWork(viewer);
   const leads = useLeads();
   const exportData = useExport();
   const [add, setAdd] = useUrlState<string>("add", "");
@@ -106,23 +111,35 @@ function LeadsInner() {
         seal="confidential"
         actions={
           <>
-            <Button variant="outline" onClick={() => setVerifyOpen(true)}>
-              <MailCheck /> Verify emails{unchecked ? ` (${unchecked})` : ""}
-            </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload /> Import CSV
-            </Button>
+            {canWork && (
+              <Button variant="outline" onClick={() => setVerifyOpen(true)}>
+                <MailCheck /> Verify emails{unchecked ? ` (${unchecked})` : ""}
+              </Button>
+            )}
+            {canAdd && (
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <Upload /> Import CSV
+              </Button>
+            )}
             <Can permission="sales.export">
               <Button variant="outline" onClick={() => exportData({ title: "Lead list", seal: "confidential", formats: ["xlsx", "csv"], rows: rows.length })}>
                 <Download /> Export
               </Button>
             </Can>
-            <Button onClick={() => setAdd("1")}>
-              <Plus /> Add lead
-            </Button>
+            {canAdd && (
+              <Button onClick={() => setAdd("1")}>
+                <Plus /> Add lead
+              </Button>
+            )}
           </>
         }
       />
+
+      {!canWork && (
+        <div className="mb-5">
+          <MakerCheckerNote reason="View only. Salespeople add and work their own leads; the Director manages the sales team." />
+        </div>
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Leads" value={all.length} hint={team ? "in the team" : "owned by you"} icon={<Users />} accent="var(--zone-sales)" />
@@ -211,16 +228,16 @@ function LeadsInner() {
             <EmptyState
               icon={<Users />}
               title={all.length ? "No leads match these filters" : "No leads yet"}
-              description={all.length ? "Clear a filter to see more." : "Add a lead or import the CSV you exported from Apollo."}
-              action={!all.length ? <Button onClick={() => setAdd("1")}><Plus /> Add lead</Button> : undefined}
+              description={all.length ? "Clear a filter to see more." : canAdd ? "Add a lead or import the CSV you exported from Apollo." : "Leads appear here when salespeople add them."}
+              action={!all.length && canAdd ? <Button onClick={() => setAdd("1")}><Plus /> Add lead</Button> : undefined}
             />
           }
         />
       )}
 
-      <AddLeadSheet open={add === "1"} onOpenChange={(o) => setAdd(o ? "1" : "")} />
-      {importOpen && <ImportLeadsDialog open onOpenChange={setImportOpen} />}
-      {verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
+      {canAdd && <AddLeadSheet open={add === "1"} onOpenChange={(o) => setAdd(o ? "1" : "")} />}
+      {canAdd && importOpen && <ImportLeadsDialog open onOpenChange={setImportOpen} />}
+      {canWork && verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
     </>
   );
 }

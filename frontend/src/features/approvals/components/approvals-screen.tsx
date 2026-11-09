@@ -3,7 +3,7 @@ import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  BadgeCheck, BookOpen, CalendarDays, CalendarCheck, Check, ClipboardCheck, Gauge, Hourglass, Inbox, Lock, Scale, Trophy, Wallet, HandCoins, Info, X,
+  BadgeCheck, BookOpen, CalendarDays, CalendarCheck, Check, ClipboardCheck, Eye, Gauge, Hourglass, Inbox, Lock, Scale, Trophy, Wallet, HandCoins, Info, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -18,7 +18,8 @@ import { EmptyState, QueryState } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
 import { formatDate, formatDateShort, formatRelative } from "@/lib/dates";
 import { cn } from "@/lib/utils";
-import { useApprovals, useDecide } from "../hooks";
+import { useApprovals, useDecide, useOversight } from "../hooks";
+import { useViewer } from "@/lib/auth/viewer";
 import { APPROVAL_TYPE_LABEL, type ApprovalItem, type ApprovalType } from "../types";
 
 const ICON: Record<ApprovalType, React.ElementType> = {
@@ -145,15 +146,69 @@ function ApprovalRow({ item }: { item: ApprovalItem }) {
   );
 }
 
+/** Read-only list of items waiting for approvers below the viewer (spec §2: the CEO / Founder / Owner sees, the Director approves). */
+function OversightSection({ prominent }: { prominent: boolean }) {
+  const q = useOversight();
+  const items = q.data ?? [];
+  if (q.isPending || (!items.length && !prominent)) return null;
+  return (
+    <section className="mt-8">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+            <Eye className="size-4 text-muted-foreground" /> Waiting for others <span className="rounded-full bg-muted px-1.5 text-[11px] tabular">{items.length}</span>
+          </h2>
+          <p className="text-[13px] text-muted-foreground">View only. The person named on each row decides; you can follow progress here.</p>
+        </div>
+      </div>
+      {items.length ? (
+        <Card className="overflow-hidden">
+          <ul className="divide-y divide-border">
+            {items.map((i) => {
+              const Icon = ICON[i.type];
+              return (
+                <li key={`${i.waitingFor}-${i.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5 lg:flex-nowrap">
+                  <span className="grid size-9 shrink-0 place-content-center rounded-xl" style={{ background: `color-mix(in oklch, ${COLOR[i.type]} 13%, transparent)`, color: COLOR[i.type] }}>
+                    <Icon className="size-4" />
+                  </span>
+                  <div className="min-w-0 flex-1 basis-[50%]">
+                    <Link href={i.href} className="block truncate text-[13.5px] font-medium hover:underline">
+                      {i.title}
+                    </Link>
+                    <p className="truncate text-[12px] text-muted-foreground">
+                      {APPROVAL_TYPE_LABEL[i.type]} · waiting {formatRelative(i.createdAt).replace(" ago", "")}
+                    </p>
+                  </div>
+                  {i.amount && <Money value={i.amount} className="text-[12.5px]" />}
+                  <EmpChip empId={i.requester} size="sm" subtitle="Requested by" className="w-40" />
+                  <EmpChip empId={i.waitingFor} size="sm" subtitle="Waiting for" className="w-40" />
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      ) : (
+        <EmptyState compact icon={<Inbox />} title="Nothing is waiting" description="No approvals are pending anywhere in your reporting line." />
+      )}
+    </section>
+  );
+}
+
 export function ApprovalsScreen() {
   const q = useApprovals();
+  const viewer = useViewer();
   const [tab, setTab] = useUrlState<string>("type", "all");
+  const observer = viewer?.employee.role === "ceo";
 
   return (
     <>
       <PageHeader
         title="Approvals"
-        description="Everything waiting for your decision, from every module, in one place. Oldest first."
+        description={
+          observer
+            ? "You see every approval in the company. The Director decides; anything only you can sign off (the Director's own requests) is listed first."
+            : "Everything waiting for your decision, from every module, in one place. Oldest first."
+        }
         actions={
           <span className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
             <BadgeCheck className="size-4 text-success" /> Nobody approves their own request
@@ -187,7 +242,12 @@ export function ApprovalsScreen() {
                   </ul>
                 </Card>
               ) : (
-                <EmptyState icon={<Inbox />} title="All clear" description="Nothing is waiting for your decision. New requests appear here and in the bell." />
+                <EmptyState
+                  compact={observer}
+                  icon={<Inbox />}
+                  title="All clear"
+                  description={observer ? "Nothing needs your sign-off. Approvals are made by the Director; follow them below." : "Nothing is waiting for your decision. New requests appear here and in the bell."}
+                />
               )}
               {routedUp > 0 && (
                 <p className="mt-4 flex items-center gap-2 text-[12.5px] text-muted-foreground">
@@ -198,6 +258,7 @@ export function ApprovalsScreen() {
           );
         }}
       </QueryState>
+      <OversightSection prominent={observer} />
     </>
   );
 }

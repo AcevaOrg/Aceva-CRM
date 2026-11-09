@@ -52,6 +52,8 @@ export interface ApprovalItem {
   needsRating?: boolean;
   approveLabel?: string;
   rejectLabel?: string;
+  /** Oversight lists only: the Emp-ID of the person who must decide. */
+  waitingFor?: string;
 }
 
 export interface DecideOptions {

@@ -1,4 +1,9 @@
-/** Seed: customers, invoices, payments, reminders, subscriptions (Module 13). */
+/**
+ * Seed: customers, invoices, payments, reminders, subscriptions (Module 13).
+ * Invoices, payments, renewal decisions and manual usage readings are done by the Director (finance duty).
+ * The CTO is the responsible person for technical subscriptions (hosting, domains, AI, dev tools, APIs)
+ * and gets their renewal reminders, but does not see the register or its costs (no subscriptions.view).
+ */
 import type {
   Customer, Invoice, InvoiceLine, MonthlyBilling, Payment, ReminderEvent, ReminderRule, RenewalDecision, Subscription,
 } from "@/features/billing/types";
@@ -93,7 +98,7 @@ function build(s: Seed): Invoice {
     source: s.source,
     ledgerEntryNumber: s.status ? undefined : `JE-2026-0${240 + s.n}`,
     notes: s.notes,
-    createdBy: s.source ? "ACV-0010" : s.n % 2 ? "ACV-0010" : "ACV-0003",
+    createdBy: "ACV-0003",
     createdAt: daysFromNow(s.issued - 1, "16:00"),
     sentAt: s.status ? undefined : daysFromNow(s.issued, "11:05"),
     cancelReason: s.status === "cancelled" ? s.notes : undefined,
@@ -124,7 +129,7 @@ export function seedPayments(): Payment[] {
         method: inv.currency === "USD" ? "bank_transfer" : (["bank_transfer", "cheque", "bank_transfer"] as const)[k % 3],
         reference: inv.currency === "USD" ? `WISE-${48210 + k * 37}` : `IBFT ${7731200 + k * 911}`,
         ledgerEntryNumber: `JE-2026-0${300 + k}`,
-        recordedBy: "ACV-0010",
+        recordedBy: "ACV-0003",
       });
     });
   }
@@ -168,13 +173,13 @@ const pkr = (n: number) => money(n, "PKR");
 export function seedSubscriptions(): Subscription[] {
   return [
     {
-      id: "sub-apollo", vendor: "Apollo.io", product: "Sales prospecting and sequences", category: "sales_tools", ownerEmpId: "ACV-0014",
+      id: "sub-apollo", vendor: "Apollo.io", product: "Sales prospecting and sequences", category: "sales_tools", ownerEmpId: "ACV-0003",
       plan: "Professional · 3 seats", seats: 3, cost: usd(297), period: "monthly", renewalDate: daysFromNow(6, "00:00"), status: "active", alertDaysBefore: 7,
       usage: { metric: "Export credits", used: 3820, limit: 6000, unit: "credits", source: "api", updatedAt: minutesAgo(14), trend: [1900, 2300, 2650, 2980, 3260, 3510, 3820] },
       notes: "Master API key used by Module 16 is changed every 3 months.",
     },
     {
-      id: "sub-mv", vendor: "MillionVerifier", product: "Email verification credits", category: "sales_tools", ownerEmpId: "ACV-0014",
+      id: "sub-mv", vendor: "MillionVerifier", product: "Email verification credits", category: "sales_tools", ownerEmpId: "ACV-0003",
       plan: "50,000 credits pack", cost: usd(129), period: "usage", renewalDate: daysFromNow(9, "00:00"), status: "active", alertDaysBefore: 10,
       usage: { metric: "Credits used", used: 42550, limit: 50000, unit: "credits", source: "api", updatedAt: minutesAgo(22), trend: [28100, 30900, 33400, 35800, 37950, 40100, 42550], estimatedCost: usd(110) },
       notes: "About 9 days of credits left at this week's rate.",
@@ -182,7 +187,7 @@ export function seedSubscriptions(): Subscription[] {
     {
       id: "sub-hostinger-mail", vendor: "Hostinger", product: "Business email · outreach mailboxes", category: "domains_email", ownerEmpId: "ACV-0004",
       plan: "Business Email · 6 mailboxes", seats: 6, cost: usd(215.28), period: "yearly", renewalDate: daysFromNow(47, "00:00"), status: "active", alertDaysBefore: 30,
-      usage: { metric: "Mailboxes in use", used: 6, limit: 10, unit: "mailboxes", source: "manual", updatedAt: daysFromNow(-2, "10:20"), enteredBy: "ACV-0004" },
+      usage: { metric: "Mailboxes in use", used: 6, limit: 10, unit: "mailboxes", source: "manual", updatedAt: daysFromNow(-2, "10:20"), enteredBy: "ACV-0003" },
     },
     {
       id: "sub-dom-1", vendor: "Hostinger", product: "Outreach domain acevahq.com", category: "domains_email", ownerEmpId: "ACV-0004",
@@ -200,7 +205,7 @@ export function seedSubscriptions(): Subscription[] {
     {
       id: "sub-claude", vendor: "Anthropic", product: "Claude Team", category: "ai", ownerEmpId: "ACV-0004",
       plan: "Team · 5 seats", seats: 5, cost: usd(150), period: "monthly", renewalDate: daysFromNow(19, "00:00"), status: "active", alertDaysBefore: 7,
-      usage: { metric: "Seats used", used: 5, limit: 5, unit: "seats", source: "manual", updatedAt: daysFromNow(-6, "15:00"), enteredBy: "ACV-0004" },
+      usage: { metric: "Seats used", used: 5, limit: 5, unit: "seats", source: "manual", updatedAt: daysFromNow(-6, "15:00"), enteredBy: "ACV-0003" },
     },
     {
       id: "sub-chatgpt", vendor: "OpenAI", product: "ChatGPT Team", category: "ai", ownerEmpId: "ACV-0003",
@@ -232,9 +237,9 @@ export function seedSubscriptions(): Subscription[] {
       usage: { metric: "Errors this month", used: 18400, limit: 50000, unit: "events", source: "api", updatedAt: minutesAgo(35), trend: [5200, 6100, 7000, 8100, 9300, 10500, 18400] },
     },
     {
-      id: "sub-maps", vendor: "Google", product: "Maps Platform API (client projects)", category: "api", ownerEmpId: "ACV-0006",
+      id: "sub-maps", vendor: "Google", product: "Maps Platform API (client projects)", category: "api", ownerEmpId: "ACV-0004",
       plan: "Pay as you go · USD 200 monthly credit", cost: pkr(0), period: "usage", renewalDate: daysFromNow(21, "00:00"), status: "active", alertDaysBefore: 5,
-      usage: { metric: "Map loads", used: 21800, limit: 28000, unit: "loads", source: "manual", updatedAt: daysFromNow(-3, "12:10"), enteredBy: "ACV-0006", estimatedCost: usd(0) },
+      usage: { metric: "Map loads", used: 21800, limit: 28000, unit: "loads", source: "manual", updatedAt: daysFromNow(-3, "12:10"), enteredBy: "ACV-0003", estimatedCost: usd(0) },
     },
   ];
 }
@@ -243,8 +248,8 @@ export function seedRenewalDecisions(): RenewalDecision[] {
   return [
     { id: "rd1", subscriptionId: "sub-apollo", decision: "changed", at: daysFromNow(-24, "12:00"), by: "ACV-0003", note: "Upgraded from Basic to Professional for sequences and the dialer.", newCost: usd(297) },
     { id: "rd2", subscriptionId: "sub-salesforce", decision: "cancelled", at: daysFromNow(-40, "10:30"), by: "ACV-0003", note: "Module 15 replaces it. Avoids the Enterprise API add-on." },
-    { id: "rd3", subscriptionId: "sub-github", decision: "renewed", at: daysFromNow(-3, "09:10"), by: "ACV-0004", note: "Same plan, 4 seats." },
-    { id: "rd4", subscriptionId: "sub-claude", decision: "renewed", at: daysFromNow(-11, "15:20"), by: "ACV-0004" },
-    { id: "rd5", subscriptionId: "sub-mv", decision: "renewed", at: daysFromNow(-30, "11:00"), by: "ACV-0014", note: "Bought a 50,000 credit pack." },
+    { id: "rd3", subscriptionId: "sub-github", decision: "renewed", at: daysFromNow(-3, "09:10"), by: "ACV-0003", note: "Same plan, 4 seats." },
+    { id: "rd4", subscriptionId: "sub-claude", decision: "renewed", at: daysFromNow(-11, "15:20"), by: "ACV-0003" },
+    { id: "rd5", subscriptionId: "sub-mv", decision: "renewed", at: daysFromNow(-30, "11:00"), by: "ACV-0003", note: "Bought a 50,000 credit pack." },
   ];
 }

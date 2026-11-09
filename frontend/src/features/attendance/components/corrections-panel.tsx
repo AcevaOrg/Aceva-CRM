@@ -1,6 +1,6 @@
 "use client";
 import { toast } from "sonner";
-import { ArrowRight, Check, ClipboardCheck, X } from "lucide-react";
+import { ArrowRight, Check, ClipboardCheck, Eye, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmpChip } from "@/components/shared/emp-chip";
@@ -12,6 +12,7 @@ import { useLookup } from "@/hooks/use-directory";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatRelative, formatTime } from "@/lib/dates";
 import { useCorrections, useDecideCorrection } from "../hooks";
+import { approverLabel, correctionApprover } from "../logic";
 import type { AttendanceCorrection } from "../types";
 
 export const CORRECTION_STATUS = statusMap<AttendanceCorrection["status"]>({
@@ -37,7 +38,7 @@ export function CorrectionCompare({ c }: { c: AttendanceCorrection }) {
   );
 }
 
-function CorrectionCard({ c, canDecide }: { c: AttendanceCorrection; canDecide: boolean }) {
+function CorrectionCard({ c, canDecide, viewOnlyNote }: { c: AttendanceCorrection; canDecide: boolean; viewOnlyNote?: string }) {
   const decide = useDecideCorrection();
   const askReason = useReason();
   const act = async (approve: boolean) => {
@@ -66,6 +67,11 @@ function CorrectionCard({ c, canDecide }: { c: AttendanceCorrection; canDecide: 
             {c.decisionNote ? ` · “${c.decisionNote}”` : ""}
           </p>
         )}
+        {viewOnlyNote && c.status === "pending" && (
+          <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+            <Eye className="size-3.5 shrink-0" /> {viewOnlyNote}
+          </p>
+        )}
       </div>
       {canDecide && c.status === "pending" && (
         <div className="flex gap-2">
@@ -91,7 +97,10 @@ export function CorrectionsPanel() {
     <div className="grid gap-8">
       {canApprove && (
         <section>
-          <SectionTitle title="Team requests" description="You can approve requests from people who report to you directly." />
+          <SectionTitle
+            title="Team requests"
+            description="Each request is approved by the person's manager: the CTO for Engineering, the Director for the CTO, Sales and Finance, and the CEO / Founder / Owner only for the Director's own. The rest are view only."
+          />
           <QueryState
             query={team}
             isEmpty={(d) => d.length === 0}
@@ -99,9 +108,11 @@ export function CorrectionsPanel() {
           >
             {(list) => (
               <div className="grid gap-3">
-                {list.map((c) => (
-                  <CorrectionCard key={c.id} c={c} canDecide={lookup.employee(c.empId)?.reportsTo === viewer?.employee.empId} />
-                ))}
+                {list.map((c) => {
+                  const approver = correctionApprover(c.empId, lookup.employees);
+                  const canDecide = c.empId !== viewer?.employee.empId && approver?.empId === viewer?.employee.empId;
+                  return <CorrectionCard key={c.id} c={c} canDecide={canDecide} viewOnlyNote={canDecide ? undefined : `View only. ${approverLabel(approver)} approves it.`} />;
+                })}
               </div>
             )}
           </QueryState>

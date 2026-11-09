@@ -7,7 +7,7 @@ import type {
   Account, AccountGroup, AccountKind, BankStatementLine, Bill, EntrySource, EntryStatus, ExchangeRate, FinancePeriod,
   FinanceProject, JournalEntry, JournalLine, Party, ReceivableDoc,
 } from "@/features/ledger/types";
-import { approverFor, LEVEL_APPROVER_TITLE, lineBase, m2, requiredLevel, round2 } from "@/features/ledger/logic";
+import { approverFor, ceoNotified, CEO_NOTIFY_ABOVE, lineBase, m2, round2 } from "@/features/ledger/logic";
 import type { Currency } from "@/types";
 import { EMPLOYEES } from "./people";
 import { dayOfMonth } from "../time";
@@ -151,6 +151,11 @@ export interface LedgerSeed {
 
 const CAPITAL_OR_LOAN = new Set(["3100", "2700"]);
 
+/** The finance person prepares every entry, runs the close and records bills (maker). */
+const FINANCE = "ACV-0010";
+/** The Director approves every entry and the month close (checker). */
+const DIRECTOR = "ACV-0003";
+
 function lastDayOf(offset: number) {
   const d = new Date();
   return new Date(d.getFullYear(), d.getMonth() + offset + 1, 0).getDate();
@@ -200,9 +205,11 @@ export function generateLedger(): LedgerSeed {
     const baseTotal = round2(lines.reduce((s, l) => s + lineBase(l, tmp).dr, 0));
     const total = round2(lines.reduce((s, l) => s + Number(l.debit), 0));
     const capital = o.lines.some((l) => CAPITAL_OR_LOAN.has(l.a));
-    const maker = o.maker ?? "ACV-0010";
-    const level = requiredLevel(baseTotal, capital);
-    const appr = approverFor(level, maker, EMPLOYEES);
+    // The finance person (ACV-0010) prepares every entry; the Director approves, any amount (maker-checker).
+    const maker = o.maker ?? FINANCE;
+    const notify = ceoNotified(baseTotal, capital);
+    const appr = approverFor(maker, EMPLOYEES);
+    const approver = appr.empId ?? DIRECTOR;
     const status = o.status ?? "posted";
     const createdAt = o.date;
     const postedAt = status === "posted" || status === "reversed" ? addDaysIso(o.date, 0) : undefined;
@@ -219,15 +226,15 @@ export function generateLedger(): LedgerSeed {
       total: { amount: m2(total), currency },
       baseTotal: { amount: m2(baseTotal), currency: "PKR" },
       status,
-      requiredApproverLevel: level,
       approverEmpId: appr.empId,
+      ceoNotified: notify || undefined,
       createdBy: maker,
       createdAt,
       postedAt,
       chain: [
-        { label: "Prepared by", empId: maker, state: status === "draft" ? "waiting" : "done", at: status === "draft" ? undefined : createdAt },
+        { label: "Prepared by (Finance)", empId: maker, state: status === "draft" ? "waiting" : "done", at: status === "draft" ? undefined : createdAt },
         {
-          label: `Approved by (${LEVEL_APPROVER_TITLE[appr.level]})`,
+          label: "Approved by (Director)",
           empId: appr.empId,
           state: postedAt ? "done" : status === "pending_approval" ? "waiting" : "pending",
           at: postedAt,
@@ -237,8 +244,10 @@ export function generateLedger(): LedgerSeed {
       history: [
         { at: createdAt, by: maker, action: "created" },
         ...(status !== "draft" ? [{ at: createdAt, by: maker, action: "submitted" as const }] : []),
-        ...(appr.routedUp ? [{ at: createdAt, by: maker, action: "routed_up" as const, note: `The maker can't approve; routed to the ${LEVEL_APPROVER_TITLE[appr.level]}.` }] : []),
-        ...(postedAt ? [{ at: postedAt, by: appr.empId ?? "ACV-0002", action: "approved" as const }, { at: postedAt, by: appr.empId ?? "ACV-0002", action: "posted" as const }] : []),
+        ...(notify && status !== "draft"
+          ? [{ at: createdAt, by: maker, action: "ceo_notified" as const, note: `Above PKR ${CEO_NOTIFY_ABOVE.toLocaleString("en-PK")}, or a capital or loan entry: the CEO / Founder / Owner is notified (view only).` }]
+          : []),
+        ...(postedAt ? [{ at: postedAt, by: approver, action: "approved" as const }, { at: postedAt, by: approver, action: "posted" as const }] : []),
       ],
     };
     entries.push(e);
@@ -340,7 +349,7 @@ export function generateLedger(): LedgerSeed {
       total: { amount: m2(amount), currency: "PKR" },
       paid: { amount: "0.00", currency: "PKR" },
       status: "unpaid",
-      receipt: { id: `rc_${billSeq}`, fileName: `${number.toLowerCase()}-receipt.pdf`, sizeBytes: 96_000 + billSeq * 1300, mimeType: "application/pdf", uploadedAt: date, uploadedBy: "ACV-0010" },
+      receipt: { id: `rc_${billSeq}`, fileName: `${number.toLowerCase()}-receipt.pdf`, sizeBytes: 96_000 + billSeq * 1300, mimeType: "application/pdf", uploadedAt: date, uploadedBy: FINANCE },
       entryId: e.id,
     };
     bills.push(b);
@@ -369,7 +378,7 @@ export function generateLedger(): LedgerSeed {
   const d0 = (day: number, time = "10:00") => dayOfMonth(-5, day, time);
   make({
     date: d0(1, "09:00"),
-    desc: "Opening balances (accountant sign-off)",
+    desc: "Opening balances (auditor sign-off)",
     source: "opening",
     lines: [
       { a: "1110", dr: 3_500_000 },
@@ -454,12 +463,12 @@ export function generateLedger(): LedgerSeed {
     if (on(6)) make({ date: d(6), desc: "Hosting and cloud servers", source: "payment", currency: "USD", rate: R, project: "prj-ads", lines: [{ a: "5400", dr: HOSTING[idx], party: "vn-hostinger" }, ...usdOut("1130", HOSTING[idx], R)] });
     if (current) continue;
 
-    if (idx === 1) make({ date: d(8), desc: "Bank loan received from Meezan (3 years)", source: "manual", maker: "ACV-0003", lines: [{ a: "1120", dr: 3_000_000 }, { a: "2700", cr: 3_000_000 }] });
+    if (idx === 1) make({ date: d(8), desc: "Bank loan received from Meezan (3 years)", source: "manual", lines: [{ a: "1120", dr: 3_000_000 }, { a: "2700", cr: 3_000_000 }] });
     if (idx === 3) make({ date: d(9), desc: "Laptops for new developers", source: "manual", project: "prj-ops", lines: [{ a: "1510", dr: 650_000, party: "vn-silicon" }, { a: "1110", cr: 650_000 }] });
     bill(d(10), "vn-pixel", "LinkedIn and Google ads", "5600", MARKETING[idx], idx === 4 ? undefined : d(25));
     make({ date: d(12, "16:00"), desc: "Transfer USD 3,000 from Payoneer to HBL", source: "transfer", currency: "USD", rate: R, lines: [{ a: "1120", dr: 3_000 }, ...usdOut("1130", 3_000, R)] });
-    if (idx === 2) make({ date: d(12), desc: "Share capital issued to the owner", source: "manual", maker: "ACV-0002", lines: [{ a: "1110", dr: 2_000_000 }, { a: "3100", cr: 2_000_000 }] });
-    if (idx === 4) make({ date: d(14), desc: "Interim dividend paid to shareholders", source: "manual", maker: "ACV-0003", lines: [{ a: "3400", dr: 500_000 }, { a: "1110", cr: 500_000 }] });
+    if (idx === 2) make({ date: d(12), desc: "Share capital issued to the founder", source: "manual", lines: [{ a: "1110", dr: 2_000_000 }, { a: "3100", cr: 2_000_000 }] });
+    if (idx === 4) make({ date: d(14), desc: "Interim dividend paid to shareholders", source: "manual", lines: [{ a: "3400", dr: 500_000 }, { a: "1110", cr: 500_000 }] });
     if (idx > 0) make({ date: d(15), desc: "Salary income tax deposited with FBR", source: "payment", lines: [{ a: "2300", dr: WHT }, { a: "1120", cr: WHT }] });
     if (idx >= 2) make({ date: d(15, "12:00"), desc: "Loan instalment (principal and interest)", source: "payment", lines: [{ a: "2700", dr: 100_000 }, { a: "5860", dr: 35_000 }, { a: "1120", cr: 135_000 }] });
     if (idx === 4) make({ date: d(17), desc: "Salary advance to Ali Raza", source: "payment", lines: [{ a: "1320", dr: 80_000, emp: "ACV-0008" }, { a: "1110", cr: 80_000 }] });
@@ -506,8 +515,8 @@ export function generateLedger(): LedgerSeed {
   const rejected = pending[4];
   rejected.rejectionNote = "Attach the receipt and tag the client project, then submit again.";
   rejected.history.push(
-    { at: t("09:30"), by: "ACV-0010", action: "submitted" },
-    { at: t("09:45"), by: "ACV-0003", action: "rejected", note: rejected.rejectionNote },
+    { at: t("09:30"), by: FINANCE, action: "submitted" },
+    { at: t("09:45"), by: rejected.approverEmpId ?? DIRECTOR, action: "rejected", note: rejected.rejectionNote },
   );
 
   // ---------- Bank statement (Meezan, current month) ----------
@@ -537,9 +546,9 @@ export function generateLedger(): LedgerSeed {
         month,
         status: "closed",
         checklist: [],
-        closedBy: "ACV-0010",
+        closedBy: FINANCE,
         closedAt: dayOfMonth(m + 1, 3, "15:00"),
-        approvedBy: "ACV-0002",
+        approvedBy: DIRECTOR,
         approvedAt: dayOfMonth(m + 1, 4, "11:00"),
       });
     else periods.push({ month, status: "open", checklist: [] });

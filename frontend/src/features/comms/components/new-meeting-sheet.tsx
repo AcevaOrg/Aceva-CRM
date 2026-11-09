@@ -212,7 +212,7 @@ export function NewMeetingSheet({ open, onOpenChange }: { open: boolean; onOpenC
                 ))}
               </div>
             </Field>
-            <p className="text-[12px] text-muted-foreground">Calendar integration (Google or Outlook) can be added later if management approves it.</p>
+            <p className="text-[12px] text-muted-foreground">Calendar integration (Google or Outlook) can be added later if the Director approves it.</p>
           </SheetBody>
           <SheetFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

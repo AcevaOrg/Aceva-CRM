@@ -116,7 +116,7 @@ function Overview() {
             <ul className="grid gap-2 text-[13px]">
               <li className="flex gap-2"><Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Signed out after 30 minutes without activity (10 minutes on finance screens).</li>
               <li className="flex gap-2"><Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Signed out after 12 hours in any case.</li>
-              <li className="flex gap-2"><KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> 5 wrong passwords lock the account until HR or a manager unlocks it.</li>
+              <li className="flex gap-2"><KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> 5 wrong passwords lock the account until your manager or the Director unlocks it.</li>
             </ul>
           </CardContent>
         </Card>
@@ -205,7 +205,7 @@ function Security() {
                     />
                   </div>
                   {s.required && <Badge tone="info" className="w-fit"><ShieldCheck /> Locked on by company policy</Badge>}
-                  <p className="text-[12.5px] text-muted-foreground">Lost your phone? Ask the Director or HR to reset two-step login. They will check your identity first.</p>
+                  <p className="text-[12.5px] text-muted-foreground">Lost your phone? Ask the Director (HR duty) to reset two-step login. They will check your identity first.</p>
                 </div>
               )}
             </QueryState>

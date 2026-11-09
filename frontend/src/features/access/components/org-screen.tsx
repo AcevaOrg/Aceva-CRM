@@ -20,8 +20,9 @@ type Tab = "chart" | "departments" | "roles" | "standins";
 /** /org: Module 1 screens (spec §9.1). */
 export function OrgScreen() {
   const [tab, setTab] = useUrlState<Tab>("tab", "chart");
-  const canRoles = useCan("roles.manage");
-  const canStandIns = useCan("standin.manage");
+  // The Director edits; the CEO / Founder / Owner (audit.view) sees the same tabs, view only.
+  const canRoles = useCan(["roles.manage", "audit.view"]);
+  const canStandIns = useCan(["standin.manage", "audit.view"]);
   const canManage = useCan("org.manage");
 
   return (
@@ -31,7 +32,7 @@ export function OrgScreen() {
         description={
           canManage
             ? "The company's reporting lines and who can do what. You can change levels and reporting lines; every change is logged."
-            : "The company's reporting lines and who can do what. Only the Owner or CEO can change levels and reporting lines."
+            : "The company's reporting lines and who can do what. View only: the Director changes levels and reporting lines."
         }
         seal="internal"
       />

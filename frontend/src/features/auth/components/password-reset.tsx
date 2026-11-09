@@ -26,7 +26,7 @@ export function ForgotPasswordForm() {
           title="Check your email"
           description="If this Emp-ID has an official @acevatech.com email, we sent a reset link. It works once and expires in 15 minutes."
         />
-        <p className="rounded-lg bg-muted p-3 text-[13px] text-muted-foreground">No official email? Ask the Director or HR for a temporary password. You&apos;ll set a new one when you sign in.</p>
+        <p className="rounded-lg bg-muted p-3 text-[13px] text-muted-foreground">No official email? Ask the Director (HR duty) for a temporary password. You&apos;ll set a new one when you sign in.</p>
         <Button asChild variant="outline" className="mt-6">
           <Link href="/reset-password">Open the reset link (demo)</Link>
         </Button>

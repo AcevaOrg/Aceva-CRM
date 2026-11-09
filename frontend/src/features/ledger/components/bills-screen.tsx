@@ -29,6 +29,7 @@ import type { Attachment } from "@/types";
 import { useAccounts, useBankAccounts, useBills, useCreateBill, useParties, usePayBill } from "../hooks";
 import type { Bill } from "../types";
 import { AccountPicker } from "./account-picker";
+import { FinanceRoleNote } from "./ledger-bits";
 
 const billStatus = statusMap<Bill["status"]>({
   unpaid: { label: "Unpaid", tone: "warning" },
@@ -118,6 +119,7 @@ function Bills() {
           </Can>
         }
       />
+      <FinanceRoleNote className="mb-4" prepares="records bills, receipts and payments" />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard label="Unpaid" value={formatMoneyCompact(open.reduce((s, b) => s + outstanding(b), 0))} hint={`${open.length} bills`} icon={<Wallet />} accent="var(--zone-finance)" />
         <StatCard label="Due in the next 7 days" value={dueSoon.length} hint={formatMoneyCompact(dueSoon.reduce((s, b) => s + outstanding(b), 0))} icon={<AlarmClock />} accent="var(--warning)" />

@@ -10,52 +10,62 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect, Switch } from "@/components/ui/controls";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/misc";
+import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { StatCard } from "@/components/shared/metrics";
 import { ErrorState } from "@/components/shared/states";
-import { useCan, useViewer } from "@/lib/auth/viewer";
+import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime, formatRelative, formatTime } from "@/lib/dates";
 import { formatMoneyCompact } from "@/lib/format";
 import type { TaxSlab } from "@/features/payroll/types";
+import { canRunBackup } from "../api";
 import { useBackupStatus, useRunBackup } from "../hooks";
 import { ChipsEditor, NumberInput, SettingsSection } from "./settings-kit";
 import { SettingRow } from "./settings-sections-work";
 
 /* ---------------- Approval limits ★ ---------------- */
 
-type Limits = { directorUpTo: number; ceoUpTo: number; capitalAndLoansToOwner: boolean; escalateIfMaker: boolean };
+/**
+ * Journal entry approval (plan §13): Finance makes entries and the Director approves every one, any amount.
+ * There is no CEO tier: the CEO / Founder / Owner is only notified (view only) of entries above ceoNotifiedAbove
+ * and, when the switch is on, of every capital and loan entry. Maker-checker always applies.
+ */
+type Limits = { ceoNotifiedAbove: number; capitalAndLoansNotifyCeo: boolean; blockIfDirectorMade: boolean };
 
 export function ApprovalLimitsSection() {
   return (
     <SettingsSection<Limits> section="approval-limits">
       {(d, set, can) => (
         <>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-2 sm:grid-cols-2">
             {[
-              { who: "Director", range: `Up to ${formatMoneyCompact(d.directorUpTo)}` },
-              { who: "CEO", range: `${formatMoneyCompact(d.directorUpTo + 1)} to ${formatMoneyCompact(d.ceoUpTo)}` },
-              { who: "Owner", range: `Above ${formatMoneyCompact(d.ceoUpTo)}${d.capitalAndLoansToOwner ? ", plus all capital and loans" : ""}` },
-            ].map((t, i) => (
+              { tag: "Approves", who: "Director", range: "Every journal entry Finance makes, any amount." },
+              {
+                tag: "Notified · view only",
+                who: "CEO / Founder / Owner",
+                range: `Entries above ${formatMoneyCompact(d.ceoNotifiedAbove)}${d.capitalAndLoansNotifyCeo ? " and every capital or loan entry" : ""}. Approves nothing.`,
+              },
+            ].map((t) => (
               <div key={t.who} className="rounded-xl border border-border bg-muted/40 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Tier {i + 1}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t.tag}</p>
                 <p className="mt-1 font-semibold">{t.who}</p>
                 <p className="text-[12.5px] text-muted-foreground">{t.range}</p>
               </div>
             ))}
           </div>
-          <SettingRow label="Director approves up to" hint="Journal entries up to this amount (PKR).">
-            <NumberInput value={d.directorUpTo} onChange={(n) => set({ directorUpTo: n })} suffix="PKR" step={1000} disabled={!can} />
+          <SettingRow label="Notify the CEO / Founder / Owner above" hint="Entries above this amount (PKR) are flagged “CEO / Founder / Owner notified”. The Director still approves them.">
+            <NumberInput value={d.ceoNotifiedAbove} onChange={(n) => set({ ceoNotifiedAbove: n })} suffix="PKR" step={10000} disabled={!can} />
           </SettingRow>
-          <SettingRow label="CEO approves up to" hint="Anything above goes to the Owner.">
-            <NumberInput value={d.ceoUpTo} onChange={(n) => set({ ceoUpTo: n })} suffix="PKR" step={1000} disabled={!can} />
+          <SettingRow label="Notify the CEO / Founder / Owner of capital and loan entries" hint="Regardless of amount (plan §13). View only; the Director approves.">
+            <Switch checked={d.capitalAndLoansNotifyCeo} disabled={!can} onCheckedChange={(v) => set({ capitalAndLoansNotifyCeo: v })} aria-label="Notify the CEO / Founder / Owner of capital and loan entries" />
           </SettingRow>
-          <SettingRow label="Capital and loan entries go to the Owner" hint="Regardless of amount (plan §13).">
-            <Switch checked={d.capitalAndLoansToOwner} disabled={!can} onCheckedChange={(v) => set({ capitalAndLoansToOwner: v })} aria-label="Capital and loans to Owner" />
+          <SettingRow
+            label="Block entries the Director made"
+            hint="Maker-checker: nobody approves their own entry. Finance makes entries and the Director approves them. The Director doesn't make entries; if one is made, nobody else can approve it, so it is blocked. This rule can't be turned off."
+          >
+            <Switch checked disabled aria-label="Block entries the Director made" />
           </SettingRow>
-          <SettingRow label="Escalate when the approver made the entry" hint="Maker-checker: it goes one level up. This rule can't be turned off.">
-            <Switch checked disabled aria-label="Escalate if maker" />
-          </SettingRow>
-          {d.ceoUpTo <= d.directorUpTo && <p className="text-[12.5px] text-danger">The CEO limit must be higher than the Director limit.</p>}
+          {d.ceoNotifiedAbove <= 0 && <p className="text-[12.5px] text-danger">The notification amount must be more than zero.</p>}
         </>
       )}
     </SettingsSection>
@@ -217,7 +227,7 @@ export function SecuritySection() {
               <NumberInput value={d.historyCount} onChange={(n) => set({ historyCount: n })} suffix="remembered" disabled={!can} />
             </div>
           </SettingRow>
-          <SettingRow label="Lock the account after" hint="A higher level or HR unlocks it.">
+          <SettingRow label="Lock the account after" hint="The person's manager or the Director (HR duty) unlocks it.">
             <NumberInput value={d.lockoutAttempts} onChange={(n) => set({ lockoutAttempts: n })} suffix="wrong passwords" disabled={!can} />
           </SettingRow>
           <SettingRow label="Sign out after no activity" hint="Finance screens use the shorter limit.">
@@ -232,17 +242,17 @@ export function SecuritySection() {
           <SettingRow label="Password reset link valid for">
             <NumberInput value={d.resetLinkMinutes} onChange={(n) => set({ resetLinkMinutes: n })} suffix="min" disabled={!can} />
           </SettingRow>
-          <SettingRow label="Two-step login required for" hint="Finance access always requires it (plan §16).">
+          <SettingRow label="Two-step login required for" hint="Finance access always requires it (plan §16), so Finance is always included.">
             <NativeSelect value={d.twoFactorFor} disabled={!can} onChange={(e) => set({ twoFactorFor: e.target.value })} aria-label="Two-step login required for">
-              <option value="levels_1_3_and_finance">Levels 1–3 and finance duty</option>
-              <option value="levels_1_4_and_finance">Levels 1–4 and finance duty</option>
-              <option value="everyone">Everyone</option>
+              <option value="levels_1_3_and_finance">CEO / Founder / Owner, Director, CTO and Finance</option>
+              <option value="levels_1_4_and_finance">CEO / Founder / Owner, Director, CTO, Finance and Sales</option>
+              <option value="everyone">Everyone (adds Engineering)</option>
             </NativeSelect>
           </SettingRow>
           <SettingRow label="“Remember me” for finance users" hint="Off by plan §6.">
             <Switch checked={d.rememberMeForFinance} disabled aria-label="Remember me for finance users" />
           </SettingRow>
-          <SettingRow label="Finance screens from office network only" hint="Management decides. Remote finance work needs an approved device.">
+          <SettingRow label="Finance screens from office network only" hint="The Director decides. Remote finance work needs an approved device.">
             <Switch checked={d.officeOnlyFinance} disabled={!can} onCheckedChange={(v) => set({ officeOnlyFinance: v })} aria-label="Finance from office network only" />
           </SettingRow>
         </>
@@ -260,7 +270,7 @@ export function AlertRulesSection() {
     <SettingsSection<Alerts> section="alert-rules">
       {(d, set, can) => (
         <>
-          <SettingRow label="Login from a new device" hint="Alert the Director and CTO.">
+          <SettingRow label="Login from a new device" hint="Alert the CEO / Founder / Owner, the Director and the CTO.">
             <Switch checked={d.newDevice} disabled={!can} onCheckedChange={(v) => set({ newDevice: v })} aria-label="New device" />
           </SettingRow>
           <SettingRow label="Login from a new city" hint="Approximate city from the network, never GPS.">
@@ -322,7 +332,7 @@ export function RetentionSection() {
           <SettingRow label="Archive leads with no activity after" hint="Contact details are removed when archived.">
             <NumberInput value={d.inactiveLeadsMonths} onChange={(n) => set({ inactiveLeadsMonths: n })} suffix="months" disabled={!can} />
           </SettingRow>
-          <SettingRow label="Messages and shared files" hint="Management confirms before launch (spec §14).">
+          <SettingRow label="Messages and shared files" hint="The Director confirms before launch (spec §14).">
             <div className="grid grid-cols-2 gap-2">
               <NumberInput value={d.messagesMonths} onChange={(n) => set({ messagesMonths: n })} suffix="months msgs" disabled={!can} />
               <NumberInput value={d.filesMonths} onChange={(n) => set({ filesMonths: n })} suffix="months files" disabled={!can} />
@@ -343,7 +353,7 @@ export function SalesRulesSection() {
     <SettingsSection<Sales> section="sales">
       {(d, set, can) => (
         <>
-          <SettingRow label="Default daily targets" hint="The sales manager can change them per person.">
+          <SettingRow label="Default daily targets" hint="The Director (sales manager) can change them per person.">
             <div className="grid grid-cols-2 gap-2">
               <NumberInput value={d.dailyLeads} onChange={(n) => set({ dailyLeads: n })} suffix="leads" disabled={!can} />
               <NumberInput value={d.dailyEmailsChecked} onChange={(n) => set({ dailyEmailsChecked: n })} suffix="checked" disabled={!can} />
@@ -416,7 +426,7 @@ export const SalesToolsLink = () => (
   <LinkSection
     icon={<Plug />}
     title="Sales tool connections"
-    body="Apollo, MillionVerifier, outreach mailboxes and Salesforce. Only the CTO and Director add or change a connection, with password and 2FA."
+    body="Apollo, MillionVerifier, outreach mailboxes and Salesforce. Only the CTO or the Director add or change a connection, with password and 2FA. The CEO / Founder / Owner can view them."
     href="/integrations"
     cta="Open integrations"
   />
@@ -427,12 +437,14 @@ export const SalesToolsLink = () => (
 export function BackupsSection() {
   const q = useBackupStatus();
   const run = useRunBackup();
-  const canRun = useCan("settings.manage");
+  const viewer = useViewer();
+  const canRun = !!viewer && canRunBackup(viewer);
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (!q.data) return <Skeleton className="h-96 rounded-xl" />;
   const s = q.data;
   return (
     <div className="grid gap-5">
+      {!canRun && <MakerCheckerNote reason="View only. The CTO runs backups and restore tests; the Director can also start a backup." />}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Last backup" value={formatTime(s.lastBackupAt)} hint={`${formatDate(s.lastBackupAt)} · ${s.ok ? "succeeded" : "failed"}`} icon={<DatabaseBackup />} accent={s.ok ? "var(--success)" : "var(--danger)"} />
         <StatCard label="Daily copies" value={`${s.dailyCopies} / ${s.dailyKept}`} hint="Kept for 30 days" icon={<HardDrive />} accent="var(--zone-control)" />

@@ -4,14 +4,15 @@
  * Deleted when the module is connected to the NestJS API (spec §13).
  */
 import { ApiError, notFound } from "@/lib/api/mock";
+import { permissionsFor, type Permission } from "@/lib/auth/permissions";
 import { employeesTable } from "@/lib/directory";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { FIN_PROJECTS, generateLedger, seedAccounts, seedParties, type LedgerSeed } from "@/mocks/seed/ledger";
 import type { Currency } from "@/types";
 import {
-  approverFor, balanceCheck, entryBaseTotal, flatten, inBooks, LEVEL_APPROVER_TITLE, lineTotals, m2, monthKeyOf, netByAccount,
-  num, requiredLevel, round2, touchesCapitalOrLoan,
+  approverFor, balanceCheck, ceoNotified, CEO_NOTIFY_ABOVE, DIRECTOR_MADE_IT, entryBaseTotal, flatten, inBooks, lineTotals, m2, monthKeyOf,
+  netByAccount, num, round2, touchesCapitalOrLoan, type ApproverRoute,
 } from "./logic";
 import type {
   Account, BankStatementLine, Bill, ChecklistItem, FinancePeriod, JournalEntry, JournalLine, LedgerCashLine, NewEntryInput, Party,
@@ -117,17 +118,41 @@ function nextEntryNumber() {
 function route(entry: JournalEntry) {
   const accounts = accountsTable();
   const base = entryBaseTotal(entry);
-  const level = requiredLevel(base, touchesCapitalOrLoan(entry.lines, accounts));
-  const appr = approverFor(level, entry.createdBy, employeesTable());
+  const appr = approverFor(entry.createdBy, employeesTable());
   entry.baseTotal = { amount: m2(base), currency: "PKR" };
   entry.total = { amount: m2(lineTotals(entry.lines).debit), currency: entry.currency };
-  entry.requiredApproverLevel = level;
   entry.approverEmpId = appr.empId;
+  entry.blocked = appr.blocked || undefined;
+  entry.ceoNotified = ceoNotified(base, touchesCapitalOrLoan(entry.lines, accounts)) || undefined;
   entry.chain = [
-    { label: "Prepared by", empId: entry.createdBy, state: entry.status === "draft" ? "waiting" : "done", at: entry.status === "draft" ? undefined : entry.createdAt },
-    { label: `Approved by (${LEVEL_APPROVER_TITLE[appr.level]})`, empId: appr.empId, state: entry.status === "pending_approval" ? "waiting" : inBooks(entry) ? "done" : "pending", at: entry.postedAt },
+    { label: "Prepared by (Finance)", empId: entry.createdBy, state: entry.status === "draft" ? "waiting" : "done", at: entry.status === "draft" ? undefined : entry.createdAt },
+    {
+      label: "Approved by (Director)",
+      empId: appr.empId,
+      state: appr.blocked && entry.status === "pending_approval" ? "rejected" : entry.status === "pending_approval" ? "waiting" : inBooks(entry) ? "done" : "pending",
+      at: entry.postedAt,
+      note: appr.blocked ? "Blocked: the Director made it" : undefined,
+    },
   ];
   return appr;
+}
+
+/** History notes when an entry is submitted: CEO notification (view only) or the maker-checker block. */
+function routingNotes(entry: JournalEntry, appr: ApproverRoute, by: string, at: string) {
+  if (entry.ceoNotified)
+    entry.history.push({
+      at,
+      by,
+      action: "ceo_notified",
+      note: `Above PKR ${CEO_NOTIFY_ABOVE.toLocaleString("en-PK")}, or a capital or loan entry: the CEO / Founder / Owner is notified (view only). The Director approves.`,
+    });
+  if (appr.blocked) entry.history.push({ at, by, action: "blocked", note: DIRECTOR_MADE_IT });
+}
+
+/** Does this person hold the permission now (role and duties)? The server is the real lock. */
+function may(empId: string, p: Permission) {
+  const e = employeesTable().find((x) => x.empId === empId && x.status !== "left");
+  return !!e && permissionsFor(e.role, e.duties).has(p);
 }
 
 export function validateEntry(input: Pick<NewEntryInput, "date" | "lines">) {
@@ -140,14 +165,22 @@ export function validateEntry(input: Pick<NewEntryInput, "date" | "lines">) {
   }
   if (isLocked(input.date)) {
     const p = periodOf(input.date)!;
-    throw new ApiError("period_closed", `${p.month} is closed. Ask the CEO or Owner to reopen it.`);
+    throw new ApiError("period_closed", `${p.month} is closed. Only the Director can reopen it.`);
   }
+}
+
+/** Maker-checker: an entry the Director made has no one to approve it, so it can't be submitted. */
+function assertCanSubmit(by: string) {
+  if (approverFor(by, employeesTable()).blocked) throw new ApiError("forbidden", DIRECTOR_MADE_IT, 403);
 }
 
 export function saveEntry(input: NewEntryInput, by: string): JournalEntry {
   const lines = input.lines.filter((l) => num(l.debit) > 0 || num(l.credit) > 0 || l.baseDebit || l.baseCredit);
-  if (input.submit) validateEntry({ ...input, lines });
-  else if (isLocked(input.date)) throw new ApiError("period_closed", "That month is closed. Ask the CEO or Owner to reopen it.");
+  if (input.submit) {
+    assertCanSubmit(by);
+    validateEntry({ ...input, lines });
+  }
+  else if (isLocked(input.date)) throw new ApiError("period_closed", "That month is closed. Only the Director can reopen it.");
   const now = nowIso();
   let entry = input.draftId ? entriesTable().find((e) => e.id === input.draftId) : undefined;
   if (entry && entry.status !== "draft") throw new ApiError("validation", "Only drafts can be edited. Posted entries are corrected with a reversing entry.");
@@ -165,7 +198,6 @@ export function saveEntry(input: NewEntryInput, by: string): JournalEntry {
       total: { amount: "0.00", currency: input.currency },
       baseTotal: { amount: "0.00", currency: "PKR" },
       status: "draft",
-      requiredApproverLevel: 3,
       createdBy: by,
       createdAt: now,
       chain: [],
@@ -191,24 +223,28 @@ export function saveEntry(input: NewEntryInput, by: string): JournalEntry {
     entry.history.push({ at: now, by, action: "submitted" });
   }
   const appr = route(entry);
-  if (input.submit && appr.routedUp) entry.history.push({ at: now, by, action: "routed_up", note: `You can't approve your own entry, so it goes to the ${LEVEL_APPROVER_TITLE[appr.level]}.` });
+  if (input.submit) routingNotes(entry, appr, by, now);
   return entry;
 }
 
 export function submitEntry(id: string, by: string) {
   const e = findEntry(id);
   if (e.status !== "draft") throw new ApiError("validation", "Only drafts can be submitted.");
+  assertCanSubmit(e.createdBy);
   validateEntry(e);
+  const now = nowIso();
   e.status = "pending_approval";
   e.rejectionNote = undefined;
-  e.history.push({ at: nowIso(), by, action: "submitted" });
-  route(e);
+  e.history.push({ at: now, by, action: "submitted" });
+  routingNotes(e, route(e), by, now);
 }
 
 export function approveEntry(id: string, by: string) {
   const e = findEntry(id);
   if (e.status !== "pending_approval") throw new ApiError("validation", "This entry isn't waiting for approval.");
-  if (e.createdBy === by) throw new ApiError("forbidden", "You prepared this entry, so you can't approve it.", 403);
+  if (e.createdBy === by) throw new ApiError("forbidden", e.blocked ? DIRECTOR_MADE_IT : "You prepared this entry, so you can't approve it.", 403);
+  if (e.blocked) throw new ApiError("forbidden", DIRECTOR_MADE_IT, 403);
+  if (e.approverEmpId !== by || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director approves journal entries.", 403);
   if (isLocked(e.date)) throw new ApiError("period_closed", "The entry's month is closed.");
   const now = nowIso();
   e.status = "posted";
@@ -236,6 +272,7 @@ export function approveEntry(id: string, by: string) {
 export function rejectEntry(id: string, by: string, reason: string) {
   const e = findEntry(id);
   if (e.status !== "pending_approval") throw new ApiError("validation", "This entry isn't waiting for approval.");
+  if (e.approverEmpId !== by || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director can send an entry back.", 403);
   e.status = "draft";
   e.rejectionNote = reason;
   e.history.push({ at: nowIso(), by, action: "rejected", note: reason });
@@ -335,9 +372,11 @@ export function revaluationPreview(month: string, rate: number): RevaluationPrev
   return { month, rate: rate.toFixed(2), rows, total: m2(rows.reduce((s, r) => s + num(r.difference), 0)) };
 }
 
+/** Run by the finance person; approved by the Director (maker-checker). */
 export function closeMonth(month: string, by: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p) notFound("Period");
+  if (!may(by, "finance.close") || !may(by, "finance.entry_create")) throw new ApiError("forbidden", "The finance person runs the close and the Director approves it.", 403);
   const list = checklistFor(month);
   const missing = list.filter((c) => !c.done);
   if (missing.length) throw new ApiError("validation", `Finish the checklist first: ${missing.map((m) => m.label.toLowerCase()).join(", ")}.`);
@@ -351,7 +390,8 @@ export function closeMonth(month: string, by: string) {
 export function approveClose(month: string, by: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p || p.status !== "closing") throw new ApiError("validation", "This month isn't waiting for close approval.");
-  if (p.closedBy === by) throw new ApiError("forbidden", "You ran the close, so another person must approve it.", 403);
+  if (p.closedBy === by) throw new ApiError("forbidden", "You ran the close, so you can't approve it.", 403);
+  if (!may(by, "finance.close") || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director approves a month close.", 403);
   p.status = "closed";
   p.approvedBy = by;
   p.approvedAt = nowIso();
@@ -360,15 +400,18 @@ export function approveClose(month: string, by: string) {
 export function rejectClose(month: string, by: string, reason: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p) notFound("Period");
+  if (!may(by, "finance.close") || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director can send a close back.", 403);
   p.status = "open";
   p.reopenReason = `Close sent back by ${by}: ${reason}`;
 }
 
+/** Director only, with step-up and a written reason. Logged; the CEO / Founder / Owner is notified. */
 export function reopenMonth(month: string, by: string, reason: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p || p.status !== "closed") throw new ApiError("validation", "Only a closed month can be reopened.");
+  if (!may(by, "finance.reopen")) throw new ApiError("forbidden", "Only the Director can reopen a closed month.", 403);
   p.status = "reopened";
-  p.reopenReason = `${reason} (reopened by ${by})`;
+  p.reopenReason = `${reason} (reopened by ${by}; the CEO / Founder / Owner was notified)`;
 }
 
 export function partyBalances(): Party[] {

@@ -17,7 +17,7 @@ import {
 } from "@/mocks/seed/attendance";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
-import { averageClock, buildLeaveChain, DEFAULT_SCHEDULE, isPendingLeave, lateMinutes, leaveDays, minutesBetween } from "./logic";
+import { averageClock, buildLeaveChain, correctionApprover, DEFAULT_SCHEDULE, isPendingLeave, lateMinutes, leaveDays, minutesBetween } from "./logic";
 import type {
   AttendanceCorrection, AttendanceDay, LeaveBalanceView, LeaveCalendarEntry, LeaveRequest, LeaveType, NewCorrectionInput,
   NewLeaveInput, TeamMonthRow, TeamTodayRow,
@@ -116,12 +116,18 @@ function assertScope(empId: string) {
   if (!isInScope(me, empId)) throw new ApiError("forbidden", "You can only see your own attendance and your team's.", 403);
 }
 
+/**
+ * The people a viewer sees on team boards and the leave calendar.
+ * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Engineering).
+ * CTO: Engineering. Sales, Finance and Engineering manage no one: their peers in the same department with the
+ * same manager (so Sales never see Finance or the CTO, and Engineering never see Sales).
+ */
 function teamOf(me: string) {
   const below = descendantsOf(me);
   if (below.length) return below;
   const self = employeesTable().find((e) => e.empId === me);
   return employeesTable()
-    .filter((e) => e.reportsTo && e.reportsTo === self?.reportsTo && e.status !== "left")
+    .filter((e) => e.reportsTo && e.reportsTo === self?.reportsTo && e.departmentId === self?.departmentId && e.role === self?.role && e.status !== "left")
     .map((e) => e.empId);
 }
 
@@ -209,8 +215,10 @@ export const attendanceApi = {
   teamToday: () =>
     mock<TeamTodayRow[]>(() => {
       const me = getViewer().employee.empId;
-      const team = teamOf(me);
-      const ids = descendantsOf(me).length ? team : [me, ...team.filter((t) => t !== me)];
+      // The CEO / Founder / Owner sees everyone, the Director everyone below, the CTO Engineering.
+      // Sales, Finance and Engineering only see their own day.
+      const below = descendantsOf(me);
+      const ids = below.length ? below : [me];
       const today = isoDay(new Date());
       const off = !isWorkingDay(new Date(), HOLIDAY_DATES);
       return ids.map((empId) => {
@@ -269,6 +277,8 @@ export const attendanceApi = {
     mock(() => {
       const me = getViewer().employee.empId;
       if (input.date >= isoDay(new Date())) throw new ApiError("validation", "You can only correct past days.");
+      if (!correctionApprover(me, employeesTable()))
+        throw new ApiError("validation", "Corrections are approved by your manager. As CEO / Founder / Owner there is no one above you, so this record can't be corrected here.");
       if (correctionsTable().some((c) => c.empId === me && c.date === input.date && c.status === "pending"))
         throw new ApiError("validation", "There is already a pending correction for this day.");
       const rec = attendanceTable().find((d) => d.empId === me && d.date === input.date);
@@ -289,10 +299,14 @@ export const attendanceApi = {
   /** POST /attendance/corrections/:id/{approve|reject} */
   decideCorrection: (id: string, approve: boolean, note?: string) =>
     mock(() => {
-      const me = getViewer().employee.empId;
+      const viewer = getViewer();
+      const me = viewer.employee.empId;
       const c = correctionsTable().find((x) => x.id === id);
       if (!c) notFound("Correction");
+      if (!viewer.can("attendance.approve_correction")) throw new ApiError("forbidden", "View only. The person's manager approves corrections.", 403);
       if (c.empId === me) throw new ApiError("forbidden", "You can't approve your own correction.", 403);
+      if (c.status !== "pending") throw new ApiError("validation", "This correction was already decided.");
+      if (correctionApprover(c.empId, employeesTable())?.empId !== me) throw new ApiError("forbidden", "Only this person's manager approves the correction.", 403);
       applyCorrectionDecision(c, approve, me, note);
     }),
 
@@ -346,7 +360,8 @@ export const attendanceApi = {
         days,
         halfDay: input.halfDay && days === 0.5,
         reason: input.reason,
-        status: chain.length ? "pending_lead" : "approved",
+        // The CEO / Founder / Owner has no one above (empty chain), so their leave is recorded as approved.
+        status: chain.length ? "pending_manager" : "approved",
         chain,
         at: new Date().toISOString(),
       };
@@ -360,16 +375,21 @@ export const attendanceApi = {
       const me = getViewer().employee.empId;
       const r = leaveRequestsTable().find((x) => x.id === id);
       if (!r || r.empId !== me) notFound("Leave request");
-      if (r.status === "approved" && r.from <= isoDay(new Date())) throw new ApiError("validation", "Leave that has started can't be cancelled. Ask HR.");
+      if (r.status === "approved" && r.from <= isoDay(new Date())) {
+        const self = employeesTable().find((e) => e.empId === me);
+        throw new ApiError("validation", `Leave that has started can't be cancelled. Ask ${self?.role === "director" ? "the CEO / Founder / Owner" : "the Director (HR duty)"}.`);
+      }
       r.status = "cancelled";
     }),
 
   /** POST /leave/requests/:id/{approve|reject} */
   decideLeave: (id: string, approve: boolean, note?: string) =>
     mock(() => {
-      const me = getViewer().employee.empId;
+      const viewer = getViewer();
+      const me = viewer.employee.empId;
       const r = leaveRequestsTable().find((x) => x.id === id);
       if (!r) notFound("Leave request");
+      if (!viewer.can("leave.approve")) throw new ApiError("forbidden", "View only. The person's manager and the Director approve leave.", 403);
       if (r.empId === me) throw new ApiError("forbidden", "You can't approve your own leave.", 403);
       if (currentLeaveApprover(r) !== me) throw new ApiError("forbidden", "This request is waiting for someone else.", 403);
       applyLeaveDecision(r, approve, me, note);
@@ -379,14 +399,23 @@ export const attendanceApi = {
   calendar: (month: string) =>
     mock<LeaveCalendarEntry[]>(() => {
       const me = getViewer().employee.empId;
-      const visible = new Set([me, ...teamOf(me), ...descendantsOf(me)]);
+      // Full detail (type, waiting requests, task clashes) for the viewer and everyone below them.
+      const scope = new Set([me, ...descendantsOf(me)]);
+      // Sales and Engineering also see who in their own team (and their manager) is away: approved leave only,
+      // without the leave type or anyone else's tasks.
+      const away = new Set(teamOf(me).filter((id) => !scope.has(id)));
       const self = employeesTable().find((e) => e.empId === me);
-      if (self?.reportsTo && !descendantsOf(me).length) visible.add(self.reportsTo);
+      if (self?.reportsTo && !descendantsOf(me).length) away.add(self.reportsTo);
       const first = `${month}-01`;
       const last = isoDay(endOfMonth(new Date(`${month}-01T12:00:00`)));
       return leaveRequestsTable()
-        .filter((r) => visible.has(r.empId) && (r.status === "approved" || isPendingLeave(r.status)) && r.from <= last && r.to >= first)
-        .map((r) => ({ requestId: r.id, empId: r.empId, leaveTypeId: r.leaveTypeId, from: r.from, to: r.to, status: r.status, deadlineClashes: clashesFor(r.empId, r.from, r.to) }));
+        .filter((r) => r.from <= last && r.to >= first)
+        .filter((r) => (scope.has(r.empId) && (r.status === "approved" || isPendingLeave(r.status))) || (away.has(r.empId) && r.status === "approved"))
+        .map((r) =>
+          scope.has(r.empId)
+            ? { requestId: r.id, empId: r.empId, leaveTypeId: r.leaveTypeId, from: r.from, to: r.to, status: r.status, deadlineClashes: clashesFor(r.empId, r.from, r.to) }
+            : { requestId: r.id, empId: r.empId, leaveTypeId: "", from: r.from, to: r.to, status: r.status, deadlineClashes: [] },
+        );
     }),
 
   /** Days in a request, for live counting in forms. */

@@ -56,7 +56,7 @@ export function VerifyEmailsDialog({ open, onOpenChange }: { open: boolean; onOp
             <div className="my-1 h-px bg-border" />
             <Row label="Credits this will use" value={p.toCheck} icon />
             <Row label="Credits left on MillionVerifier" value={p.creditsLeft} />
-            {!enough && <p className="text-[12.5px] text-danger">Not enough credits. Ask the Director to top up MillionVerifier.</p>}
+            {!enough && <p className="text-[12.5px] text-danger">Not enough credits. Ask the CTO or the Director to top up MillionVerifier.</p>}
           </div>
         )}
         <DialogFooter>

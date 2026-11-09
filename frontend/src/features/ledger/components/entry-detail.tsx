@@ -23,9 +23,9 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { formatMoney } from "@/lib/format";
 import { useAccounts, useApproveEntry, useEntries, useEntry, useFinanceProjects, useParties, useRejectEntry, useReverseEntry, useSubmitEntry } from "../hooks";
-import { LEVEL_APPROVER_TITLE, lineBase, lineTotals, num } from "../logic";
+import { DIRECTOR_MADE_IT, lineBase, lineTotals, num } from "../logic";
 import type { EntryEvent } from "../types";
-import { ApprovalLevelChip, EntryStatusBadge, SourceBadge } from "./ledger-bits";
+import { ApprovalChip, EntryStatusBadge, SourceBadge, ViewOnlyNote } from "./ledger-bits";
 
 const EVENT: Record<EntryEvent["action"], { label: string; color: string }> = {
   created: { label: "Created", color: "var(--muted-foreground)" },
@@ -35,7 +35,8 @@ const EVENT: Record<EntryEvent["action"], { label: string; color: string }> = {
   rejected: { label: "Sent back", color: "var(--danger)" },
   posted: { label: "Posted to the ledger", color: "var(--success)" },
   reversed: { label: "Reversed", color: "var(--warning)" },
-  routed_up: { label: "Routed one level up", color: "var(--warning)" },
+  ceo_notified: { label: "CEO / Founder / Owner notified (view only)", color: "var(--warning)" },
+  blocked: { label: "Blocked (maker-checker)", color: "var(--danger)" },
 };
 
 export function EntryDetailScreen({ id }: { id: string }) {
@@ -67,7 +68,9 @@ function EntryDetail({ id }: { id: string }) {
   const e = q.data;
   const me = viewer?.employee.empId;
   const isMaker = e.createdBy === me;
-  const isApprover = e.approverEmpId === me && viewer?.can("finance.entry_approve");
+  // Only the Director approves, any amount; never their own entry (a Director-made entry is blocked).
+  const isApprover = !e.blocked && e.approverEmpId === me && !!viewer?.can("finance.entry_approve");
+  const canPrepare = !!viewer?.can("finance.entry_create");
   const approver = lookup.employee(e.approverEmpId);
   const acc = (aid: string) => accounts.data?.find((a) => a.id === aid);
   const party = (pid?: string) => parties.data?.find((p) => p.id === pid)?.name;
@@ -80,7 +83,7 @@ function EntryDetail({ id }: { id: string }) {
   const pendingReversal = all.data?.find((x) => x.reversalOf === e.id && x.status !== "reversed" && x.status !== "posted");
 
   const doApprove = async () => {
-    if (e.requiredApproverLevel <= 2 && !(await stepUp({ action: `Approve and post ${e.number}`, detail: `${formatMoney(Number(e.baseTotal.amount), { exact: true })} · ${e.description}` }))) return;
+    if (e.ceoNotified && !(await stepUp({ action: `Approve and post ${e.number}`, detail: `${formatMoney(Number(e.baseTotal.amount), { exact: true })} · ${e.description}` }))) return;
     try {
       await approve.mutateAsync(e.id);
       toast.success(`${e.number} posted`, { description: "The statements update on their own." });
@@ -142,12 +145,12 @@ function EntryDetail({ id }: { id: string }) {
           <>
             <EntryStatusBadge status={e.status} />
             <SourceBadge source={e.source} />
-            {e.status !== "posted" && e.status !== "reversed" && <ApprovalLevelChip level={e.requiredApproverLevel} />}
+            {e.status !== "posted" && e.status !== "reversed" && <ApprovalChip ceoNotified={e.ceoNotified} blocked={e.blocked} />}
           </>
         }
         actions={
           <>
-            {e.status === "draft" && viewer?.can("finance.entry_create") && (
+            {e.status === "draft" && canPrepare && (
               <>
                 <Button variant="outline" asChild>
                   <Link href={`/finance/ledger/new?edit=${e.id}`}>
@@ -169,7 +172,7 @@ function EntryDetail({ id }: { id: string }) {
                 </Button>
               </>
             )}
-            {e.status === "posted" && !pendingReversal && viewer?.can(["finance.entry_create", "finance.entry_approve"]) && (
+            {e.status === "posted" && !pendingReversal && canPrepare && (
               <Button variant="outline" onClick={doReverse} loading={reverse.isPending}>
                 <Undo2 /> Reverse
               </Button>
@@ -259,15 +262,22 @@ function EntryDetail({ id }: { id: string }) {
           </Card>
 
           <section>
-            <SectionTitle title="Approval" description="The person who enters an entry can never approve it (maker-checker)." />
+            <SectionTitle title="Approval" description="Prepared by Finance, approved by the Director. The person who enters an entry can never approve it (maker-checker)." />
             <ApprovalRelay steps={e.chain} />
             <div className="mt-3 grid gap-2">
-              {e.status === "pending_approval" && isMaker && (
-                <MakerCheckerNote reason={`You prepared this, so you can't approve it. It goes to ${approver?.name ?? "the approver"} (${LEVEL_APPROVER_TITLE[e.requiredApproverLevel]}).`} />
+              {e.status === "pending_approval" && e.blocked && <MakerCheckerNote reason={DIRECTOR_MADE_IT} />}
+              {e.status === "pending_approval" && isMaker && !e.blocked && (
+                <MakerCheckerNote reason={`You prepared this, so you can't approve it. It goes to ${approver?.name ?? "the Director"} (Director).`} />
               )}
-              {e.status === "pending_approval" && !isMaker && !isApprover && (
-                <MakerCheckerNote reason={`Waiting for ${approver?.name ?? "the approver"} (${LEVEL_APPROVER_TITLE[e.requiredApproverLevel]}). Entries are approved at the level their amount needs.`} />
+              {e.status === "pending_approval" && !isMaker && !isApprover && !e.blocked && (
+                <ViewOnlyNote>
+                  View only. Waiting for {approver?.name ?? "the Director"} (Director). The Director approves every journal entry, any amount.
+                </ViewOnlyNote>
               )}
+              {e.ceoNotified && e.status !== "draft" && (
+                <ViewOnlyNote>Above PKR 500,000, or a capital or loan entry: the CEO / Founder / Owner is notified and can view it. The Director approves.</ViewOnlyNote>
+              )}
+              {e.status === "draft" && !canPrepare && <ViewOnlyNote>View only. The finance person prepares and submits entries; the Director approves them.</ViewOnlyNote>}
             </div>
           </section>
         </div>

@@ -14,6 +14,14 @@ export const payrollKeys = {
 };
 
 /**
+ * True for the person who prepares payroll: Finance (payroll.prepare). The Director approves and never
+ * prepares (the maker can't also be the checker); the CEO / Founder / Owner only views.
+ */
+export function useCanPreparePayroll() {
+  return useCan("payroll.prepare");
+}
+
+/**
  * Payroll runs, newest first (people with payroll.view only).
  * Returns PayrollRun[]: { id, number, month, stage, totals: { gross, deductions, tax, net }, headcount, chain, … }.
  */

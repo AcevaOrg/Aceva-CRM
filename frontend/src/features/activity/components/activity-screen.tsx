@@ -6,6 +6,7 @@ import { RequireAccess } from "@/components/shared/can";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { useSecurityAlerts } from "../hooks";
+import { activityAccess } from "../logic";
 import { FairUseButton } from "./activity-bits";
 import { AlertsPanel } from "./alerts-panel";
 import { MyActivityPanel } from "./my-activity-panel";
@@ -19,14 +20,13 @@ type Tab = "online" | "timeline" | "search" | "reports" | "alerts" | "mine";
 /** /activity: Module 4 screens (spec §9.4). Employees land on "mine". */
 export function ActivityScreen() {
   const viewer = useViewer();
-  const all = !!viewer?.can("activity.view_all");
-  const team = !!viewer?.can("activity.view_team");
-  const security = all || !!viewer?.can("activity.security");
-  const fallback: Tab = all ? "online" : team ? "reports" : "mine";
+  const access = activityAccess(viewer);
+  const team = access.online || access.reports;
+  const fallback: Tab = access.online ? "online" : access.reports ? "reports" : "mine";
   const [tab, setTab] = useUrlState<Tab>("tab", fallback);
   const openAlerts = useSecurityAlerts("open").data?.length ?? 0;
 
-  const allowed: Record<Tab, boolean> = { online: all, timeline: team || all, search: all, reports: team || all, alerts: security, mine: true };
+  const allowed: Record<Tab, boolean> = { online: access.online, timeline: access.timeline, search: access.search, reports: access.reports, alerts: access.alerts, mine: true };
   const current = allowed[tab] ? tab : fallback;
 
   return (
@@ -34,22 +34,22 @@ export function ActivityScreen() {
       <PageHeader
         title="Activity"
         description={
-          all
-            ? "Who did what and when inside the system, for everyone in your reporting line. Nobody can edit or delete tracking data."
-            : team
-              ? "Your team's daily summaries and your own history. Nobody can edit or delete tracking data."
-              : "What the system records about you. You can always see your own history."
+          team
+            ? viewer?.employee.role === "ceo"
+              ? "Who did what and when inside the system, for everyone in the company. Nobody can edit or delete tracking data."
+              : "Who did what and when inside the system, for everyone below you in your reporting line. Nobody can edit or delete tracking data."
+            : "What the system records about you. You can always see your own history."
         }
-        seal={all || team ? "confidential" : "own"}
+        seal={team ? "confidential" : "own"}
         actions={<FairUseButton />}
       />
       <Tabs value={current} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          {all && <TabsTrigger value="online"><Users /> Online now</TabsTrigger>}
-          {(team || all) && <TabsTrigger value="timeline"><Clock /> Timeline</TabsTrigger>}
-          {all && <TabsTrigger value="search"><Search /> Search</TabsTrigger>}
-          {(team || all) && <TabsTrigger value="reports"><BarChart3 /> Reports</TabsTrigger>}
-          {security && (
+          {access.online && <TabsTrigger value="online"><Users /> Online now</TabsTrigger>}
+          {access.timeline && <TabsTrigger value="timeline"><Clock /> Timeline</TabsTrigger>}
+          {access.search && <TabsTrigger value="search"><Search /> Search</TabsTrigger>}
+          {access.reports && <TabsTrigger value="reports"><BarChart3 /> Reports</TabsTrigger>}
+          {access.alerts && (
             <TabsTrigger value="alerts">
               <ShieldAlert /> Alerts
               {openAlerts > 0 && <span className="grid h-4.5 min-w-4.5 place-content-center rounded-full bg-danger px-1 text-[10px] font-bold text-white tabular">{openAlerts}</span>}
@@ -57,11 +57,11 @@ export function ActivityScreen() {
           )}
           <TabsTrigger value="mine"><UserRound /> My activity</TabsTrigger>
         </TabsList>
-        {all && <TabsContent value="online"><OnlinePanel /></TabsContent>}
-        {(team || all) && <TabsContent value="timeline"><TimelinePanel /></TabsContent>}
-        {all && <TabsContent value="search"><SearchPanel /></TabsContent>}
-        {(team || all) && <TabsContent value="reports"><ReportsPanel /></TabsContent>}
-        {security && <TabsContent value="alerts"><AlertsPanel /></TabsContent>}
+        {access.online && <TabsContent value="online"><OnlinePanel /></TabsContent>}
+        {access.timeline && <TabsContent value="timeline"><TimelinePanel /></TabsContent>}
+        {access.search && <TabsContent value="search"><SearchPanel /></TabsContent>}
+        {access.reports && <TabsContent value="reports"><ReportsPanel /></TabsContent>}
+        {access.alerts && <TabsContent value="alerts"><AlertsPanel /></TabsContent>}
         <TabsContent value="mine"><MyActivityPanel /></TabsContent>
       </Tabs>
     </RequireAccess>

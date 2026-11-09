@@ -141,6 +141,7 @@ export interface SettingsRecord {
 
 export interface WeightsVersion {
   id: string;
+  /** standard: Engineering and development, and Management · sales: the Sales department. */
   kind: "standard" | "sales";
   weights: Record<string, number>;
   effectiveFrom: string;

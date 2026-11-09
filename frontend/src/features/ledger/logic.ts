@@ -1,22 +1,26 @@
 /**
  * Pure accounting rules for Module 9 (plan §13, §16). Mirrored on the server; unit-test these.
  */
-import type { Employee, Level } from "@/types";
+import type { Permission } from "@/lib/auth/permissions";
+import type { Employee } from "@/types";
 import type { Account, AccountGroup, ApprovalLimit, JournalEntry, JournalLine } from "./types";
 
 export const num = (s: string | number | undefined | null) => (s === undefined || s === null || s === "" ? 0 : Number(s));
 export const m2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 export const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Example limits from the plan; management sets the real amounts in Settings. */
-export const APPROVAL_LIMITS: ApprovalLimit[] = [
-  { level: 3, label: "Director", upTo: 50_000 },
-  { level: 2, label: "CEO", upTo: 500_000 },
-  { level: 1, label: "Owner", upTo: null },
-];
+/**
+ * Journal-entry approval (spec §2.3): the finance person prepares, the Director approves every entry
+ * of any amount. There is no CEO tier: the CEO / Founder / Owner sees everything and approves nothing,
+ * but is notified (view only) of entries above PKR 500,000 and of every share-capital or loan entry.
+ */
+export const APPROVAL_LIMITS: ApprovalLimit[] = [{ role: "director", label: "Director", upTo: null }];
 
-export const LEVEL_APPROVER_TITLE: Record<number, string> = { 1: "Owner", 2: "CEO", 3: "Director" };
-const LEVEL_ROLE: Record<number, Employee["role"]> = { 1: "owner", 2: "ceo", 3: "director" };
+/** Above this PKR amount (and for every capital or loan entry) the CEO / Founder / Owner is notified. */
+export const CEO_NOTIFY_ABOVE = 500_000;
+
+/** Short label used on chips and lists. */
+export const CEO_NOTIFIED_LABEL = "CEO / Founder / Owner notified";
 
 export const GROUP_LABEL: Record<AccountGroup, string> = {
   asset: "Assets",
@@ -64,15 +68,9 @@ export function entryBaseTotal(entry: Pick<JournalEntry, "lines" | "exchangeRate
   return round2(entry.lines.reduce((s, l) => s + lineBase(l, entry).dr, 0));
 }
 
-/**
- * Approval level from the PKR amount (plan §13): ≤ 50,000 Director · ≤ 500,000 CEO ·
- * above, and every share-capital or loan entry, Owner.
- */
-export function requiredLevel(baseAmount: number, touchesCapitalOrLoan: boolean): Level {
-  if (touchesCapitalOrLoan) return 1;
-  if (baseAmount <= 50_000) return 3;
-  if (baseAmount <= 500_000) return 2;
-  return 1;
+/** The CEO / Founder / Owner is notified (view only) above PKR 500,000 and for every capital or loan entry. */
+export function ceoNotified(baseAmount: number, touchesCapitalOrLoan: boolean) {
+  return touchesCapitalOrLoan || baseAmount > CEO_NOTIFY_ABOVE;
 }
 
 export function touchesCapitalOrLoan(lines: Pick<JournalLine, "accountId">[], accounts: Account[]) {
@@ -82,21 +80,35 @@ export function touchesCapitalOrLoan(lines: Pick<JournalLine, "accountId">[], ac
   });
 }
 
-/**
- * Who approves at a level. Nobody approves their own entry: if the approver is the maker,
- * it goes one level up (plan §5).
- */
-export function approverFor(level: Level, makerEmpId: string, employees: Employee[]): { empId?: string; level: Level; routedUp: boolean } {
-  let l = level as number;
-  let routedUp = false;
-  while (l >= 1) {
-    const e = employees.find((x) => x.role === LEVEL_ROLE[l] && x.status !== "left");
-    if (e && e.empId !== makerEmpId) return { empId: e.empId, level: l as Level, routedUp };
-    routedUp = true;
-    l--;
-  }
-  return { level: 1, routedUp };
+export interface ApproverRoute {
+  /** The Director, who approves every entry. */
+  empId?: string;
+  /** The Director made the entry: nobody else may approve it, so it can't be posted. */
+  blocked: boolean;
 }
+
+/** Why an entry made by the Director can't go anywhere. */
+export const DIRECTOR_MADE_IT =
+  "The Director made this entry. Only the Director approves journal entries and nobody approves their own entry, so it can't be posted. Ask the finance person to prepare it instead.";
+
+/**
+ * Who approves a journal entry: always the Director (maker-checker). The Director never prepares
+ * finance items; if they did, nobody else may approve it, so the entry is blocked.
+ */
+export function approverFor(makerEmpId: string, employees: Employee[]): ApproverRoute {
+  const director = employees.find((x) => x.role === "director" && x.status !== "left");
+  if (!director || director.empId === makerEmpId) return { blocked: true };
+  return { empId: director.empId, blocked: false };
+}
+
+/* ---------- Who may do what (permission-driven, spec §8) ---------- */
+
+type CanFn = (p: Permission) => boolean;
+
+/** The finance person prepares entries and runs the month close. */
+export const canRunClose = (can: CanFn) => can("finance.close") && can("finance.entry_create");
+/** The Director approves (or sends back) the month close. */
+export const canApproveClose = (can: CanFn) => can("finance.close") && can("finance.entry_approve");
 
 export const monthOf = (iso: string) => iso.slice(0, 7);
 

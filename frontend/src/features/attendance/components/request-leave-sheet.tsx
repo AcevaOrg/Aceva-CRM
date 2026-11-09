@@ -62,7 +62,7 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
   const submit = form.handleSubmit(async (values) => {
     try {
       const r = await request.mutateAsync({ ...values, to: values.to || values.from, halfDay: values.halfDay && values.from === (values.to || values.from) });
-      toast.success(`Leave request ${r.number} sent`, { description: chain[0] ? `It's waiting for ${lookup.employee(chain[0].empId)?.name}.` : "Approved." });
+      toast.success(`Leave request ${r.number} sent`, { description: chain[0] ? `It's waiting for ${lookup.employee(chain[0].empId)?.name} (${chain[0].label}).` : "Recorded as approved." });
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send the request");
@@ -74,7 +74,14 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
       <SheetContent size="lg">
         <SheetHeader>
           <SheetTitle>Request leave</SheetTitle>
-          <SheetDescription>Weekends and public holidays aren&apos;t counted. Your team lead approves first, then the Director.</SheetDescription>
+          <SheetDescription>
+            Weekends and public holidays aren&apos;t counted.{" "}
+            {chain.length === 0
+              ? "As CEO / Founder / Owner there is no one above you, so your leave is recorded straight away."
+              : chain.length > 1
+                ? `Your manager (${chain[0].label}) approves first, then the Director.`
+                : `Your manager (${chain[0].label}) approves it.`}
+          </SheetDescription>
         </SheetHeader>
         <SheetBody>
           <form id="leave-form" onSubmit={submit} className="grid gap-5">
@@ -165,7 +172,7 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
                       </li>
                     ))}
                   </ul>
-                  <p className="pl-6 text-muted-foreground">Ask your team lead for an extension, or finish them before you go.</p>
+                  <p className="pl-6 text-muted-foreground">Ask whoever assigned them for an extension, or finish them before you go.</p>
                 </div>
               )}
               {chain.length > 0 && (

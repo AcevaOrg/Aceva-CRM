@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { toast } from "sonner";
-import { Bot, CheckCheck, Flag, Info, Lock, MessageSquareQuote, Send, Undo2 } from "lucide-react";
+import { Bot, CheckCheck, Eye, Flag, Info, Lock, MessageSquareQuote, Send, Undo2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,16 +51,20 @@ export function ScorecardView({ id }: { id: string }) {
   const { scorecard: sc, weights, disputes } = q.data;
   const me = viewer?.employee.empId;
   const mine = sc.empId === me;
-  const isReviewer = sc.reviewerEmpId === me;
+  // Only the person's manager releases or adds a remark; anyone above them (the CEO / Founder / Owner included) only views.
+  const isReviewer = !!sc.reviewerEmpId && sc.reviewerEmpId === me && !!viewer?.can("task.review");
   const st = SCORECARD_STATUS(sc.status);
-  const canDispute = mine && sc.status !== "draft" && sc.kind === "standard";
+  const canDispute = mine && !!sc.reviewerEmpId && sc.status !== "draft" && sc.kind === "standard";
+  const viewOnly = !mine && !isReviewer;
   const openDisputeTasks = new Set(disputes.filter((d) => d.status === "open").map((d) => d.taskNumber));
 
   const timeline: TimelineItem[] = [
     { id: "c", icon: <Bot />, title: "Draft created by the system", meta: "From approved task ratings and attendance", time: formatDateTime(sc.createdAt) },
     ...(sc.remarkAt ? [{ id: "r", icon: <MessageSquareQuote />, title: "Reviewer remark added", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.remarkAt) }] : []),
     sc.releasedAt
-      ? { id: "rel", icon: <Send />, color: "var(--info)", title: "Released to the employee", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.releasedAt) }
+      ? sc.reviewerEmpId
+        ? { id: "rel", icon: <Send />, color: "var(--info)", title: "Released to the employee", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.releasedAt) }
+        : { id: "rel", icon: <Send />, color: "var(--info)", title: "Released automatically", meta: "No reviewer above the Director; the CEO / Founder / Owner views it", time: formatDateTime(sc.releasedAt) }
       : { id: "rel", icon: <Send />, title: "Waiting for the reviewer to release", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, muted: true },
     sc.acknowledgedAt
       ? { id: "ack", icon: <CheckCheck />, color: "var(--success)", title: "Acknowledged", meta: sc.employeeComment ? `“${sc.employeeComment}”` : undefined, time: formatDateTime(sc.acknowledgedAt) }
@@ -84,7 +88,13 @@ export function ScorecardView({ id }: { id: string }) {
       <PageHeader
         back={{ href: mine ? "/performance" : "/performance?tab=team", label: "Performance" }}
         title={`${formatMonthKey(sc.month)} scorecard`}
-        description={mine ? "Your monthly results. You can acknowledge and dispute a task rating." : "Monthly results. Reviewers can add a remark but can't change the numbers."}
+        description={
+          mine
+            ? `Your monthly results. You can acknowledge${canDispute ? " and dispute a task rating" : ""}.`
+            : isReviewer
+              ? "Monthly results. As the reviewer you can add a remark and release it, but you can't change the numbers."
+              : "Monthly results. View only: the person's manager reviews and releases it."
+        }
         seal={mine ? "own" : "confidential"}
         meta={
           <>
@@ -122,6 +132,11 @@ export function ScorecardView({ id }: { id: string }) {
               <p className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
                 <Lock className="mt-0.5 size-3.5 shrink-0" /> This scorecard keeps the weights it was made with, even if the Director changes them later.
               </p>
+              {viewOnly && sc.status === "draft" && sc.reviewerEmpId && (
+                <p className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
+                  <Eye className="mt-0.5 size-3.5 shrink-0" /> View only. <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} /> releases it.
+                </p>
+              )}
             </div>
           </Card>
           <Card>
@@ -221,7 +236,11 @@ export function ScorecardView({ id }: { id: string }) {
               <CardHeader>
                 <div>
                   <CardTitle>Reviewer remark</CardTitle>
-                  <p className="text-[13px] text-muted-foreground">Reviewer: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} /></p>
+                  {sc.reviewerEmpId ? (
+                    <p className="text-[13px] text-muted-foreground">Reviewer: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} /></p>
+                  ) : (
+                    <p className="text-[13px] text-muted-foreground">No reviewer. The Director&apos;s scorecard is released automatically; the CEO / Founder / Owner views it.</p>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="grid gap-3">

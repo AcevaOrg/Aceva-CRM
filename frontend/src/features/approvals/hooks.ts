@@ -11,6 +11,12 @@ export function useApprovals() {
   return useQuery({ queryKey: approvalKeys.list(empId), queryFn: approvalsApi.list, enabled: !!empId });
 }
 
+/** Read-only: items waiting for approvers below the viewer (the CEO / Founder / Owner sees the whole company). */
+export function useOversight() {
+  const empId = useSession((s) => s.empId);
+  return useQuery({ queryKey: ["approvals", "oversight", empId], queryFn: approvalsApi.oversight, enabled: !!empId });
+}
+
 export function useApprovalsCount() {
   return useApprovals().data?.items.length ?? 0;
 }

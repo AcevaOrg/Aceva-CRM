@@ -30,7 +30,7 @@ import {
 import { monthKeyOf, num } from "../logic";
 import type { Account, BankStatementLine, JournalEntry, LedgerCashLine } from "../types";
 import { AccountPicker } from "./account-picker";
-import { EntryAmount, EntryStatusBadge } from "./ledger-bits";
+import { EntryAmount, EntryStatusBadge, FinanceRoleNote } from "./ledger-bits";
 
 type Tab = "accounts" | "transfers" | "reconcile";
 
@@ -47,6 +47,7 @@ function Banking() {
   return (
     <>
       <PageHeader title="Banking" description="Bank balances, transfers between accounts and the monthly bank reconciliation." seal="highly" />
+      <FinanceRoleNote className="mb-4" prepares="records transfers and reconciles the bank" />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="accounts"><Landmark /> Accounts</TabsTrigger>
@@ -67,7 +68,8 @@ function BankAccountsTab() {
   const q = useBankAccounts();
   const viewer = useViewer();
   const router = useRouter();
-  const canReveal = !!viewer && (viewer.employee.level <= 3 || viewer.hasFinanceDuty);
+  // Full bank account numbers: the Director and the CEO / Founder / Owner (view) only.
+  const canReveal = !!viewer && (viewer.employee.role === "ceo" || viewer.employee.role === "director");
   if (q.isPending) return <CardsSkeleton count={4} />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const total = q.data.reduce((s, a) => s + num(a.balance.amount), 0);

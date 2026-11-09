@@ -84,7 +84,7 @@ export function ReportsPanel() {
         <Field label={range === "day" ? "Day" : "Ending on"} htmlFor="r-date">
           <Input id="r-date" type="date" value={date} max={isoDay(new Date())} onChange={(e) => setDate(e.target.value || isoDay(new Date()))} />
         </Field>
-        <p className="pb-2 text-[12.5px] text-muted-foreground">Your team only. Click a row to open that person&apos;s timeline.</p>
+        <p className="pb-2 text-[12.5px] text-muted-foreground">Your reporting line only. Click a row to open that person&apos;s timeline.</p>
       </div>
 
       {!query.isPending && rows.length === 0 ? (

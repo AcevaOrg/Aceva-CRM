@@ -15,6 +15,7 @@ import { CardsSkeleton, QueryState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { useCan } from "@/lib/auth/viewer";
 import { useAddOffice, useCreateDepartment, useDepartments } from "../hooks";
+import { isManager } from "../logic";
 
 export function DepartmentsPanel() {
   const query = useDepartments();
@@ -28,7 +29,7 @@ export function DepartmentsPanel() {
       <section>
         <SectionTitle
           title="Departments"
-          description="Each department has a head. Headcount counts active staff and people on notice."
+          description={`Each department has a head. Headcount counts active staff and people on notice.${canManage ? "" : " View only: the Director adds departments and offices."}`}
           actions={
             canManage && (
               <Button size="sm" onClick={() => setNewDept(true)}>
@@ -129,8 +130,8 @@ function NewDepartmentDialog({ onClose }: { onClose: () => void }) {
           <Field label="Name" htmlFor="dep-name" required>
             <Input id="dep-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="For example: Mobile" />
           </Field>
-          <Field label="Head of department" htmlFor="dep-head" required>
-            <EmployeeSelect id="dep-head" value={head} onChange={setHead} filter={(e) => e.level <= 4} />
+          <Field label="Head of department" htmlFor="dep-head" required hint="A manager: the Director or the CTO.">
+            <EmployeeSelect id="dep-head" value={head} onChange={setHead} filter={(e) => e.status !== "left" && isManager(e)} />
           </Field>
           <Field label="Offices" required>
             <div className="grid gap-2 sm:grid-cols-3">

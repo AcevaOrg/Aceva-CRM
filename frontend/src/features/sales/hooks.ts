@@ -17,7 +17,7 @@ export const salesKeys = {
 /* ---------- Home dashboard hooks ---------- */
 
 /**
- * "My sales day" for the viewer (or, for a sales manager, the chosen salesperson).
+ * "My sales day" for the viewer (or, for the Director and the CEO / Founder / Owner, the chosen salesperson; the CEO views only).
  * Returns MySalesDay | null (null when the viewer has no salespeople in scope).
  */
 export function useMySalesDay(empId?: string) {

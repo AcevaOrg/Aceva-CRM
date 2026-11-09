@@ -66,7 +66,7 @@ function TeamLeave() {
   return (
     <section className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <SectionTitle title="Team requests" description="Everyone below you in the reporting line." className="mb-0" />
+        <SectionTitle title="Team requests" description="Everyone below you in the reporting line. You decide only the steps waiting for you; the rest are view only." className="mb-0" />
         <SegmentedControl
           size="sm"
           value={filter}
@@ -101,7 +101,10 @@ function LeaveApprovals() {
   const q = useLeaveRequests("team");
   return (
     <section className="grid gap-3">
-      <SectionTitle title="Waiting for you" description="You approve as team lead or Director. You never approve your own leave." />
+      <SectionTitle
+        title="Waiting for you"
+        description="The person's manager approves first; Engineering leave then goes to the Director. Only the Director's own leave goes to the CEO / Founder / Owner. Nobody approves their own leave."
+      />
       <QueryState query={q}>
         {(list) => {
           const mine = list.filter((r) => currentLeaveApprover(r) === viewer?.employee.empId);

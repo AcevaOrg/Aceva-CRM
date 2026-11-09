@@ -16,7 +16,7 @@ import { EmptyState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { formatMoney, toNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { usePayslipFor } from "../hooks";
+import { useCanPreparePayroll, usePayslipFor } from "../hooks";
 import { isLocked, stageIndex, VARIANCE_FLAG, variancePct } from "../logic";
 import type { PayrollLine, PayrollRun } from "../types";
 import { AdjustmentDialog } from "./adjustment-dialog";
@@ -96,6 +96,7 @@ export function RunLinesTable({ run, lines }: { run: PayrollRun; lines: PayrollL
   const [payslipFor, setPayslipFor] = React.useState<string | null>(null);
   const [adjustFor, setAdjustFor] = React.useState<string | null>(null);
   const locked = isLocked(run.stage);
+  const canAdjust = useCanPreparePayroll();
   const hasPayslips = stageIndex(run.stage) >= stageIndex("payslips_sent");
 
   const flaggedCount = lines.filter((l) => Math.abs(variancePct(l) ?? 0) > VARIANCE_FLAG).length;
@@ -244,7 +245,7 @@ export function RunLinesTable({ run, lines }: { run: PayrollRun; lines: PayrollL
                                     <Receipt /> View payslip
                                   </Button>
                                 )}
-                                {locked && (
+                                {locked && canAdjust && (
                                   <Button size="sm" variant="outline" onClick={() => setAdjustFor(l.empId)}>
                                     <FilePlus2 /> Add adjustment
                                   </Button>

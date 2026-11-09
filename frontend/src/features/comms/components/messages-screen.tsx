@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Bookmark, Info, MessagesSquare, Pin } from "lucide-react";
+import { ArrowLeft, Bookmark, Info, MessagesSquare, Pin, SearchX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tip } from "@/components/ui/overlays";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { RequireAccess } from "@/components/shared/can";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { ApiError } from "@/lib/api/mock";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatRelative } from "@/lib/dates";
@@ -106,7 +107,12 @@ function ConversationView({ id }: { id: string }) {
     return (
       <section className="flex flex-1 flex-col p-6">
         <BackLink />
-        <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        {q.error instanceof ApiError && q.error.status === 404 ? (
+          // Not a member: behave as if the conversation doesn't exist.
+          <EmptyState className="flex-1 border-0" icon={<SearchX />} title="Conversation not found" description="It doesn't exist, or you're not a member of it." />
+        ) : (
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        )}
       </section>
     );
 

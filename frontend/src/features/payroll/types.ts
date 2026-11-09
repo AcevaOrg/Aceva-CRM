@@ -1,11 +1,14 @@
 /**
  * Module 8 · Payroll (plan §12)
- * Owner: Developer B (cycle 3), finance review by Developer A and the CTO. Spec §9.8.
+ * Owner: Developer B (cycle 3), finance review by Developer A. Spec §9.8.
+ * Chain (maker-checker): Prepared (Finance, ACV-0010) → Approved (Director, with step-up). No CEO step:
+ * the CEO / Founder / Owner opens and views every run but approves nothing.
  * API contract for the module. All money is a decimal string (spec §7.2).
  */
 import type { ApprovalStep, Money } from "@/types";
 
-export type PayrollStage = "draft" | "calculated" | "prepared" | "reviewed" | "approved" | "payslips_sent" | "posted" | "paid";
+/** No separate review stage: Finance prepares and the Director approves. */
+export type PayrollStage = "draft" | "calculated" | "prepared" | "approved" | "payslips_sent" | "posted" | "paid";
 
 export interface PayrollTotals {
   gross: Money;
@@ -27,8 +30,6 @@ export interface PayrollRun {
   attendanceLockedAt?: string;
   preparedBy?: string;
   preparedAt?: string;
-  reviewedBy?: string;
-  reviewedAt?: string;
   approvedBy?: string;
   approvedAt?: string;
   payslipsSentAt?: string;
@@ -117,7 +118,7 @@ export interface PayrollAdjustment {
   createdAt: string;
 }
 
-/** Yearly income tax slab (Settings; the accountant updates it when the law changes). */
+/** Yearly income tax slab (Settings; the Director updates it when the law changes, with the accountant). */
 export interface TaxSlab {
   from: number;
   /** null = no upper limit */

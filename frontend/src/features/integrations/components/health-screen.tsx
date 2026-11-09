@@ -11,6 +11,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Progress, Table, TBody, TD, TH, THead, TR } from "@/components/ui/misc";
 import { Tip } from "@/components/ui/overlays";
 import { PageHeader, SectionTitle } from "@/components/layout/page-header";
+import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { RequireAccess } from "@/components/shared/can";
 import { FreshnessStamp, StatusBadge } from "@/components/shared/chips";
 import { useStepUp } from "@/components/shared/dialogs";
@@ -34,6 +35,7 @@ export function IntegrationsHealthScreen() {
 
 function HealthInner() {
   const q = useIntegrationsOverview();
+  const canManage = useCan("integrations.manage");
   return (
     <>
       <PageHeader
@@ -41,6 +43,11 @@ function HealthInner() {
         description="The sales tools Aceva pays for, connected read-only. Work counts sync every 15 to 30 minutes; API keys never leave the server."
         seal="highly"
       />
+      {!canManage && (
+        <div className="mb-5">
+          <MakerCheckerNote reason="View only. The CTO and the Director manage connections, keys, syncs and user links." />
+        </div>
+      )}
       {q.isPending ? (
         <CardsSkeleton count={4} className="xl:grid-cols-2" />
       ) : q.isError ? (
@@ -179,15 +186,17 @@ function ToolCard({ c }: { c: ToolConnection }) {
       <CardFooter className="flex-wrap">
         {connected ? (
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              loading={sync.isPending}
-              disabled={c.status === "paused"}
-              onClick={() => sync.mutate(c.tool, { onSuccess: (r) => toast.success(`${m.name} synced`, { description: `${r.items} new items. Already-counted items are skipped by their tool ID.` }) })}
-            >
-              <RefreshCw /> Sync now
-            </Button>
+            {canManage && (
+              <Button
+                size="sm"
+                variant="outline"
+                loading={sync.isPending}
+                disabled={c.status === "paused"}
+                onClick={() => sync.mutate(c.tool, { onSuccess: (r) => toast.success(`${m.name} synced`, { description: `${r.items} new items. Already-counted items are skipped by their tool ID.` }) })}
+              >
+                <RefreshCw /> Sync now
+              </Button>
+            )}
             {canManage && (
               <Button size="sm" variant="outline" onClick={togglePause} loading={update.isPending}>
                 {c.status === "paused" ? <Play /> : <Pause />} {c.status === "paused" ? "Resume" : "Pause"}
@@ -202,13 +211,13 @@ function ToolCard({ c }: { c: ToolConnection }) {
             )}
             <Button asChild size="sm" variant="ghost" className="ml-auto">
               <Link href={`/integrations/${c.tool}`}>
-                <Settings2 /> Manage
+                <Settings2 /> {canManage ? "Manage" : "View"}
               </Link>
             </Button>
           </>
         ) : (
           <Button asChild size="sm" variant={c.tool === "salesforce" ? "outline" : "default"}>
-            <Link href={`/integrations/${c.tool}`}>Connect {m.name}</Link>
+            <Link href={`/integrations/${c.tool}`}>{canManage ? "Connect" : "View"} {m.name}</Link>
           </Button>
         )}
       </CardFooter>
@@ -391,6 +400,7 @@ function SyncRunsCard() {
 
 function UnmatchedCard({ count }: { count: number }) {
   const q = useUnmatched();
+  const canManage = useCan("integrations.manage");
   return (
     <Card>
       <CardHeader>
@@ -417,7 +427,7 @@ function UnmatchedCard({ count }: { count: number }) {
             <CircleCheck className="size-4" /> Every tool user is linked.
           </p>
         )}
-        {count > 0 && (
+        {canManage && count > 0 && (
           <Button asChild size="sm" className="w-fit">
             <Link href="/integrations/apollo?step=users">
               <UserPlus /> Link users
@@ -451,7 +461,7 @@ function FairUseCard() {
           </p>
           <p className="text-muted-foreground">Email text, call recordings, private messages, personal accounts.</p>
         </div>
-        <p className="text-muted-foreground">Each salesperson sees their own synced numbers and can flag a wrong count to the sales manager.</p>
+        <p className="text-muted-foreground">Each salesperson sees their own synced numbers and can flag a wrong count to the Director.</p>
       </CardContent>
     </Card>
   );

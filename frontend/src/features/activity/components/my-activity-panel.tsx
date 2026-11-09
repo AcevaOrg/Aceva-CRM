@@ -75,7 +75,7 @@ export function MyActivityPanel() {
               <CardHeader>
                 <div>
                   <CardTitle>Recent logins</CardTitle>
-                  <CardDescription>Spot anything you don&apos;t recognise? Sign out that device and tell the CTO.</CardDescription>
+                  <CardDescription>Spot anything you don&apos;t recognise? Sign out that device and tell the CTO (security).</CardDescription>
                 </div>
                 <Button asChild variant="outline" size="sm">
                   <Link href="/account?tab=devices">

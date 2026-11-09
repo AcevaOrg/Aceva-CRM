@@ -29,7 +29,7 @@ export function MyPayslips() {
     <>
       <PageHeader
         title="My payslips"
-        description="Your monthly pay, deductions and year-to-date totals. Only you, finance and management can see these."
+        description="Your monthly pay, deductions and year-to-date totals. Only you, Finance, the Director and the CEO / Founder / Owner can see these."
         zone="work"
         seal="own"
         actions={

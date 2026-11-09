@@ -1,9 +1,11 @@
 /**
  * Module 13 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
- * Only approved finance or account-management roles can see or change billing (plan §18).
+ * Billing (plan §18, spec §2.3): the finance person creates invoices and records payments (billing.manage);
+ * the Director and the CEO / Founder / Owner view. Subscriptions: the Director manages; Finance and the CEO view.
  */
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
+import { employeesTable } from "@/lib/directory";
 import type { Permission } from "@/lib/auth/permissions";
 import { monthKey } from "@/lib/dates";
 import { uid } from "@/lib/utils";
@@ -30,8 +32,12 @@ const decisionsTable = () => table<RenewalDecision>("billing.renewal_decisions",
 function requireView(p: Permission, what = "Page") {
   if (!getViewer().can(p)) notFound(what);
 }
+const MANAGE_MESSAGE: Partial<Record<Permission, string>> = {
+  "billing.manage": "Only the finance person creates invoices and records payments.",
+  "subscriptions.manage": "Only the Director changes subscriptions and renewal decisions.",
+};
 function requireManage(p: Permission) {
-  if (!getViewer().can(p)) throw new ApiError("forbidden", "Only finance or account-management roles can do this.", 403);
+  if (!getViewer().can(p)) throw new ApiError("forbidden", MANAGE_MESSAGE[p] ?? "You can view this, but not change it.", 403);
 }
 
 const fresh = (inv: Invoice): Invoice => ({ ...inv, status: computeStatus(inv) });
@@ -305,8 +311,8 @@ export const billingApi = {
 };
 
 /**
- * Cross-module (M15 → M13): a Won deal creates a draft invoice for the finance duty person to check.
- * Live: done by the server when the sales manager confirms the deal.
+ * Cross-module (M15 → M13): a Won deal creates a draft invoice for the finance person to check and send.
+ * Live: done by the server when the Director confirms the Won deal.
  */
 export function createDraftInvoiceFromDeal(input: {
   dealId: string;
@@ -333,7 +339,7 @@ export function createDraftInvoiceFromDeal(input: {
       reminders: [{ offsetDays: -3 }, { offsetDays: 0 }, { offsetDays: 3 }],
       notes: "Created automatically from a Won deal. Check the scope and amount, then send.",
     },
-    "ACV-0010",
+    employeesTable().find((e) => e.duties.includes("finance") && e.status !== "left")?.empId ?? "ACV-0010",
     { source: { kind: "deal", dealId: input.dealId, dealNumber: input.dealNumber, ownerEmpId: input.ownerEmpId } },
   );
   invoicesTable().unshift(inv);

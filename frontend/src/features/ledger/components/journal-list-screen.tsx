@@ -19,7 +19,7 @@ import { formatMoneyCompact } from "@/lib/format";
 import { useEntries, useFinanceProjects, usePeriods } from "../hooks";
 import { monthKeyOf, SOURCE_LABEL } from "../logic";
 import type { EntrySource, EntryStatus, JournalEntry } from "../types";
-import { EntryAmount, EntryStatusBadge, SourceBadge } from "./ledger-bits";
+import { EntryAmount, EntryStatusBadge, FinanceRoleNote, SourceBadge } from "./ledger-bits";
 
 type StatusTab = EntryStatus | "all";
 
@@ -101,6 +101,7 @@ function JournalList() {
         }
       />
 
+      <FinanceRoleNote className="mb-4" prepares="prepares and submits journal entries" />
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Posted this month"
@@ -110,7 +111,7 @@ function JournalList() {
           accent="var(--zone-finance)"
           onClick={() => router.replace(`/finance/ledger?status=posted&month=${thisMonth}`, { scroll: false })}
         />
-        <StatCard label="Waiting for approval" value={count("pending_approval")} hint="Routed by amount" icon={<Clock />} accent="var(--warning)" onClick={() => setStatus("pending_approval")} />
+        <StatCard label="Waiting for approval" value={count("pending_approval")} hint="The Director approves" icon={<Clock />} accent="var(--warning)" onClick={() => setStatus("pending_approval")} />
         <StatCard label="Drafts" value={count("draft")} hint="Not yet submitted" icon={<FilePen />} onClick={() => setStatus("draft")} />
         <StatCard label="Reversed" value={count("reversed")} hint="Kept for the record" icon={<Undo2 />} onClick={() => setStatus("reversed")} />
       </div>

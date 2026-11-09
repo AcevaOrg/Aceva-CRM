@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tip } from "@/components/ui/overlays";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/misc";
-import { ApprovalRelay } from "@/components/shared/approval-relay";
+import { ApprovalRelay, MakerCheckerNote } from "@/components/shared/approval-relay";
 import { EChart, type EChartOption } from "@/components/shared/echart";
 import { StatCard } from "@/components/shared/metrics";
 import { Money } from "@/components/shared/money";
@@ -18,27 +18,25 @@ import { useLookup } from "@/hooks/use-directory";
 import { useCan } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey, formatMonthShort, monthKey } from "@/lib/dates";
 import { formatMoneyCompact, toNumber } from "@/lib/format";
-import { usePayrollRuns, useStartRun, useTaxSlabs } from "../hooks";
-import { nextMonthKey } from "../logic";
+import { useCanPreparePayroll, usePayrollRuns, useStartRun, useTaxSlabs } from "../hooks";
+import { nextMonthKey, PAYROLL_APPROVER } from "../logic";
 import type { PayrollRun } from "../types";
 import { StageBadge, StagePipeline } from "./stage-pipeline";
 
 function waitingText(run: PayrollRun, name: (id?: string) => string) {
   switch (run.stage) {
     case "draft":
-      return "Attendance is still open. The finance duty person locks it and calculates.";
+      return "Attendance is still open. Finance locks it and calculates.";
     case "calculated":
-      return run.returnedNote ? `Sent back: “${run.returnedNote}”. The finance duty person fixes and prepares it again.` : "Calculated. Waiting for the finance duty person to prepare it.";
+      return run.returnedNote ? `Sent back: “${run.returnedNote}”. Finance fixes and prepares it again.` : "Calculated. Waiting for Finance to prepare it.";
     case "prepared":
-      return `Waiting for ${name("ACV-0003")} (Director) to review.`;
-    case "reviewed":
-      return `Waiting for ${name("ACV-0002")} (CEO) to approve.`;
+      return `Prepared by ${name(run.preparedBy)} (Finance). Waiting for ${name(PAYROLL_APPROVER)} (Director) to approve.`;
     case "approved":
-      return "Approved. Payslips can be sent.";
+      return "Approved by the Director. Finance sends the payslips.";
     case "payslips_sent":
-      return "Payslips sent. Ready to post to the ledger.";
+      return "Payslips sent. Finance posts it to the ledger.";
     case "posted":
-      return "Posted to the ledger. Waiting for the bank transfer.";
+      return "Posted to the ledger. Waiting for Finance to record the bank transfer.";
     case "paid":
       return `Paid on ${run.paidAt ? formatDate(run.paidAt) : "—"}.`;
   }
@@ -49,7 +47,10 @@ export function RunsOverview() {
   const runs = usePayrollRuns();
   const slabs = useTaxSlabs();
   const start = useStartRun();
-  const canPrepare = useCan("payroll.prepare");
+  const canPrepare = useCanPreparePayroll();
+  const canApprove = useCan("payroll.approve");
+  // Oversight only (the CEO / Founder / Owner): every run is visible, no action is offered.
+  const viewOnly = !canPrepare && !canApprove;
   const lookup = useLookup();
   const name = (id?: string) => lookup.employee(id)?.name ?? id ?? "—";
 
@@ -98,7 +99,7 @@ export function RunsOverview() {
     <>
       <PageHeader
         title="Payroll"
-        description="Monthly salaries from profiles and attendance: prepared, reviewed, approved, then posted to the ledger."
+        description="Monthly salaries from profiles and attendance: prepared by Finance, approved by the Director, then posted to the ledger."
         seal="highly"
         actions={
           <>
@@ -133,7 +134,7 @@ export function RunsOverview() {
           <ListSkeleton rows={4} />
         </div>
       ) : !list.length ? (
-        <EmptyState icon={<Banknote />} title="No payroll runs yet" description="The finance duty person starts the first run at month end." />
+        <EmptyState icon={<Banknote />} title="No payroll runs yet" description="Finance starts the first run at month end." />
       ) : (
         <div className="grid gap-6">
           {current && (
@@ -161,6 +162,7 @@ export function RunsOverview() {
               <CardContent className="grid gap-5 pt-5">
                 <StagePipeline stage={current.stage} />
                 <ApprovalRelay steps={current.chain} />
+                {viewOnly && current.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll and the Director approves it." />}
               </CardContent>
             </Card>
           )}
@@ -233,7 +235,7 @@ export function RunsOverview() {
                 <CardHeader>
                   <div>
                     <CardTitle>Income tax slabs</CardTitle>
-                    <CardDescription>Yearly salary income. The accountant updates these in Settings.</CardDescription>
+                    <CardDescription>Yearly salary income. The Director updates these in Settings.</CardDescription>
                   </div>
                 </CardHeader>
                 <CardContent>

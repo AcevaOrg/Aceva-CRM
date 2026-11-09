@@ -16,6 +16,7 @@ import { formatDate, isoDay } from "@/lib/dates";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { useAddUsageReading, useDecideRenewal, useSaveSubscription } from "../hooks";
 import { money, SUB_CATEGORY } from "../logic";
+import type { Employee } from "@/types";
 import type { RenewalDecision, Subscription } from "../types";
 
 const schema = z.object({
@@ -35,6 +36,9 @@ const schema = z.object({
 type Values = z.infer<typeof schema>;
 
 /** Add or edit an entry in the subscription register. */
+/** Responsible person: someone who manages others (CEO / Founder, Director, CTO). Sales and Engineering are not managers. */
+const canOwnSubscription = (e: Employee) => e.level <= 3 || e.duties.includes("finance");
+
 export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscription; open: boolean; onOpenChange: (o: boolean) => void }) {
   const save = useSaveSubscription();
   const { register, handleSubmit, setValue, watch, reset, formState } = useForm<Values>({ resolver: zodResolver(schema) });
@@ -110,7 +114,7 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
               <Input id="s-product" placeholder="Sales prospecting and sequences" {...register("product")} />
             </Field>
             <Field label="Responsible person" htmlFor="s-owner" error={errors.ownerEmpId?.message} hint="Gets the renewal reminders.">
-              <EmployeeSelect id="s-owner" value={watch("ownerEmpId") ?? ""} onChange={(id) => setValue("ownerEmpId", id, { shouldValidate: true })} filter={(e) => e.level <= 4 || e.duties.includes("finance")} invalid={!!errors.ownerEmpId} />
+              <EmployeeSelect id="s-owner" value={watch("ownerEmpId") ?? ""} onChange={(id) => setValue("ownerEmpId", id, { shouldValidate: true })} filter={canOwnSubscription} invalid={!!errors.ownerEmpId} />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Plan" htmlFor="s-plan" error={errors.plan?.message}>

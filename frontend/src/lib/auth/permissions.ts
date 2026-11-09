@@ -24,56 +24,93 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-const EMPLOYEE: Permission[] = [
+/*
+ * Aceva structure (strict, spec §2):
+ *   L1 CEO / Founder / Owner — one person. Sees everything (all activity, all data) but APPROVES NOTHING.
+ *   L2 Director              — the single approver for the whole company, plus HR duty and sales-manager duty.
+ *   L3 CTO                   — runs engineering (assigns and reviews engineering work, first step of engineers' leave).
+ *   L4 Sales                 — own leads, deals and targets.
+ *   L4 Finance               — the finance person (finance duty): prepares entries, payroll, bills, invoices, the month close.
+ *   L5 Engineering           — own work.
+ * Maker-checker: the finance person (or anyone) prepares, the Director approves. The Director never
+ * prepares finance items, so there is always a second person. The only thing that goes above the
+ * Director is the Director's own leave or attendance correction, which the CEO / Founder / Owner signs off.
+ */
+
+/** Everyone: their own work, their own data, the directory and messages. */
+const BASE: Permission[] = [
   "org.view", "people.view_directory", "activity.view_own", "task.view_own", "performance.view_own",
   "attendance.self", "leave.request", "payroll.view_own", "comms.use",
 ];
 
-const LEAD: Permission[] = [
-  ...EMPLOYEE,
-  "people.view_job", "standin.manage", "activity.view_team", "task.assign", "task.review", "task.view_team",
-  "performance.view_team", "attendance.view_team", "attendance.approve_correction", "leave.approve",
+/** People who manage others (Director, CTO). Data stays limited to their reporting line. */
+const MANAGER: Permission[] = [
+  ...BASE,
+  "people.view_job", "standin.manage", "activity.view_team", "activity.view_all", "task.assign", "task.review", "task.view_team",
+  "performance.view_team", "performance.view_all", "attendance.view_team", "attendance.approve_correction", "leave.approve",
+  "auth.unlock_account", "session.force_logout", "comms.admin", "announcements.publish",
 ];
 
+/** L1 CEO / Founder / Owner: oversight only. Every "view" and export, no approve / create / manage. */
+const CEO: Permission[] = [
+  ...BASE,
+  "people.view_job", "people.view_personal", "people.view_pay",
+  "activity.view_team", "activity.view_all", "activity.security",
+  "task.view_team", "performance.view_team", "performance.view_all", "attendance.view_team",
+  "payroll.view", "payroll.export",
+  "finance.view", "finance.export", "statements.view", "statements.export", "sheet.view", "insights.view",
+  "audit.view", "settings.view", "backup.view",
+  "billing.view", "subscriptions.view",
+  "sales.own", "sales.team", "sales.all", "sales.commission_view", "sales.export",
+  "integrations.view", "announcements.publish",
+  // The Director's own leave / attendance correction can't be self-approved, so it comes here (spec §2.3).
+  "leave.approve", "attendance.approve_correction",
+];
+
+/** L2 Director: the approver for everything, plus HR duty, sales-manager duty and company administration. Prepares no finance items. */
 const DIRECTOR: Permission[] = [
-  ...LEAD,
-  "roles.manage", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
-  "auth.unlock_account", "session.force_logout", "activity.view_all",
-  "performance.view_all", "performance.weights",
-  "payroll.view", "payroll.review", "payroll.export",
-  "finance.view", "finance.entry_approve", "finance.export",
+  ...MANAGER,
+  "org.manage", "roles.manage", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
+  "activity.security", "performance.weights",
+  "payroll.view", "payroll.review", "payroll.approve", "payroll.export",
+  "finance.view", "finance.entry_approve", "finance.close", "finance.reopen", "finance.export",
   "statements.view", "statements.export", "sheet.view", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "subscriptions.view", "subscriptions.manage",
-  "comms.admin", "announcements.publish",
   "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.export",
   "integrations.view", "integrations.manage",
 ];
 
+/** L3 CTO: runs engineering, security events, backups and the sales tool connections. No finance, payroll or sales data. */
 const CTO: Permission[] = [
-  ...LEAD,
-  "roles.manage", "auth.unlock_account", "session.force_logout", "activity.view_all", "activity.security",
-  "performance.view_all", "audit.view", "settings.view", "backup.view",
-  "comms.admin", "announcements.publish", "integrations.view", "integrations.manage",
+  ...MANAGER,
+  "activity.security", "settings.view", "backup.view", "integrations.view", "integrations.manage",
 ];
 
-const CEO: Permission[] = [
-  ...DIRECTOR,
-  "org.manage", "activity.security", "payroll.approve", "finance.close", "finance.reopen", "billing.manage",
+/** L4 Sales: own leads, deals, follow-ups and daily report. */
+const SALES: Permission[] = [...BASE, "sales.own"];
+
+/** L4 Finance person (finance duty): prepares; never approves. */
+const FINANCE: Permission[] = [
+  ...BASE,
+  "finance.view", "finance.entry_create", "finance.close", "payroll.view", "payroll.prepare",
+  "statements.view", "sheet.view", "sheet.import", "insights.view",
+  "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view",
 ];
+
+/** L5 Engineering and development employees. */
+const ENGINEER: Permission[] = [...BASE];
 
 export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
-  owner: [...PERMISSIONS],
   ceo: CEO,
   director: DIRECTOR,
   cto: CTO,
-  hr_lead: LEAD,
-  team_lead: LEAD,
-  sales_lead: [...LEAD, "sales.own"],
-  employee: EMPLOYEE,
-  sales_exec: [...EMPLOYEE, "sales.own"],
+  sales: SALES,
+  finance: FINANCE,
+  engineer: ENGINEER,
 };
 
+/** Duties add permissions on top of a role. Finance duty: the finance person. HR and sales-manager duty: the Director. */
 export const DUTY_PERMISSIONS: Record<Duty, Permission[]> = {
   finance: [
     "finance.view", "finance.entry_create", "finance.close", "payroll.view", "payroll.prepare",
@@ -85,15 +122,12 @@ export const DUTY_PERMISSIONS: Record<Duty, Permission[]> = {
 };
 
 export const ROLE_LABEL: Record<RoleKey, string> = {
-  owner: "Owner",
-  ceo: "CEO",
+  ceo: "CEO / Founder / Owner",
   director: "Director",
   cto: "CTO",
-  hr_lead: "HR lead",
-  team_lead: "Team lead",
-  sales_lead: "Sales team lead",
-  employee: "Employee",
-  sales_exec: "Sales executive",
+  sales: "Sales",
+  finance: "Finance",
+  engineer: "Engineering",
 };
 
 export const DUTY_LABEL: Record<Duty, string> = {
@@ -103,11 +137,11 @@ export const DUTY_LABEL: Record<Duty, string> = {
 };
 
 export const LEVEL_LABEL: Record<number, string> = {
-  1: "Owner",
-  2: "CEO",
-  3: "Director / CTO",
-  4: "Lead",
-  5: "Employee",
+  1: "CEO / Founder / Owner",
+  2: "Director",
+  3: "CTO",
+  4: "Sales and Finance",
+  5: "Engineering",
 };
 
 export function permissionsFor(role: RoleKey, duties: Duty[] = []): Set<Permission> {

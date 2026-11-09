@@ -70,7 +70,7 @@ export function PeopleDirectory() {
     <>
       <PageHeader
         title="People"
-        description="Everyone at Aceva. Basic details are visible to all staff; personal and pay details follow the hierarchy."
+        description={`Everyone at Aceva. Basic details are visible to all staff; personal and pay details follow the hierarchy.${canAdd ? "" : " The Director (HR duty) adds and offboards employees."}`}
         seal="internal"
         actions={
           canAdd && (

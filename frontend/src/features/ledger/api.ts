@@ -55,11 +55,11 @@ export const ledgerApi = {
   /** POST /journal-entries/:id/submit */
   submit: (id: string) => mock(() => submitEntry(id, guard("finance.entry_create").employee.empId)),
 
-  /** POST /journal-entries/:id/approve */
-  approve: (id: string) => mock(() => approveEntry(id, guard("finance.entry_approve").employee.empId)),
+  /** POST /journal-entries/:id/approve (Director only, any amount) */
+  approve: (id: string) => mock(() => approveEntry(id, guard().employee.empId)),
 
   /** POST /journal-entries/:id/reject { reason } */
-  reject: (id: string, reason: string) => mock(() => rejectEntry(id, guard("finance.entry_approve").employee.empId, reason)),
+  reject: (id: string, reason: string) => mock(() => rejectEntry(id, guard().employee.empId, reason)),
 
   /** POST /journal-entries/:id/reverse { reason } → reversing draft */
   reverse: (id: string, reason: string) => mock(() => reverseEntry(id, guard("finance.entry_create").employee.empId, reason)),
@@ -310,17 +310,17 @@ export const ledgerApi = {
       return e;
     }),
 
-  /** POST /periods/:month/close (finance duty) */
-  runClose: (month: string) => mock(() => closeMonth(month, guard("finance.close").employee.empId)),
+  /** POST /periods/:month/close (the finance person runs it) */
+  runClose: (month: string) => mock(() => closeMonth(month, guard().employee.empId)),
 
-  /** POST /periods/:month/approve-close (CEO) */
-  approveClose: (month: string) => mock(() => approveClose(month, guard("finance.close").employee.empId)),
+  /** POST /periods/:month/approve-close (Director only) */
+  approveClose: (month: string) => mock(() => approveClose(month, guard().employee.empId)),
 
-  /** POST /periods/:month/reject-close { reason } */
-  rejectClose: (month: string, reason: string) => mock(() => rejectClose(month, guard("finance.close").employee.empId, reason)),
+  /** POST /periods/:month/reject-close { reason } (Director only) */
+  rejectClose: (month: string, reason: string) => mock(() => rejectClose(month, guard().employee.empId, reason)),
 
-  /** POST /periods/:month/reopen { reason } (Owner or CEO, logged and alerted) */
-  reopen: (month: string, reason: string) => mock(() => reopenMonth(month, guard("finance.reopen").employee.empId, reason)),
+  /** POST /periods/:month/reopen { reason } (Director only, step-up; logged and the CEO / Founder / Owner is notified) */
+  reopen: (month: string, reason: string) => mock(() => reopenMonth(month, guard().employee.empId, reason)),
 
   /** GET /exchange-rates */
   rates: () => mock(() => (guard(), ratesTable())),

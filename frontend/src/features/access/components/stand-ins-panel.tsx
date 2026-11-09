@@ -17,7 +17,7 @@ import { chainAbove } from "@/lib/auth/scope";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, isoDay } from "@/lib/dates";
 import { useCreateStandIn, useEndStandIn, useStandIns } from "../hooks";
-import { standInStatus, validateStandIn } from "../logic";
+import { descendantIds, isManager, standInCandidates, standInStatus, validateStandIn } from "../logic";
 import type { StandIn } from "../types";
 
 const STATUS = {
@@ -28,20 +28,34 @@ const STATUS = {
 
 export function StandInsPanel() {
   const viewer = useViewer();
+  const lookup = useLookup();
   const query = useStandIns();
   const end = useEndStandIn();
   const askReason = useReason();
   const [adding, setAdding] = React.useState(false);
   if (!viewer) return null;
   const me = viewer.employee;
-  const canSet = me.level <= 4;
+  // Only managers (Director, CTO) approve day-to-day work, so only they have stand-ins. The CEO / Founder / Owner views them.
+  const manages = viewer.can("standin.manage") && isManager(me);
+  const below = descendantIds(me.empId, lookup.employees);
+  const forOthers = viewer.can("roles.manage") && lookup.employees.some((e) => below.includes(e.empId) && isManager(e));
+  const canSet = manages && (standInCandidates(me, lookup.employees).length > 0 || forOthers);
   const fallback = chainAbove(me.empId)[0];
+  const canEnd = (s: StandIn) => manages && (s.managerEmpId === me.empId || (viewer.can("roles.manage") && below.includes(s.managerEmpId)));
+  const emptyText = !manages
+    ? "No stand-ins set. View only: the Director and the CTO set their own stand-ins."
+    : me.role === "director"
+      ? "Nobody stands in for you: the CEO / Founder / Owner approves nothing, so your approvals wait until you are back."
+      : fallback
+        ? `No stand-ins set. When you're on leave your approvals go to ${fallback.name} (${fallback.designation}).`
+        : "No stand-ins set.";
 
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-[13px] text-muted-foreground">
-          When a manager is on leave, their approvals go to a named stand-in for set dates. Without a stand-in they go to the next level up. A stand-in must be at the same level or higher.
+          When a manager (Director or CTO) is on leave, their approvals go to a named stand-in for set dates. A stand-in is another manager at the same level or higher. Without one, the CTO&apos;s approvals go to the Director. Nobody stands in for the Director, because the CEO / Founder / Owner approves nothing.
+          {!manages && <span className="mt-1 block font-medium text-foreground">View only. The Director and the CTO set their own stand-ins.</span>}
         </p>
         {canSet && (
           <Button onClick={() => setAdding(true)}>
@@ -59,7 +73,7 @@ export function StandInsPanel() {
           <EmptyState
             icon={<UserRoundCheck />}
             title="No stand-ins set"
-            description={fallback ? `When you're on leave your approvals go to ${fallback.name} (${fallback.designation}).` : "When you're on leave, approvals go to the next level up."}
+            description={emptyText}
             action={canSet && <Button variant="outline" onClick={() => setAdding(true)}>Add stand-in</Button>}
           />
         }
@@ -83,7 +97,7 @@ export function StandInsPanel() {
             header: "",
             align: "right",
             cell: (s) =>
-              standInStatus(s) !== "ended" && (s.managerEmpId === me.empId || viewer.can("roles.manage")) ? (
+              standInStatus(s) !== "ended" && canEnd(s) ? (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -109,8 +123,13 @@ function AddStandInDialog({ onClose }: { onClose: () => void }) {
   const viewer = useViewer()!;
   const lookup = useLookup();
   const create = useCreateStandIn();
-  const forOthers = viewer.can("roles.manage");
-  const [manager, setManager] = React.useState(viewer.employee.empId);
+  const me = viewer.employee;
+  // With roles.manage (the Director) you can also set one for a manager below you (the CTO).
+  // Nobody can stand in for the Director (the CEO / Founder / Owner approves nothing), so the Director only sets them for others.
+  const below = descendantIds(me.empId, lookup.employees);
+  const forOthers = viewer.can("roles.manage") && lookup.employees.some((e) => below.includes(e.empId) && isManager(e));
+  const selfOk = standInCandidates(me, lookup.employees).length > 0;
+  const [manager, setManager] = React.useState(selfOk ? me.empId : "");
   const [standIn, setStandIn] = React.useState("");
   const [from, setFrom] = React.useState(isoDay(new Date()));
   const [to, setTo] = React.useState("");
@@ -128,15 +147,20 @@ function AddStandInDialog({ onClose }: { onClose: () => void }) {
         <div className="grid gap-4">
           <Field label="Manager on leave" htmlFor="si-manager">
             {forOthers ? (
-              <EmployeeSelect id="si-manager" value={manager} onChange={(v) => { setManager(v); setStandIn(""); }} filter={(e) => e.level <= 4} />
+              <EmployeeSelect
+                id="si-manager"
+                value={manager}
+                onChange={(v) => { setManager(v); setStandIn(""); }}
+                filter={(e) => isManager(e) && ((below.includes(e.empId) && e.status !== "left") || (e.empId === me.empId && selfOk))}
+              />
             ) : (
               <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
                 <EmpChip empId={manager} link={false} />
               </div>
             )}
           </Field>
-          <Field label="Stand-in" htmlFor="si-person" required hint="Same level or higher than the manager.">
-            <EmployeeSelect id="si-person" value={standIn} onChange={setStandIn} filter={(e) => e.empId !== manager && (!managerEmp || e.level <= managerEmp.level)} />
+          <Field label="Stand-in" htmlFor="si-person" required hint="Another manager at the same level or higher (for the CTO: the Director).">
+            <EmployeeSelect id="si-person" value={standIn} onChange={setStandIn} filter={(e) => standInCandidates(managerEmp, [e]).length > 0} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="From" htmlFor="si-from" required>

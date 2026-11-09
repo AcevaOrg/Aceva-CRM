@@ -4,7 +4,10 @@
  * Spec: ../../spec.md §7.2
  */
 
-/** Hierarchy level: 1 Owner, 2 CEO, 3 Director/CTO, 4 Leads, 5 Employees */
+/**
+ * Hierarchy level (Aceva structure, spec §2.1):
+ * 1 CEO / Founder / Owner · 2 Director · 3 CTO · 4 Sales and Finance · 5 Engineering / development employees
+ */
 export type Level = 1 | 2 | 3 | 4 | 5;
 
 export type Currency = "PKR" | "USD";
@@ -22,16 +25,23 @@ export type Zone = "home" | "work" | "finance" | "sales" | "control";
 /** Extra duties added on top of a level (spec §2.1). */
 export type Duty = "finance" | "hr" | "sales_manager";
 
-export type RoleKey =
-  | "owner"
-  | "ceo"
-  | "director"
-  | "cto"
-  | "hr_lead"
-  | "team_lead"
-  | "sales_lead"
-  | "employee"
-  | "sales_exec";
+/**
+ * The structure is fixed: CEO / Founder / Owner → Director → (CTO → Engineering) · Sales · Finance.
+ * "ceo" is one person who is the CEO, the Founder and the Owner: sees everything, approves nothing.
+ * "finance" is the finance person (finance duty): prepares; the Director approves.
+ */
+export type RoleKey = "ceo" | "director" | "cto" | "sales" | "finance" | "engineer";
+
+export const ROLE_LEVEL: Record<RoleKey, Level> = { ceo: 1, director: 2, cto: 3, sales: 4, finance: 4, engineer: 5 };
+
+/** Default role for a level. Level 4 holds both Sales and Finance: use roleFor() when the department is known. */
+export const LEVEL_ROLE: Record<Level, RoleKey> = { 1: "ceo", 2: "director", 3: "cto", 4: "sales", 5: "engineer" };
+
+/** Role for a level in a department (level 4 in the Finance department is the finance person). */
+export function roleFor(level: Level, departmentId?: string): RoleKey {
+  if (level === 4 && departmentId === "dep-fin") return "finance";
+  return LEVEL_ROLE[level];
+}
 
 export type EmploymentType = "full_time" | "part_time" | "intern";
 export type EmploymentStatus = "active" | "on_notice" | "left";

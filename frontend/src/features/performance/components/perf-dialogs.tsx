@@ -12,6 +12,7 @@ import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
 import { StarRating } from "@/components/shared/pickers";
 import { useTransitionTask } from "@/features/tasks/hooks";
+import { useLookup } from "@/hooks/use-directory";
 import type { Task } from "@/features/tasks/types";
 import { formatMonthKey } from "@/lib/dates";
 import { useAcknowledgeScorecard, useDecideDispute, useRaiseDispute } from "../hooks";
@@ -73,12 +74,19 @@ function RaiseDisputeForm({ scorecard, taskNumber, close }: { scorecard: Scoreca
   const [task, setTask] = React.useState(taskNumber ?? rated[0]?.number ?? "");
   const [reason, setReason] = React.useState("");
   const raise = useRaiseDispute();
+  const lookup = useLookup();
   const chosen = rated.find((t) => t.number === task);
+  // The CEO / Founder / Owner decides nothing, so a rating the Director gave goes back to the Director.
+  const reviewerIsDirector = lookup.employee(scorecard.reviewerEmpId)?.role === "director";
   return (
     <>
       <DialogHeader>
         <DialogTitle>Dispute a task rating</DialogTitle>
-        <DialogDescription>The level above your reviewer decides. Explain what the rating missed.</DialogDescription>
+        <DialogDescription>
+          {reviewerIsDirector
+            ? "Your reviewer is the Director, the final approver, so the Director looks at the rating again. The CEO / Founder / Owner can see the dispute. Explain what the rating missed."
+            : "The level above your reviewer (the Director) decides. Explain what the rating missed."}
+        </DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
         <Field label="Task" htmlFor="dsp-task">

@@ -1,7 +1,9 @@
 /**
  * Approvals provider for Module 6:
- *  - draft scorecards: the next level up reviews and releases them (can add a remark, never change numbers)
- *  - rating disputes: decided by the level above the reviewer (plan §10)
+ *  - draft scorecards: the person's manager reviews and releases them; they can add a remark, never change numbers
+ *    (Engineering → CTO; CTO, Sales and Finance → Director). The Director's own scorecard has no reviewer: it is
+ *    released automatically and the CEO / Founder / Owner views it (the CEO releases nothing).
+ *  - rating disputes: decided by the level above the task's reviewer (plan §10); the CEO / Founder / Owner decides none.
  */
 import type { ApprovalItem, ApprovalProvider } from "@/features/approvals/types";
 import { employeeName } from "@/lib/directory";
@@ -13,6 +15,8 @@ export const performanceApprovals: ApprovalProvider = {
   key: "performance",
   list: (viewer) => {
     const me = viewer.employee.empId;
+    // Only people who review work (the Director and the CTO) release scorecards and decide disputes.
+    if (!viewer.can("task.review")) return [];
     const drafts: ApprovalItem[] = scorecardsTable()
       .filter((s) => s.status === "draft" && s.reviewerEmpId === me && s.empId !== me)
       .map((s) => ({
@@ -47,6 +51,7 @@ export const performanceApprovals: ApprovalProvider = {
   },
   decide: (item, decision, viewer, opts) => {
     const me = viewer.employee.empId;
+    if (!viewer.can("task.review")) return;
     if (item.type === "scorecard") {
       const sc = scorecardsTable().find((s) => s.id === item.refId);
       if (!sc || sc.reviewerEmpId !== me) return;

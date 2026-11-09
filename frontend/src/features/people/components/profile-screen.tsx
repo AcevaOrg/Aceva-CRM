@@ -70,6 +70,9 @@ export function ProfileScreen({ empId }: { empId: string }) {
   const active = visible.some((t) => t.key === tab) ? tab : "basic";
   const below = descendantsOf(viewer.employee.empId, lookup.employees).includes(e.empId);
   const locked = locks.data?.some((l) => l.empId === e.empId);
+  // Unlocking and offboarding only go downward: a manager for people below them in the reporting line.
+  const canUnlock = viewer.can("auth.unlock_account") && below && !!locked;
+  const canOffboard = viewer.can("people.manage") && view.access.edit.job;
   const dept = lookup.department(e.departmentId);
   const office = lookup.office(e.officeId);
 
@@ -96,7 +99,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
           </Link>
         </Button>
       )}
-      {((viewer.can("people.manage") && !view.access.isSelf && e.status !== "left") || (viewer.can("auth.unlock_account") && locked)) && (
+      {((canOffboard && e.status !== "left") || canUnlock) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="icon" variant="ghost" aria-label="More actions">
@@ -104,7 +107,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {viewer.can("auth.unlock_account") && locked && (
+            {canUnlock && (
               <DropdownMenuItem
                 onSelect={async () => {
                   if (!(await stepUp({ action: `Unlock the account of ${e.name}` }))) return;
@@ -115,7 +118,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
                 <LockOpen /> Unlock account
               </DropdownMenuItem>
             )}
-            {viewer.can("people.manage") && !view.access.isSelf && e.status !== "left" && (
+            {canOffboard && e.status !== "left" && (
               <DropdownMenuItem destructive onSelect={() => setOffboarding(true)}>
                 <CalendarX /> Set last working day
               </DropdownMenuItem>

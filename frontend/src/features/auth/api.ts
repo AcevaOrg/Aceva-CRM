@@ -88,7 +88,7 @@ export const authApi = {
   /** GET /auth/login-history */
   loginHistory: () => mock(() => historyTable().filter((h) => h.empId === getViewer().employee.empId)),
 
-  /** GET /auth/2fa — required for levels 1–3 and finance duty, optional for others */
+  /** GET /auth/2fa — required for the CEO / Founder / Owner, Director, CTO and Finance (finance duty); optional for Sales and Engineering */
   twoFactorStatus: () =>
     mock<TwoFactorStatus>(() => {
       const me = getViewer().employee;

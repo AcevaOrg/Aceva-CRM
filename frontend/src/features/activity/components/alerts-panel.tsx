@@ -11,10 +11,12 @@ import { useReason, useStepUp } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { CardsSkeleton, EmptyState, ErrorState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { descendantsOf } from "@/lib/auth/scope";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatRelative } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useAccountLocks, useCheckAlert, useSecurityAlerts, useUnlockAccount } from "../hooks";
+import { alertCheckerLabel, canActOn, canCheckAlert } from "../logic";
 import type { AlertSeverity, SecurityAlert } from "../types";
 
 const SEVERITY: Record<AlertSeverity, { label: string; tone: BadgeTone; bar: string }> = {
@@ -73,6 +75,11 @@ function AlertCard({ a }: { a: SecurityAlert }) {
   const stepUp = useStepUp();
   const sev = SEVERITY[a.severity];
   const stillLocked = a.kind === "account_locked" && locks.data?.some((l) => l.empId === a.empId);
+  const me = viewer?.employee;
+  const below = me ? descendantsOf(me.empId, lookup.employees) : [];
+  // Maker-checker: never your own alert; otherwise someone above the person checks it, and unlocks only go downward.
+  const canCheck = !!me && canCheckAlert(me, a.empId, below, lookup.employees);
+  const canUnlock = !!me && !!viewer?.can("auth.unlock_account") && canActOn(me.empId, a.empId, below);
 
   return (
     <Card className={cn("relative overflow-hidden p-4 pl-5 sm:p-5 sm:pl-6", a.status === "checked" && "opacity-80")}>
@@ -101,7 +108,7 @@ function AlertCard({ a }: { a: SecurityAlert }) {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {stillLocked && viewer?.can("auth.unlock_account") && (
+          {stillLocked && canUnlock && (
             <Button
               size="sm"
               variant="outline"
@@ -115,7 +122,12 @@ function AlertCard({ a }: { a: SecurityAlert }) {
               <LockOpen /> Unlock account
             </Button>
           )}
-          {a.status === "open" && (
+          {a.status === "open" && !canCheck && (
+            <p className="max-w-56 text-[12px] text-muted-foreground">
+              {a.empId === me?.empId ? "This alert is about you, so someone above you checks it." : `To be checked by ${alertCheckerLabel(a.empId, lookup.employees)}, who is above this person.`}
+            </p>
+          )}
+          {a.status === "open" && canCheck && (
             <Button
               size="sm"
               onClick={async () => {

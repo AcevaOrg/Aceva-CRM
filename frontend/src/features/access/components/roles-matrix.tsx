@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { toast } from "sonner";
-import { Info, Lock } from "lucide-react";
+import { Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Checkbox, NativeSelect } from "@/components/ui/controls";
 import { Tip } from "@/components/ui/overlays";
@@ -9,16 +9,17 @@ import { useReason } from "@/components/shared/dialogs";
 import { LevelMark } from "@/components/shared/level-mark";
 import { QueryState } from "@/components/shared/states";
 import { permissionGroups, type Permission } from "@/lib/auth/permissions";
-import { useCan } from "@/lib/auth/viewer";
+import { useViewer } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
 import { useRoles, useUpdateRole } from "../hooks";
-import { groupLabel, permissionLabel } from "../logic";
+import { groupLabel, permissionLabel, roleEditBlock } from "../logic";
 import type { Role } from "../types";
 
 /** Roles × permissions matrix grouped by module, with duty add-ons (spec §9.1). */
 export function RolesMatrix() {
   const query = useRoles();
-  const canEdit = useCan("roles.manage");
+  const viewer = useViewer();
+  const canEdit = !!viewer?.can("roles.manage");
   const update = useUpdateRole();
   const askReason = useReason();
   const groups = permissionGroups();
@@ -56,7 +57,9 @@ export function RolesMatrix() {
         </NativeSelect>
         <p className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
           <Info className="size-3.5" />
-          {canEdit ? "Click a box to change it. Every change asks for a reason." : "Read-only. Only levels 1 to 3 can change roles."}
+          {!canEdit
+            ? "View only. The Director changes roles and permissions."
+            : "You can change the CTO, Sales, Finance and Engineering roles and the finance duty. The CEO / Founder / Owner role (view only, approves nothing), your own role and your own duties are fixed."}
         </p>
       </div>
 
@@ -115,24 +118,17 @@ export function RolesMatrix() {
                             </th>
                             {cols.map((r) => {
                               const has = r.permissions.includes(p);
-                              const locked = r.key === "owner";
+                              const blocked = !canEdit ? "View only. The Director changes roles." : viewer ? roleEditBlock(viewer.employee, r) : "View only.";
                               return (
                                 <td key={r.id} className={cn("border-b border-border text-center", r.isDuty && "bg-primary/[0.03]", r === duties[0] && "border-l-2 border-l-primary/30")}>
-                                  {locked ? (
-                                    <Tip content="The Owner always has every permission.">
-                                      <span className="inline-grid size-4 place-content-center text-muted-foreground">
-                                        <Lock className="size-3" />
-                                      </span>
-                                    </Tip>
-                                  ) : (
-                                    <Checkbox
-                                      className="mx-auto"
-                                      checked={has}
-                                      disabled={!canEdit || update.isPending}
-                                      onCheckedChange={(v) => toggle(r, p, v === true)}
-                                      aria-label={`${r.name}: ${permissionLabel(p)}`}
-                                    />
-                                  )}
+                                  <Checkbox
+                                    className="mx-auto"
+                                    checked={has}
+                                    title={blocked ?? undefined}
+                                    disabled={!!blocked || update.isPending}
+                                    onCheckedChange={(v) => toggle(r, p, v === true)}
+                                    aria-label={`${r.name}: ${permissionLabel(p)}`}
+                                  />
                                 </td>
                               );
                             })}

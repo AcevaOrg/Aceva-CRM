@@ -11,10 +11,12 @@ import { EmpChip } from "@/components/shared/emp-chip";
 import { StatCard } from "@/components/shared/metrics";
 import { EmptyState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { descendantsOf } from "@/lib/auth/scope";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative, formatTime } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useForceLogout, useLockAccount, useOnlineNow } from "../hooks";
+import { canActOn } from "../logic";
 import type { OnlineSession } from "../types";
 
 /** "Who is online now" (plan §8 admin screens). */
@@ -28,6 +30,7 @@ export function OnlinePanel() {
   const lock = useLockAccount();
   const rows = query.data ?? [];
   const active = rows.filter((r) => r.state === "active").length;
+  const below = viewer ? descendantsOf(viewer.employee.empId, lookup.employees) : [];
 
   const forceLogout = async (s: OnlineSession) => {
     const name = lookup.employee(s.empId)?.name ?? s.empId;
@@ -116,12 +119,12 @@ export function OnlinePanel() {
                       <Activity /> View today&apos;s timeline
                     </Link>
                   </DropdownMenuItem>
-                  {viewer?.can("session.force_logout") && (
+                  {viewer?.can("session.force_logout") && canActOn(viewer.employee.empId, s.empId, below) && (
                     <DropdownMenuItem destructive onSelect={() => forceLogout(s)}>
                       <LogOut /> Force sign-out
                     </DropdownMenuItem>
                   )}
-                  {viewer?.can("auth.unlock_account") && (
+                  {viewer?.can("auth.unlock_account") && canActOn(viewer.employee.empId, s.empId, below) && (
                     <DropdownMenuItem destructive onSelect={() => lockAccount(s)}>
                       <Lock /> Lock account
                     </DropdownMenuItem>

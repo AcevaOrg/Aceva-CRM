@@ -11,32 +11,41 @@ export const OFFICES: Office[] = [
   { id: "off-remote", name: "Remote", city: "Remote" },
 ];
 
+/**
+ * Aceva structure (strict, spec §2): L1 CEO / Founder / Owner → L2 Director → L3 CTO, L4 Sales, L4 Finance → L5 Engineering.
+ * The CEO / Founder / Owner sees everything and approves nothing; the Director approves. The Director heads Sales
+ * and Finance and holds HR and sales-manager duty; the finance person holds finance duty; the CTO heads Engineering.
+ */
 export const DEPARTMENTS: Department[] = [
   { id: "dep-mgmt", name: "Management", headEmpId: "ACV-0001", color: "var(--level-1)", officeIds: ["off-dadu"] },
-  { id: "dep-eng", name: "Engineering", headEmpId: "ACV-0004", color: "var(--zone-work)", officeIds: ["off-dadu", "off-khi", "off-remote"] },
-  { id: "dep-sales", name: "Sales", headEmpId: "ACV-0014", color: "var(--zone-sales)", officeIds: ["off-khi", "off-remote"] },
-  { id: "dep-fin", name: "Finance and Accounts", headEmpId: "ACV-0003", color: "var(--zone-finance)", officeIds: ["off-dadu"] },
-  { id: "dep-hr", name: "Human Resources", headEmpId: "ACV-0005", color: "var(--zone-control)", officeIds: ["off-dadu"] },
+  { id: "dep-eng", name: "Engineering and development", headEmpId: "ACV-0004", color: "var(--zone-work)", officeIds: ["off-dadu", "off-khi", "off-remote"] },
+  { id: "dep-sales", name: "Sales", headEmpId: "ACV-0003", color: "var(--zone-sales)", officeIds: ["off-khi", "off-remote"] },
+  { id: "dep-fin", name: "Finance", headEmpId: "ACV-0003", color: "var(--zone-finance)", officeIds: ["off-dadu"] },
 ];
 
 type Seed = Omit<Employee, "id" | "officialEmail" | "status" | "weeklyCapacityHours" | "type"> &
   Partial<Pick<Employee, "status" | "weeklyCapacityHours" | "type">> & { email: string };
 
+/* Emp-IDs are never reused (plan §6), so the roster keeps its original numbers; 0002 and 0005 are not used. */
 const RAW: Seed[] = [
-  { empId: "ACV-0001", name: "Hamza Qureshi", designation: "Founder and Owner", departmentId: "dep-mgmt", officeId: "off-dadu", email: "hamza", level: 1, role: "owner", duties: [], reportsTo: null, joiningDate: daysFromNow(-1460), avatarHue: 85 },
-  { empId: "ACV-0002", name: "Ayesha Siddiqui", designation: "Chief Executive Officer", departmentId: "dep-mgmt", officeId: "off-dadu", email: "ayesha", level: 2, role: "ceo", duties: [], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1300), avatarHue: 300 },
-  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-fin", officeId: "off-dadu", email: "bilal", level: 3, role: "director", duties: ["sales_manager"], reportsTo: "ACV-0002", joiningDate: daysFromNow(-1100), avatarHue: 264 },
-  { empId: "ACV-0004", name: "Omar Farooq", designation: "Chief Technology Officer", departmentId: "dep-eng", officeId: "off-dadu", email: "omar", level: 3, role: "cto", duties: [], reportsTo: "ACV-0002", joiningDate: daysFromNow(-1050), avatarHue: 220 },
-  { empId: "ACV-0005", name: "Zainab Hussain", designation: "HR Lead", departmentId: "dep-hr", officeId: "off-dadu", email: "zainab", level: 4, role: "hr_lead", duties: ["hr"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-800), avatarHue: 330 },
-  { empId: "ACV-0006", name: "Fahad Khan", designation: "Engineering Team Lead", departmentId: "dep-eng", officeId: "off-khi", email: "fahad", level: 4, role: "team_lead", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-760), avatarHue: 180 },
-  { empId: "ACV-0007", name: "Mariam Shah", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-khi", email: "mariam", level: 5, role: "employee", duties: [], reportsTo: "ACV-0006", joiningDate: daysFromNow(-420), avatarHue: 150 },
-  { empId: "ACV-0008", name: "Ali Raza", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-remote", email: "ali", level: 5, role: "employee", duties: [], reportsTo: "ACV-0006", joiningDate: daysFromNow(-380), avatarHue: 30 },
-  { empId: "ACV-0009", name: "Hira Baig", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "hira", level: 5, role: "sales_exec", duties: [], reportsTo: "ACV-0014", joiningDate: daysFromNow(-300), avatarHue: 52 },
-  { empId: "ACV-0010", name: "Sana Malik", designation: "Accounts Officer", departmentId: "dep-fin", officeId: "off-dadu", email: "sana", level: 5, role: "employee", duties: ["finance"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-640), avatarHue: 292 },
-  { empId: "ACV-0011", name: "Danish Iqbal", designation: "UI Designer", departmentId: "dep-eng", officeId: "off-khi", email: "danish", level: 5, role: "employee", duties: [], reportsTo: "ACV-0006", joiningDate: daysFromNow(-260), avatarHue: 200 },
-  { empId: "ACV-0012", name: "Kamran Javed", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-remote", email: "kamran", level: 5, role: "sales_exec", duties: [], reportsTo: "ACV-0014", joiningDate: daysFromNow(-150), avatarHue: 15 },
-  { empId: "ACV-0013", name: "Nida Aslam", designation: "Software Intern", departmentId: "dep-eng", officeId: "off-dadu", email: "nida", level: 5, role: "employee", duties: [], reportsTo: "ACV-0006", joiningDate: daysFromNow(-60), avatarHue: 120, type: "intern", weeklyCapacityHours: 20 },
-  { empId: "ACV-0014", name: "Saad Mirza", designation: "Sales Team Lead", departmentId: "dep-sales", officeId: "off-khi", email: "saad", level: 4, role: "sales_lead", duties: ["sales_manager"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-500), avatarHue: 40 },
+  // L1 CEO / Founder / Owner (one person): sees everything, approves nothing
+  { empId: "ACV-0001", name: "Hamza Qureshi", designation: "CEO, Founder and Owner", departmentId: "dep-mgmt", officeId: "off-dadu", email: "hamza", level: 1, role: "ceo", duties: [], reportsTo: null, joiningDate: daysFromNow(-1460), avatarHue: 85 },
+  // L2 Director: the approver for the whole company; also HR duty and sales manager
+  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-mgmt", officeId: "off-dadu", email: "bilal", level: 2, role: "director", duties: ["hr", "sales_manager"], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1100), avatarHue: 264 },
+  // L3 CTO
+  { empId: "ACV-0004", name: "Omar Farooq", designation: "Chief Technology Officer", departmentId: "dep-eng", officeId: "off-dadu", email: "omar", level: 3, role: "cto", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-1050), avatarHue: 220 },
+  // L4 Sales (report to the Director)
+  { empId: "ACV-0009", name: "Hira Baig", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "hira", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-300), avatarHue: 52 },
+  { empId: "ACV-0012", name: "Kamran Javed", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-remote", email: "kamran", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-150), avatarHue: 15 },
+  { empId: "ACV-0014", name: "Saad Mirza", designation: "Senior Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "saad", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-500), avatarHue: 40 },
+  // L4 Finance (reports to the Director): prepares entries, payroll, bills and the month close
+  { empId: "ACV-0010", name: "Sana Malik", designation: "Finance Officer", departmentId: "dep-fin", officeId: "off-dadu", email: "sana", level: 4, role: "finance", duties: ["finance"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-640), avatarHue: 292 },
+  // L5 Engineering and development (report to the CTO)
+  { empId: "ACV-0006", name: "Fahad Khan", designation: "Senior Software Engineer", departmentId: "dep-eng", officeId: "off-khi", email: "fahad", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-760), avatarHue: 180 },
+  { empId: "ACV-0007", name: "Mariam Shah", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-khi", email: "mariam", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-420), avatarHue: 150 },
+  { empId: "ACV-0008", name: "Ali Raza", designation: "Software Developer", departmentId: "dep-eng", officeId: "off-remote", email: "ali", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-380), avatarHue: 30 },
+  { empId: "ACV-0011", name: "Danish Iqbal", designation: "UI/UX Developer", departmentId: "dep-eng", officeId: "off-khi", email: "danish", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-260), avatarHue: 200 },
+  { empId: "ACV-0013", name: "Nida Aslam", designation: "Software Intern", departmentId: "dep-eng", officeId: "off-dadu", email: "nida", level: 5, role: "engineer", duties: [], reportsTo: "ACV-0004", joiningDate: daysFromNow(-60), avatarHue: 120, type: "intern", weeklyCapacityHours: 20 },
 ];
 
 export function seedEmployees(): Employee[] {
@@ -55,15 +64,14 @@ export const EMPLOYEES: Employee[] = seedEmployees();
 
 /** Monthly pay (PKR) used by Payroll and the profile Pay tab. Highly confidential. */
 export const PAY: Record<string, { base: number; allowances: { name: string; amount: number }[]; bank: string; account: string }> = {
-  "ACV-0002": { base: 650000, allowances: [{ name: "Car", amount: 60000 }], bank: "Meezan Bank", account: "0101-0045872214" },
+  "ACV-0001": { base: 650000, allowances: [{ name: "Car", amount: 60000 }], bank: "Meezan Bank", account: "0101-0045872214" },
   "ACV-0003": { base: 450000, allowances: [{ name: "Car", amount: 40000 }], bank: "HBL", account: "1234-7865540921" },
   "ACV-0004": { base: 480000, allowances: [{ name: "Internet", amount: 10000 }], bank: "Meezan Bank", account: "0101-0045879931" },
-  "ACV-0005": { base: 220000, allowances: [{ name: "Transport", amount: 15000 }], bank: "UBL", account: "2201-3345120098" },
   "ACV-0006": { base: 300000, allowances: [{ name: "Internet", amount: 8000 }], bank: "Bank Alfalah", account: "5501-9987123344" },
   "ACV-0007": { base: 180000, allowances: [{ name: "Internet", amount: 5000 }], bank: "Meezan Bank", account: "0101-0045811187" },
   "ACV-0008": { base: 160000, allowances: [{ name: "Internet", amount: 5000 }], bank: "HBL", account: "1234-1122334455" },
-  "ACV-0009": { base: 120000, allowances: [{ name: "Transport", amount: 10000 }], bank: "MCB", account: "0987-6543210012" },
   "ACV-0010": { base: 140000, allowances: [{ name: "Transport", amount: 10000 }], bank: "Meezan Bank", account: "0101-0045833321" },
+  "ACV-0009": { base: 120000, allowances: [{ name: "Transport", amount: 10000 }], bank: "MCB", account: "0987-6543210012" },
   "ACV-0011": { base: 150000, allowances: [{ name: "Internet", amount: 5000 }], bank: "UBL", account: "2201-7788990011" },
   "ACV-0012": { base: 110000, allowances: [{ name: "Transport", amount: 10000 }], bank: "Bank Alfalah", account: "5501-1239874560" },
   "ACV-0013": { base: 40000, allowances: [], bank: "Easypaisa Bank", account: "0345-1112223334" },

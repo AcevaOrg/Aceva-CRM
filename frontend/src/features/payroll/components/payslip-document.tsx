@@ -90,7 +90,7 @@ export function PayslipDocument({ slip, canRevealBank, className }: { slip: Pays
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          Year to date counts from 1 July (finance year). This payslip is confidential and visible only to you, finance and management. Questions: finance@acevatech.com
+          Year to date counts from 1 July (finance year). This payslip is confidential and visible only to you, Finance, the Director and the CEO / Founder / Owner. Questions: finance@acevatech.com
         </p>
       </div>
     </article>

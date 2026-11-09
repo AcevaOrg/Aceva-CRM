@@ -12,12 +12,12 @@ export const activityKeys = {
   summaries: (empId: string | null, from: string, to: string) => ["activity", "summaries", empId, from, to] as const,
   timeline: (empId: string, date: string) => ["activity", "timeline", empId, date] as const,
   alerts: (empId: string | null) => ["activity", "alerts", empId] as const,
-  locks: ["activity", "locks"] as const,
+  locks: (empId: string | null) => ["activity", "locks", empId] as const,
   mine: (empId: string | null) => ["activity", "mine", empId] as const,
 };
 
 /**
- * Who is signed in right now (Director, CTO, CEO, Owner). Returns OnlineSession[]:
+ * Who is signed in right now (CEO / Founder, Director, CTO — each within their reporting line). Returns OnlineSession[]:
  * { sessionId, empId, since, currentScreen, state: "active" | "idle", device, city, newDevice? }.
  * Disabled (no data) for viewers without activity.view_all.
  */
@@ -30,11 +30,11 @@ export function useOnlineNow() {
 /**
  * Security alerts. Returns SecurityAlert[] filtered by status (default "open"):
  * { id, rule, severity: "low" | "medium" | "high", empId, at, details, status, checkedBy?, note?, kind? }.
- * Disabled for viewers without activity.view_all / activity.security.
+ * CTO, Director and CEO / Founder (activity.security). Disabled for everyone else.
  */
 export function useSecurityAlerts(status: "open" | "checked" | "all" = "open") {
   const empId = useSession((s) => s.empId);
-  const allowed = useCan(["activity.view_all", "activity.security"]);
+  const allowed = useCan("activity.security");
   return useQuery({
     queryKey: activityKeys.alerts(empId),
     queryFn: activityApi.alerts,
@@ -58,7 +58,8 @@ export function useTimeline(empId: string, date: string) {
 }
 
 export function useAccountLocks() {
-  return useQuery({ queryKey: activityKeys.locks, queryFn: activityApi.locks });
+  const empId = useSession((s) => s.empId);
+  return useQuery({ queryKey: activityKeys.locks(empId), queryFn: activityApi.locks, enabled: !!empId });
 }
 
 export function useMyActivity() {

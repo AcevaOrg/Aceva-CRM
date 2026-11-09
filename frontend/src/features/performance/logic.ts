@@ -3,7 +3,27 @@
  *   Score       = 0.35 Q + 0.25 T + 0.20 C + 0.10 (100 − R) + 0.10 A
  *   Sales score = 0.20 V + 0.25 M + 0.30 W + 0.10 D + 0.15 A
  */
+import { permissionsFor } from "@/lib/auth/permissions";
+import type { Employee } from "@/types";
 import type { Band, MetricSet, SalesDetail, SalesMetricSet, ScorecardKind, ScorecardTask } from "./types";
+
+/** true when this person reviews work (the Director and the CTO; never the CEO / Founder / Owner, who only views). */
+export function canReviewWork(e: Employee | undefined | null) {
+  return !!e && e.status !== "left" && permissionsFor(e.role, e.duties).has("task.review");
+}
+
+/**
+ * Who reviews and releases a person's monthly scorecard (plan §10): their manager, one level further up if the
+ * manager has left. CTO → Engineering; Director → the CTO, Sales and Finance. The Director's manager is the
+ * CEO / Founder / Owner, who reviews nothing, so the Director has no reviewer (null): their scorecard is released
+ * automatically and the CEO / Founder / Owner views it.
+ */
+export function scorecardReviewer(empId: string, employees: Employee[]): Employee | null {
+  const find = (id?: string | null) => (id ? employees.find((e) => e.empId === id) : undefined);
+  let manager = find(find(empId)?.reportsTo);
+  while (manager && manager.status === "left") manager = find(manager.reportsTo);
+  return manager && manager.empId !== empId && canReviewWork(manager) ? manager : null;
+}
 
 export const SMALL_SAMPLE = 5;
 

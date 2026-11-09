@@ -17,6 +17,7 @@ import { useLookup } from "@/hooks/use-directory";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative, formatWeekdayLong } from "@/lib/dates";
 import { cn } from "@/lib/utils";
+import { canWorkOn } from "../api";
 import { useMySalesDay, useSalesPeople } from "../hooks";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal, selfReportedTotal, STAGE_META, targetsMet } from "../logic";
 import type { FollowUp, MySalesDay as Day } from "../types";
@@ -77,7 +78,7 @@ function MySalesDayInner() {
       ) : !day.data ? (
         <EmptyState icon={<Sunrise />} title="No sales day to show" description="Your account has no daily sales targets. Sales reports show the team's day." action={<Button asChild variant="outline"><Link href="/sales/reports">Open sales reports</Link></Button>} />
       ) : (
-        <DayBody day={day.data} canLog={isMe} onLog={() => setLog("1")} />
+        <DayBody day={day.data} canLog={isMe} canWork={!!viewer && canWorkOn(viewer, day.data.empId)} onLog={() => setLog("1")} />
       )}
       {isMe && <DailyLogSheet open={log === "1"} onOpenChange={(o) => setLog(o ? "1" : "")} existing={day.data?.log} />}
     </>
@@ -96,7 +97,7 @@ function DaySkeleton() {
   );
 }
 
-function DayBody({ day, canLog, onLog }: { day: Day; canLog: boolean; onLog: () => void }) {
+function DayBody({ day, canLog, canWork, onLog }: { day: Day; canLog: boolean; canWork: boolean; onLog: () => void }) {
   const s = day.summary;
   const t = day.targets;
   const met = targetsMet(s, t);
@@ -178,7 +179,7 @@ function DayBody({ day, canLog, onLog }: { day: Day; canLog: boolean; onLog: () 
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <FollowUps items={day.followUpsDue} />
+        <FollowUps items={day.followUpsDue} canWork={canWork} />
         <Card>
           <CardHeader>
             <div>
@@ -219,7 +220,7 @@ function DayBody({ day, canLog, onLog }: { day: Day; canLog: boolean; onLog: () 
   );
 }
 
-function FollowUps({ items }: { items: FollowUp[] }) {
+function FollowUps({ items, canWork }: { items: FollowUp[]; canWork: boolean }) {
   const [active, setActive] = React.useState<FollowUp | null>(null);
   const missed = items.filter((i) => i.missed).length;
   return (
@@ -227,7 +228,7 @@ function FollowUps({ items }: { items: FollowUp[] }) {
       <CardHeader>
         <div>
           <CardTitle>Follow-ups due today</CardTitle>
-          <p className="text-[12.5px] text-muted-foreground">Missed follow-ups turn red and are shown to the sales manager.</p>
+          <p className="text-[12.5px] text-muted-foreground">Missed follow-ups turn red and are shown to the Director.</p>
         </div>
         {missed > 0 && <Badge tone="danger">{missed} missed</Badge>}
       </CardHeader>
@@ -245,9 +246,11 @@ function FollowUps({ items }: { items: FollowUp[] }) {
                   </p>
                 </div>
                 <FollowUpDue date={f.nextStepDate} />
-                <Button size="sm" variant="outline" onClick={() => setActive(f)}>
-                  <CircleCheck /> Done
-                </Button>
+                {canWork && (
+                  <Button size="sm" variant="outline" onClick={() => setActive(f)}>
+                    <CircleCheck /> Done
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -255,7 +258,7 @@ function FollowUps({ items }: { items: FollowUp[] }) {
           <EmptyState compact icon={<CircleCheck />} title="Nothing due today" description="Every open deal has its next step on a later date." />
         )}
       </CardContent>
-      {active && (
+      {canWork && active && (
         <FollowUpDialog open onOpenChange={(o) => !o && setActive(null)} dealId={active.dealId} company={active.companyName} currentStep={active.nextStep} currentDate={active.nextStepDate} />
       )}
     </Card>

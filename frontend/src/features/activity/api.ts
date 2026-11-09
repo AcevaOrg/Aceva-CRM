@@ -3,7 +3,7 @@
  * Tracking tables only allow adding rows: there are no update or delete functions for events.
  */
 import { ApiError, mock } from "@/lib/api/mock";
-import { scopeOf } from "@/lib/auth/scope";
+import { descendantsOf, scopeOf } from "@/lib/auth/scope";
 import { getViewer } from "@/lib/auth/viewer";
 import { employeeName, employeesTable } from "@/lib/directory";
 import { isoDay } from "@/lib/dates";
@@ -11,6 +11,7 @@ import { liveHeartbeats, liveScreens } from "@/lib/telemetry";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedAlerts, seedEvents, seedLocks, seedOnline, seedSummaries } from "@/mocks/seed/activity";
+import { activityAccess, canActOn, canCheckAlert } from "./logic";
 import type { AccountLock, ActivityEvent, ActivityQuery, DailySummary, MyActivity, OnlineSession, SecurityAlert } from "./types";
 
 const eventsTable = () => table<ActivityEvent>("activity.events", seedEvents);
@@ -19,9 +20,15 @@ const summariesTable = () => table<DailySummary>("activity.summaries", () => see
 const alertsTable = () => table<SecurityAlert>("activity.alerts", seedAlerts);
 const locksTable = () => table<AccountLock>("activity.locks", seedLocks);
 
-/** Everyone the viewer may see (self + reporting line below; Owner sees all). */
+/** Everyone the viewer may see (self + reporting line below; the CEO / Founder sees all). */
 function scope() {
   return scopeOf(getViewer().employee.empId, employeesTable());
+}
+
+/** Force sign-out, lock and unlock only reach people below the viewer in their reporting line. */
+function requireBelow(targetEmpId: string, message: string) {
+  const me = getViewer().employee.empId;
+  if (!canActOn(me, targetEmpId, descendantsOf(me, employeesTable()))) throw new ApiError("forbidden", message, 403);
 }
 
 /** Mock helper for other modules: record an action by the current viewer (server does this automatically). */
@@ -40,20 +47,20 @@ function inRange(at: string, from?: string, to?: string) {
 }
 
 export const activityApi = {
-  /** GET /activity/online (Director, CTO, CEO, Owner) */
+  /** GET /activity/online (CEO / Founder, Director, CTO — each within their reporting line) */
   online: () =>
     mock(() => {
-      if (!getViewer().can("activity.view_all")) return [];
+      if (!activityAccess(getViewer()).online) return [];
       const s = scope();
       return onlineTable().filter((o) => s.has(o.empId) && o.empId !== getViewer().employee.empId);
     }),
 
-  /** GET /activity/events?empId&from&to&module&action&source */
+  /** GET /activity/events?empId&from&to&module&action&source — others' events for the Director and above, within their reporting line */
   events: (q: ActivityQuery) =>
     mock(() => {
       const v = getViewer();
       const s = scope();
-      const all = v.can("activity.view_all");
+      const all = activityAccess(v).search;
       const dept = q.departmentId ? new Set(employeesTable().filter((e) => e.departmentId === q.departmentId).map((e) => e.empId)) : null;
       return eventsTable()
         .filter((e) => (all ? s.has(e.empId) : e.empId === v.employee.empId))
@@ -69,16 +76,16 @@ export const activityApi = {
   summaries: (from: string, to: string) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can(["activity.view_team", "activity.view_all"])) return [];
+      if (!activityAccess(v).reports) return [];
       const s = scope();
       return summariesTable().filter((d) => s.has(d.empId) && d.empId !== v.employee.empId && d.date >= from && d.date <= to);
     }),
 
-  /** GET /activity/timeline?empId&date — summary always; full events only for Director and above */
+  /** GET /activity/timeline?empId&date — own, or people below you (CTO: engineers; Director: their line; CEO / Founder: everyone) */
   timeline: (empId: string, date: string) =>
     mock(() => {
       const v = getViewer();
-      if (empId !== v.employee.empId && !scope().has(empId)) throw new ApiError("forbidden", "This person is outside your reporting line.", 403);
+      if (empId !== v.employee.empId && (!activityAccess(v).timeline || !scope().has(empId))) throw new ApiError("forbidden", "This person is outside your reporting line.", 403);
       const full = empId === v.employee.empId || v.can("activity.view_all");
       return {
         summary: summariesTable().find((d) => d.empId === empId && d.date === date),
@@ -86,20 +93,23 @@ export const activityApi = {
       };
     }),
 
-  /** GET /activity/alerts?status */
+  /** GET /activity/alerts?status — CTO, Director and CEO / Founder (security duty sees every alert) */
   alerts: () =>
     mock(() => {
       const v = getViewer();
-      if (!v.can(["activity.view_all", "activity.security"])) return [];
-      const s = scope();
-      return alertsTable().filter((a) => v.can("activity.security") || s.has(a.empId));
+      if (!activityAccess(v).alerts) return [];
+      return alertsTable();
     }),
 
-  /** POST /activity/alerts/:id/check { note } */
+  /** POST /activity/alerts/:id/check { note } — never your own alert; checked from above (spec §3.5.6 maker-checker) */
   checkAlert: (id: string, note: string) =>
     mock(() => {
       const a = alertsTable().find((x) => x.id === id);
       if (!a) return;
+      const v = getViewer();
+      const list = employeesTable();
+      if (!activityAccess(v).alerts || !canCheckAlert(v.employee, a.empId, descendantsOf(v.employee.empId, list), list))
+        throw new ApiError("forbidden", a.empId === v.employee.empId ? "This alert is about you, so someone above you checks it." : "Someone above this person in their reporting line checks this alert.", 403);
       Object.assign(a, { status: "checked", checkedBy: getViewer().employee.empId, checkedAt: new Date().toISOString(), note });
       recordActivity({ action: "edit", module: "Activity", target: id, description: `Marked alert “${a.rule}” as checked` });
     }),
@@ -111,18 +121,25 @@ export const activityApi = {
       const list = onlineTable();
       const i = list.findIndex((s) => s.sessionId === sessionId);
       if (i < 0) return;
+      requireBelow(list[i].empId, "You can only sign out people below you in your reporting line.");
       const [s] = list.splice(i, 1);
       eventsTable().unshift({ id: uid("ev"), empId: s.empId, at: new Date().toISOString(), source: "aceva", action: "logout", module: "Login", description: `Signed out by ${getViewer().employee.name}: ${reason}`, how: "forced" });
       recordActivity({ action: "security", module: "Activity", target: s.empId, description: `Forced sign-out of ${employeeName(s.empId)}` });
     }),
 
-  /** GET /accounts/locked */
-  locks: () => mock(() => locksTable()),
+  /** GET /accounts/locked — your own, your reporting line, or everyone for security alerts */
+  locks: () =>
+    mock(() => {
+      const v = getViewer();
+      const s = scope();
+      return locksTable().filter((l) => v.can("activity.security") || s.has(l.empId));
+    }),
 
-  /** POST /employees/:empId/lock { reason } */
+  /** POST /employees/:empId/lock { reason } — someone below you only */
   lock: (empId: string, reason: string) =>
     mock(() => {
       if (!getViewer().can("auth.unlock_account")) throw new ApiError("forbidden", "You can't lock accounts.", 403);
+      requireBelow(empId, "You can only lock the accounts of people below you in your reporting line.");
       if (!locksTable().some((l) => l.empId === empId)) locksTable().push({ empId, at: new Date().toISOString(), by: getViewer().employee.empId, reason });
       const list = onlineTable();
       const i = list.findIndex((s) => s.empId === empId);
@@ -130,10 +147,11 @@ export const activityApi = {
       recordActivity({ action: "security", module: "Activity", target: empId, description: `Locked the account of ${employeeName(empId)}` });
     }),
 
-  /** POST /employees/:empId/unlock */
+  /** POST /employees/:empId/unlock — the person's manager or someone above them */
   unlock: (empId: string) =>
     mock(() => {
       if (!getViewer().can("auth.unlock_account")) throw new ApiError("forbidden", "You can't unlock accounts.", 403);
+      requireBelow(empId, "Only a manager above this person can unlock their account.");
       const list = locksTable();
       const i = list.findIndex((l) => l.empId === empId);
       if (i >= 0) list.splice(i, 1);

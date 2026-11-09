@@ -20,7 +20,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatMonthKey, formatWeekdayLong, isoDay } from "@/lib/dates";
 import { formatMoneyCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { DailyReportRow } from "../api";
+import { isSalesManager, type DailyReportRow } from "../api";
 import { useDailyReport, useReportDates, useRequestProof, useSalesDashboard, useSalesScorecards } from "../hooks";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal, selfReportedTotal, STAGE_META } from "../logic";
 import type { SalesScorecard } from "../types";
@@ -39,11 +39,13 @@ function ReportsInner() {
   const [tab, setTab] = useUrlState<Tab>("tab", "daily");
   const viewer = useViewer();
   const team = !!viewer?.can(["sales.team", "sales.all"]);
+  // Asking for proof is the sales manager's job: the Director.
+  const canAskProof = !!viewer && isSalesManager(viewer);
   return (
     <>
       <PageHeader
         title="Sales reports"
-        description={team ? "Built every night from the connected tools and each person's manual log, compared with the day's targets." : "Your daily report, the team dashboard for your deals, and your sales scorecard."}
+        description={team ? "Built every night from the connected tools and each person's manual log, compared with the day's targets." : "Your daily report, a dashboard of your own deals, and your sales scorecard."}
         seal="confidential"
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -53,7 +55,7 @@ function ReportsInner() {
           <TabsTrigger value="scorecard">Sales scorecard</TabsTrigger>
         </TabsList>
         <TabsContent value="daily">
-          <DailyReport team={team} />
+          <DailyReport canAskProof={canAskProof} />
         </TabsContent>
         <TabsContent value="dashboard">
           <Dashboard />
@@ -72,7 +74,7 @@ function dayLabel(date: string) {
   return formatWeekdayLong(new Date(`${date}T12:00:00`));
 }
 
-function DailyReport({ team }: { team: boolean }) {
+function DailyReport({ canAskProof }: { canAskProof: boolean }) {
   const dates = useReportDates();
   const todayIso = isoDay(new Date());
   const [picked, setPicked] = useUrlState<string>("date", "");
@@ -96,7 +98,7 @@ function DailyReport({ team }: { team: boolean }) {
         <span className="inline-flex items-center gap-1.5">
           <span className="tabular">{selfReportedTotal(r.summary)}</span>
           {r.summary.proofRequested && (
-            <Tip content="The sales manager asked for proof, such as a screenshot.">
+            <Tip content="The Director asked for proof, such as a screenshot.">
               <span tabIndex={0}>
                 <Badge tone="warning">
                   <Camera /> Proof asked
@@ -121,7 +123,7 @@ function DailyReport({ team }: { team: boolean }) {
           <span className="text-muted-foreground">—</span>
         ),
     },
-    ...(team
+    ...(canAskProof
       ? [
           {
             key: "actions",
@@ -344,7 +346,7 @@ function ScorecardCard({ s, live }: { s: SalesScorecard; live: boolean }) {
             {live ? " · so far" : ""}
           </p>
         </div>
-        {live && <Badge tone="info">Draft until the 1st</Badge>}
+        {live && <Badge tone="info">Draft · the Director releases it on the 1st</Badge>}
       </CardHeader>
       <CardContent className="grid gap-5 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center">
         <div className="justify-self-center">

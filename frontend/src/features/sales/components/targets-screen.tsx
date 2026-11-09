@@ -22,7 +22,7 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey } from "@/lib/dates";
-import type { CommissionRow } from "../api";
+import { canDecideCommission, canDoSalesWork, isSalesManager, type CommissionRow } from "../api";
 import { useAddDnc, useApproveCommission, useCommission, useDnc, useRejectCommission, useSaveTargets, useTargets, useUpdateCommissionRule } from "../hooks";
 import type { CommissionStatus, DailyTargets, DncEntry, MonthlyTargets } from "../types";
 
@@ -43,13 +43,14 @@ function TargetsInner() {
   const canDnc = !!viewer?.can("sales.own");
   const first: Tab = canTargets ? "targets" : canCommission ? "commission" : "dnc";
   const [tab, setTab] = useUrlState<Tab>("tab", first);
-  const financeOnly = canCommission && !viewer?.can("sales.own");
+  // Targets are set by the sales manager: the Director. Everyone else (the CEO included) sees them read-only.
+  const canSetTargets = !!viewer && isSalesManager(viewer);
 
   return (
     <>
       <PageHeader
         title="Targets and commission"
-        description={financeOnly ? "Won deal values and commission lines. You see these for payroll; leads and pipeline stay with the sales team." : "Daily and monthly targets, commission on first payments, and the do-not-contact list."}
+        description={canCommission ? "Daily and monthly targets, commission on first payments, and the do-not-contact list." : "Your daily and monthly targets, and the do-not-contact list."}
         seal="confidential"
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -60,17 +61,17 @@ function TargetsInner() {
         </TabsList>
         {canTargets && (
           <TabsContent value="targets">
-            <TargetsTab editable={!!viewer?.can("sales.targets")} />
+            <TargetsTab editable={canSetTargets} />
           </TabsContent>
         )}
         {canCommission && (
           <TabsContent value="commission">
-            <CommissionTab canApprove={!!viewer?.can("sales.commission_approve")} me={viewer?.employee.empId ?? ""} />
+            <CommissionTab />
           </TabsContent>
         )}
         {canDnc && (
           <TabsContent value="dnc">
-            <DncTab />
+            <DncTab canAdd={!!viewer && canDoSalesWork(viewer)} />
           </TabsContent>
         )}
       </Tabs>
@@ -119,7 +120,7 @@ function TargetsEditor({ saved, editable }: { saved: { daily: DailyTargets[]; mo
     <div className="grid gap-5">
       {!editable && (
         <p className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-          <Info className="size-4" /> The sales manager sets targets. Ask them if a target looks wrong.
+          <Info className="size-4" /> View only. The Director sets targets as sales manager.
         </p>
       )}
       <Card>
@@ -227,7 +228,11 @@ const commissionStatus = statusMap<CommissionStatus>({
   rejected: { label: "Rejected", tone: "danger" },
 });
 
-function CommissionTab({ canApprove, me }: { canApprove: boolean; me: string }) {
+function CommissionTab() {
+  const viewer = useViewer();
+  const me = viewer?.employee.empId ?? "";
+  // The Director approves commission. The CEO / Founder / Owner and Finance see every line, view only.
+  const canApprove = !!viewer?.can("sales.commission_approve");
   const q = useCommission();
   const approve = useApproveCommission();
   const reject = useRejectCommission();
@@ -250,8 +255,8 @@ function CommissionTab({ canApprove, me }: { canApprove: boolean; me: string }) 
             header: "",
             align: "right" as const,
             cell: (c: CommissionRow) =>
-              c.status !== "calculated" ? null : c.empId === me ? (
-                <span className="text-[11.5px] text-muted-foreground">Goes to the CEO</span>
+              c.status !== "calculated" ? null : !viewer || !canDecideCommission(viewer, c) ? (
+                <span className="text-[11.5px] text-muted-foreground">{c.empId === me ? "Your own line: nobody approves their own request" : "With the Director"}</span>
               ) : (
                 <span className="flex justify-end gap-1">
                   <Button
@@ -304,7 +309,7 @@ function CommissionTab({ canApprove, me }: { canApprove: boolean; me: string }) 
           )}
         </CardHeader>
       </Card>
-      {!canApprove && <MakerCheckerNote reason="Commission lines are approved by the Director. You can see the won values and lines for payroll." />}
+      {!canApprove && <MakerCheckerNote reason="View only. The Director approves commission lines, then they go to payroll as a bonus line." />}
       <DataTable rows={q.data?.lines} loading={q.isPending} columns={columns} rowKey={(c) => c.id} initialSort={{ key: "deal", dir: "desc" }} empty={<EmptyState compact icon={<Coins />} title="No commission yet" description="A line appears when a client pays their first invoice." />} />
       {rule && ruleOpen && <RuleDialog open onOpenChange={setRuleOpen} id={rule.id} rate={rule.ratePercent} />}
     </div>
@@ -346,7 +351,7 @@ function RuleDialog({ open, onOpenChange, id, rate }: { open: boolean; onOpenCha
 
 /* ---------------- Do not contact ---------------- */
 
-function DncTab() {
+function DncTab({ canAdd }: { canAdd: boolean }) {
   const q = useDnc();
   const add = useAddDnc();
   const [open, setOpen] = React.useState(false);
@@ -365,12 +370,14 @@ function DncTab() {
         <p className="max-w-2xl text-[12.5px] text-muted-foreground">
           Emails on this list are blocked from every future sequence. Every outreach email carries an unsubscribe link and Aceva&apos;s postal address (UK GDPR and US CAN-SPAM).
         </p>
-        <Button onClick={() => setOpen(true)}>
-          <Plus /> Add email
-        </Button>
+        {canAdd && (
+          <Button onClick={() => setOpen(true)}>
+            <Plus /> Add email
+          </Button>
+        )}
       </div>
       {q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : <DataTable rows={q.data} loading={q.isPending} columns={columns} rowKey={(d) => d.id} searchable searchText={(d) => `${d.email} ${d.reason}`} searchPlaceholder="Search emails" initialSort={{ key: "at", dir: "desc" }} />}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={canAdd && open} onOpenChange={setOpen}>
         <DialogContent size="sm">
           <DialogHeader>
             <DialogTitle>Add to do not contact</DialogTitle>

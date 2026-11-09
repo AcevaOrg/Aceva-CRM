@@ -1,21 +1,21 @@
 /**
- * Approvals provider for Module 15:
- *  - won deals marked by a salesperson wait for their sales manager (the person they report to);
- *  - commission lines wait for the Director (plan §20). Never the requester.
+ * Approvals provider for Module 15 (maker-checker, never the requester):
+ *  - won deals marked by a salesperson wait for the Director (sales manager);
+ *  - commission lines wait for the Director, then go to payroll (plan §20).
+ * The CEO / Founder / Owner sees both lists on the sales screens but approves nothing here.
  */
 import type { ApprovalItem, ApprovalProvider } from "@/features/approvals/types";
-import { employeeName, findEmployee } from "@/lib/directory";
-import { commissionLines, companiesTable, dealsTable, handoverDeal } from "./api";
+import { employeeName } from "@/lib/directory";
+import { canConfirmWon, canDecideCommission, commissionLines, companiesTable, dealsTable, handoverDeal } from "./api";
 import { SERVICE_LABEL } from "./logic";
 
 export const salesApprovals: ApprovalProvider = {
   key: "sales",
   list: (viewer) => {
-    const me = viewer.employee.empId;
     const items: ApprovalItem[] = [];
     if (viewer.can("sales.team")) {
       dealsTable()
-        .filter((d) => d.stage === "won" && d.wonStatus === "pending" && d.ownerEmpId !== me && findEmployee(d.ownerEmpId)?.reportsTo === me)
+        .filter((d) => d.stage === "won" && d.wonStatus === "pending" && canConfirmWon(viewer, d))
         .forEach((d) => {
           const company = companiesTable().find((c) => c.id === d.companyId)?.name ?? "—";
           items.push({
@@ -34,9 +34,9 @@ export const salesApprovals: ApprovalProvider = {
           });
         });
     }
-    if (viewer.can("sales.commission_approve") && viewer.employee.level === 3) {
+    if (viewer.can("sales.commission_approve")) {
       commissionLines()
-        .filter((c) => c.status === "calculated" && c.empId !== me)
+        .filter((c) => canDecideCommission(viewer, c))
         .forEach((c) =>
           items.push({
             id: `commission:${c.id}`,
@@ -60,7 +60,7 @@ export const salesApprovals: ApprovalProvider = {
     const now = new Date().toISOString();
     if (item.type === "won_deal") {
       const d = dealsTable().find((x) => x.id === item.refId);
-      if (!d) return;
+      if (!d || d.wonStatus !== "pending" || !canConfirmWon(viewer, d)) return;
       if (decision === "approve") handoverDeal(d, me);
       else {
         d.stage = d.previousStage ?? "negotiation";
@@ -70,7 +70,7 @@ export const salesApprovals: ApprovalProvider = {
     }
     if (item.type === "commission") {
       const c = commissionLines().find((x) => x.id === item.refId);
-      if (!c) return;
+      if (!c || !canDecideCommission(viewer, c)) return;
       c.status = decision === "approve" ? "sent_to_payroll" : "rejected";
       c.approvedBy = me;
       c.approvedAt = now;

@@ -1,9 +1,12 @@
 /**
  * Seed: monthly scorecards (6 closed months), score-weight versions and rating disputes (Module 6).
  * Task-based metrics are computed from the generated task list, so every scorecard adds up.
+ * Each scorecard is reviewed and released by the person's manager: Engineering → CTO; CTO, Sales and Finance →
+ * Director. The CEO / Founder / Owner reviews nothing, so the Director's scorecard has no reviewer: it is released
+ * automatically when the month closes and the CEO / Founder / Owner views it. Sales use the sales weights.
  */
 import type { MetricSet, RatingDispute, SalesDetail, Scorecard, ScorecardStatus, ScorecardTask, WeightsVersion } from "@/features/performance/types";
-import { bandOf, computeScore, salesMetrics, SMALL_SAMPLE, taskMetrics } from "@/features/performance/logic";
+import { bandOf, computeScore, salesMetrics, scorecardReviewer, SMALL_SAMPLE, taskMetrics } from "@/features/performance/logic";
 import type { TaskSize } from "@/features/tasks/types";
 import { hash01 } from "./attendance";
 import { EMPLOYEES } from "./people";
@@ -17,10 +20,8 @@ export const WEIGHT_VERSIONS: WeightsVersion[] = [
 
 /** Profile per person: mean rating, on-time chance, rework chance, completion chance, attendance, task count range. */
 const PROFILE: Record<string, { rating: number; onTime: number; rework: number; done: number; att: number; n: [number, number] }> = {
-  "ACV-0002": { rating: 4.5, onTime: 0.95, rework: 0.03, done: 0.95, att: 96, n: [5, 7] },
   "ACV-0003": { rating: 4.3, onTime: 0.9, rework: 0.06, done: 0.92, att: 95, n: [5, 8] },
   "ACV-0004": { rating: 4.4, onTime: 0.92, rework: 0.05, done: 0.94, att: 97, n: [5, 8] },
-  "ACV-0005": { rating: 4.1, onTime: 0.88, rework: 0.08, done: 0.9, att: 94, n: [5, 8] },
   "ACV-0006": { rating: 4.3, onTime: 0.9, rework: 0.06, done: 0.92, att: 95, n: [6, 9] },
   "ACV-0007": { rating: 4.5, onTime: 0.94, rework: 0.06, done: 0.95, att: 97, n: [6, 9] },
   "ACV-0008": { rating: 3.5, onTime: 0.7, rework: 0.2, done: 0.8, att: 82, n: [6, 9] },
@@ -37,9 +38,10 @@ const SALES: Record<string, { met: number; meet: [number, number]; won: [number,
 
 const TITLES: Record<string, string[]> = {
   "dep-eng": ["Login screen polish", "API pagination", "Fix date bug in reports", "Dashboard cards", "Unit tests for scores", "Release notes", "Database migration", "Accessibility pass", "Client demo build", "Error states for lists", "Refactor table component", "Upload limits"],
+  // Finance: the Finance person prepares; the Director approves.
   "dep-fin": ["Bank reconciliation", "Vendor bill entry", "Month-end checklist", "Payroll draft check", "Tax summary", "Invoice follow-ups", "Expense receipts audit", "Opening balances"],
-  "dep-hr": ["Onboarding pack", "Policy update", "Interview schedule", "Exit interview notes", "Leave balance audit", "Training plan"],
-  "dep-mgmt": ["Quarterly plan", "Client review meeting", "Budget approval", "Hiring plan", "Board report", "Vendor negotiation"],
+  // Management: the Director's own work (HR and sales-manager duty). The Director prepares no finance items.
+  "dep-mgmt": ["Quarterly plan", "Client review meeting", "Hiring plan", "Vendor negotiation", "Onboarding pack", "Sales target review", "Policy update", "Interview schedule"],
 };
 
 const SIZES: TaskSize[] = ["XS", "S", "S", "M", "M", "M", "L"];
@@ -73,10 +75,13 @@ function genTasks(empId: string, dept: string, offset: number): ScorecardTask[] 
   });
 }
 
-function statusFor(empId: string, offset: number): ScorecardStatus {
+function statusFor(empId: string, offset: number, hasReviewer: boolean): ScorecardStatus {
   if (offset < -1) return "acknowledged";
-  if (["ACV-0013", "ACV-0012", "ACV-0010", "ACV-0006"].includes(empId)) return "draft";
-  if (["ACV-0007", "ACV-0011", "ACV-0009", "ACV-0008"].includes(empId)) return "released";
+  // The Director's scorecard has no reviewer: released automatically, the CEO / Founder / Owner views it.
+  if (!hasReviewer) return "released";
+  // Last month's drafts wait for the manager: engineers for the CTO, the CTO and Sales for the Director.
+  if (["ACV-0013", "ACV-0012", "ACV-0006", "ACV-0004"].includes(empId)) return "draft";
+  if (["ACV-0007", "ACV-0011", "ACV-0009", "ACV-0008", "ACV-0010"].includes(empId)) return "released";
   return "acknowledged";
 }
 
@@ -91,7 +96,7 @@ export function seedScorecards(): Scorecard[] {
   const out: Scorecard[] = [];
   for (const e of EMPLOYEES) {
     if (!e.reportsTo || e.status === "left") continue;
-    const sales = e.departmentId === "dep-sales";
+    const sales = e.role === "sales";
     for (let offset = -6; offset <= -1; offset++) {
       const month = monthFromNow(offset);
       if (new Date(e.joiningDate) > new Date(dayOfMonth(offset, 28))) continue;
@@ -132,9 +137,10 @@ export function seedScorecards(): Scorecard[] {
         taskCount = tm.taskCount;
       }
       const score = computeScore(sales ? "sales" : "standard", metrics, weights);
-      const status = statusFor(e.empId, offset);
+      const reviewer = scorecardReviewer(e.empId, EMPLOYEES);
+      const status = statusFor(e.empId, offset, !!reviewer);
       const created = dayOfMonth(offset + 1, 1, "02:00");
-      const hasRemark = status !== "draft" && hash01(`${k}|remark`) < 0.6;
+      const hasRemark = !!reviewer && status !== "draft" && hash01(`${k}|remark`) < 0.6;
       out.push({
         id: `sc_${e.empId.slice(-4)}_${month}`,
         empId: e.empId,
@@ -148,10 +154,11 @@ export function seedScorecards(): Scorecard[] {
         taskCount,
         smallSample: !sales && taskCount < SMALL_SAMPLE,
         status,
-        reviewerEmpId: e.reportsTo,
+        reviewerEmpId: reviewer?.empId,
         reviewerRemark: hasRemark ? REMARKS[Math.floor(hash01(`${k}|rm`) * REMARKS.length)] : undefined,
         remarkAt: hasRemark ? dayOfMonth(offset + 1, 3, "11:00") : undefined,
-        releasedAt: status !== "draft" ? dayOfMonth(offset + 1, offset === -1 ? 5 : 4, "16:00") : undefined,
+        // Without a reviewer the scorecard is released when the draft is made (month close).
+        releasedAt: status === "draft" ? undefined : reviewer ? dayOfMonth(offset + 1, offset === -1 ? 5 : 4, "16:00") : created,
         acknowledgedAt: status === "acknowledged" ? dayOfMonth(offset + 1, 6, "10:00") : undefined,
         employeeComment: status === "acknowledged" && hash01(`${k}|ec`) < 0.35 ? "Thanks. I'll work on finishing tasks before the deadline." : undefined,
         tasks,
@@ -180,7 +187,8 @@ export function seedDisputes(scorecards: Scorecard[]): RatingDispute[] {
       currentRating: a.task.rating!,
       reason: "The bug that lowered this rating came from a third-party API change on release day, not from my code. The fix was out the same evening.",
       status: "open",
-      deciderEmpId: "ACV-0004",
+      // The CTO reviewed the task, so the level above (the Director) decides.
+      deciderEmpId: "ACV-0003",
       at: minutesAgo(60 * 26),
     });
   const b = pick("ACV-0011", -2);
@@ -194,8 +202,8 @@ export function seedDisputes(scorecards: Scorecard[]): RatingDispute[] {
       currentRating: b.task.rating!,
       reason: "The client changed the brief twice; the final design matched the last version.",
       status: "upheld",
-      deciderEmpId: "ACV-0004",
-      decidedBy: "ACV-0004",
+      deciderEmpId: "ACV-0003",
+      decidedBy: "ACV-0003",
       decision: "The rating reflects the missed accessibility checks, not the brief changes. Rating kept.",
       at: minutesAgo(60 * 24 * 30),
       decidedAt: minutesAgo(60 * 24 * 27),

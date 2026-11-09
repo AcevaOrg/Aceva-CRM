@@ -8,7 +8,7 @@ import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/misc";
 import { API_MODE } from "@/lib/api/http";
-import { ROLE_LABEL } from "@/lib/auth/permissions";
+import { DUTY_LABEL, ROLE_LABEL } from "@/lib/auth/permissions";
 import { useSession } from "@/lib/auth/session";
 import { requires2fa } from "@/lib/auth/viewer";
 import { normalizeEmpId } from "@/lib/format";
@@ -40,7 +40,7 @@ export function LoginForm() {
     try {
       const res = await authApi.login({ empId: id, password: pw });
       if (res.status === "invalid") setError({ title: "Emp-ID or password is wrong.", body: `${res.attemptsLeft} ${res.attemptsLeft === 1 ? "try" : "tries"} left before the account locks.` });
-      else if (res.status === "locked") setError({ title: "Account locked after 5 wrong passwords.", body: "Ask HR or your manager to unlock it.", locked: true });
+      else if (res.status === "locked") setError({ title: "Account locked after 5 wrong passwords.", body: "Ask your manager or the Director to unlock it.", locked: true });
       else if (res.status === "rate_limited") setError({ title: "Too many attempts from this network.", body: `Try again in ${Math.ceil((res.retryAfterSec ?? 600) / 60)} minutes.` });
       else {
         const emp = EMPLOYEES.find((e) => e.empId === id)!;
@@ -133,7 +133,7 @@ function DemoAccounts({ onPick, busy }: { onPick: (empId: string) => void; busy:
   return (
     <section className="mt-10 rounded-xl border border-dashed border-border p-4" aria-label="Demo accounts">
       <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Demo accounts · mock mode</p>
-      <p className="mt-1 text-[12.5px] text-muted-foreground">One click signs in. Levels 1–3 and finance duty also see the 2FA step (any 6 digits).</p>
+      <p className="mt-1 text-[12.5px] text-muted-foreground">One click signs in. The CEO / Founder / Owner, Director, CTO and Finance also see the 2FA step (any 6 digits).</p>
       <div className="mt-3 grid max-h-64 gap-1 overflow-y-auto pr-1 scrollbar-thin">
         {EMPLOYEES.map((e) => (
           <button
@@ -147,8 +147,7 @@ function DemoAccounts({ onPick, busy }: { onPick: (empId: string) => void; busy:
               <span className="block truncate text-[13px] font-medium">{e.name}</span>
               <span className="block truncate text-[11.5px] text-muted-foreground">
                 L{e.level} · {ROLE_LABEL[e.role]}
-                {e.duties.includes("finance") ? " · Finance duty" : ""}
-                {e.duties.includes("hr") ? " · HR duty" : ""}
+                {e.duties.map((d) => ` · ${DUTY_LABEL[d]}`).join("")}
               </span>
             </span>
             <span className="font-mono text-[11.5px] text-muted-foreground">{e.empId}</span>

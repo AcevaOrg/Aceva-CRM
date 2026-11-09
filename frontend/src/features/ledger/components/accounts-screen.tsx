@@ -19,6 +19,7 @@ import type { Currency } from "@/types";
 import { useAccounts, useCreateAccount } from "../hooks";
 import { GROUP_CODE, GROUP_LABEL, GROUP_ORDER } from "../logic";
 import type { Account, AccountGroup } from "../types";
+import { FinanceRoleNote } from "./ledger-bits";
 
 export function AccountsScreen() {
   return (
@@ -78,7 +79,7 @@ function Accounts() {
     <>
       <PageHeader
         title="Chart of accounts"
-        description="Five groups with number codes. The accountant sets these up; balances come from posted entries only."
+        description="Five groups with number codes. The finance person sets these up; balances come from posted entries only."
         seal="confidential"
         actions={
           <Can permission="finance.entry_create">
@@ -88,6 +89,7 @@ function Accounts() {
           </Can>
         }
       />
+      <FinanceRoleNote className="mb-4" prepares="sets up the chart of accounts" />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="relative w-full sm:w-80">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -62,7 +62,7 @@ function IntegrityCard() {
         <p className="text-muted-foreground">
           {ok
             ? `Every row's fingerprint matched the row before it. Checked ${formatDate(checkedAt)} at ${formatTime(checkedAt)} across ${rows} rows.`
-            : "A row was changed directly in the database. The Director and CTO have been alerted."}
+            : "A row was changed directly in the database. The CEO / Founder / Owner, the Director and the CTO have been alerted."}
         </p>
         <p className="text-[12px] text-muted-foreground">Nobody can edit or delete this log. The app can only add rows.</p>
       </div>
@@ -100,7 +100,8 @@ function AuditInner() {
   const log = useAuditLog(filters);
   const set = (k: keyof AuditFilters) => (v: string) => setFilters((f) => ({ ...f, [k]: v }));
   const active = Object.entries(filters).some(([, v]) => !!v);
-  const canExport = (viewer?.employee.level ?? 5) <= 3;
+  // Exports are for the CEO / Founder / Owner and the Director: the two people who hold audit.view and the export permissions.
+  const canExport = !!viewer?.can("audit.view") && !!viewer.can(["statements.export", "finance.export"]);
 
   return (
     <>

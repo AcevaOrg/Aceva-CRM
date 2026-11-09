@@ -93,7 +93,7 @@ function Wizard({ tool }: { tool: ToolId }) {
       />
       {!canManage && (
         <p className="mb-5 flex items-center gap-2 rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-[12.5px]">
-          <Lock className="size-4 text-info" /> Only the CTO and the Director can add, change or remove a connection. You can view it.
+          <Lock className="size-4 text-info" /> View only. The CTO and the Director add, test, change or remove a connection.
         </p>
       )}
       <div className="grid gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
@@ -124,7 +124,7 @@ function Wizard({ tool }: { tool: ToolId }) {
         <div className="min-w-0">
           {step === "about" && <AboutStep tool={tool} onNext={next} />}
           {step === "key" && <KeyStep c={c} canManage={canManage} onNext={() => { setTest(null); next(); }} />}
-          {step === "test" && <TestStep c={c} result={test} setResult={setTest} onNext={next} />}
+          {step === "test" && <TestStep c={c} canManage={canManage} result={test} setResult={setTest} onNext={next} />}
           {step === "users" && <UsersStep tool={tool} users={users} canManage={canManage} onNext={next} />}
           {step === "schedule" && <ScheduleStep c={c} canManage={canManage} />}
         </div>
@@ -256,7 +256,7 @@ function KeyStep({ c, canManage, onNext }: { c: ToolConnection; canManage: boole
   );
 }
 
-function TestStep({ c, result, setResult, onNext }: { c: ToolConnection; result: TestResult | null; setResult: (r: TestResult) => void; onNext: () => void }) {
+function TestStep({ c, canManage, result, setResult, onNext }: { c: ToolConnection; canManage: boolean; result: TestResult | null; setResult: (r: TestResult) => void; onNext: () => void }) {
   const test = useTestConnection();
   return (
     <StepCard
@@ -264,10 +264,12 @@ function TestStep({ c, result, setResult, onNext }: { c: ToolConnection; result:
       description="Checks the key works and shows what it can read."
       footer={
         <>
-          <Button variant="outline" loading={test.isPending} disabled={!c.keyLast4} onClick={() => test.mutate(c.tool, { onSuccess: setResult })}>
-            <Plug /> Test connection
-          </Button>
-          <Button disabled={!result?.ok && c.status !== "working"} onClick={onNext}>
+          {canManage && (
+            <Button variant="outline" loading={test.isPending} disabled={!c.keyLast4} onClick={() => test.mutate(c.tool, { onSuccess: setResult })}>
+              <Plug /> Test connection
+            </Button>
+          )}
+          <Button disabled={canManage && !result?.ok && c.status !== "working"} onClick={onNext}>
             Continue
           </Button>
         </>
@@ -313,7 +315,7 @@ function UsersStep({ tool, users, canManage, onNext }: { tool: ToolId; users: To
   return (
     <StepCard
       title="Link users to Emp-IDs"
-      description="Activity from an unlinked user waits in the unmatched list and isn't counted for anyone."
+      description="Link each tool user to a salesperson (Sales only). Activity from an unlinked user waits in the unmatched list and isn't counted for anyone."
       footer={<Button onClick={onNext}>Continue</Button>}
     >
       {unmatched > 0 && (
@@ -344,6 +346,7 @@ function UsersStep({ tool, users, canManage, onNext }: { tool: ToolId; users: To
                     <EmployeeSelect
                       value={u.empId ?? ""}
                       placeholder="Not linked"
+                      filter={(e) => e.role === "sales"}
                       onChange={(empId) =>
                         link.mutate(
                           { tool, externalUserId: u.externalUserId, empId: empId || null },

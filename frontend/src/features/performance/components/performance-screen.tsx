@@ -24,7 +24,8 @@ export function PerformanceScreen() {
   const disputes = useDisputes();
   if (!viewer) return null;
   const me = viewer.employee.empId;
-  const hasTeam = viewer.can(["performance.view_team", "performance.view_all"]) && (descendantsOf(me).length > 0 || viewer.can("performance.view_all"));
+  // Team tab for the CEO / Founder / Owner (view only), the Director and the CTO; it shows their reporting line only.
+  const hasTeam = viewer.can(["performance.view_team", "performance.view_all"]) && descendantsOf(me).length > 0;
   const canReview = viewer.can("task.review");
   const reviews = (tasks.data ?? []).filter((t) => t.assignedBy === me && (t.status === "submitted" || t.status === "under_review")).length;
   const openDisputes = (disputes.data ?? []).filter((d) => d.status === "open" && d.deciderEmpId === me).length;
@@ -34,7 +35,7 @@ export function PerformanceScreen() {
     <>
       <PageHeader
         title="Performance"
-        description="Scores come from your reviewed tasks and attendance. Monthly scorecards are checked by the next level before release."
+        description="Scores come from your reviewed tasks and attendance. Your manager reviews and releases each monthly scorecard."
         seal={current === "mine" ? "own" : "confidential"}
       />
       <Tabs value={current} onValueChange={(v) => setTab(v as Tab)}>

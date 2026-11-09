@@ -23,10 +23,10 @@ import { cn, uid } from "@/lib/utils";
 import type { Attachment, Currency } from "@/types";
 import { useAccounts, useEntry, useFinanceProjects, useParties, usePeriods, useRates, useSaveEntry } from "../hooks";
 import type { JournalEntry } from "../types";
-import { approverFor, balanceCheck, LEVEL_APPROVER_TITLE, monthKeyOf, num, requiredLevel, round2, touchesCapitalOrLoan } from "../logic";
+import { approverFor, balanceCheck, ceoNotified, CEO_NOTIFY_ABOVE, DIRECTOR_MADE_IT, monthKeyOf, num, round2, touchesCapitalOrLoan } from "../logic";
 import { AccountPicker } from "./account-picker";
 import { BalanceMeter } from "./balance-meter";
-import { ApprovalLevelChip } from "./ledger-bits";
+import { ApprovalChip } from "./ledger-bits";
 
 interface DraftLine {
   key: string;
@@ -111,8 +111,8 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
   const check = balanceCheck(lines.map((l) => ({ debit: l.debit || "0", credit: l.credit || "0", accountId: l.accountId })));
   const baseTotal = round2(check.debit * fxRate);
   const capital = touchesCapitalOrLoan(lines.filter((l) => l.accountId), accounts);
-  const level = requiredLevel(baseTotal, capital);
-  const route = approverFor(level, me, lookup.employees);
+  const notifyCeo = ceoNotified(baseTotal, capital);
+  const route = approverFor(me, lookup.employees);
   const approver = lookup.employee(route.empId);
   const month = date ? monthKeyOf(new Date(`${date}T12:00:00`)) : "";
   const period = periods.data?.find((p) => p.month === month);
@@ -173,7 +173,9 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
         })),
       });
       toast.success(send ? `${entry.number} sent for approval` : `${entry.number} saved as a draft`, {
-        description: send ? `It goes to ${lookup.employee(entry.approverEmpId)?.name ?? "the approver"} (${LEVEL_APPROVER_TITLE[entry.requiredApproverLevel]}).` : "You can finish it later from the ledger.",
+        description: send
+          ? `It goes to ${lookup.employee(entry.approverEmpId)?.name ?? "the Director"} (Director) for approval.${entry.ceoNotified ? " The CEO / Founder / Owner is notified." : ""}`
+          : "You can finish it later from the ledger.",
       });
       router.push(`/finance/ledger/${entry.id}`);
     } catch (err) {
@@ -228,7 +230,7 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
           <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-[13px]">
             <Lock className="mt-0.5 size-4 shrink-0 text-danger" />
             <p>
-              <span className="font-semibold">{formatMonthKey(month)} is closed.</span> Entries can&apos;t be dated in a closed month. Ask the CEO or Owner to reopen it (the reopening is logged and alerted), or date the entry in an open month.
+              <span className="font-semibold">{formatMonthKey(month)} is closed.</span> Entries can&apos;t be dated in a closed month. Only the Director can reopen it (the reopening is logged and the CEO / Founder / Owner is notified), or date the entry in an open month.
             </p>
           </div>
         )}
@@ -334,22 +336,24 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 sm:px-6 lg:px-8">
           <BalanceMeter debit={check.debit} credit={check.credit} currency={currency} />
           <div className="grid min-w-0 flex-1 gap-1 text-[12.5px]">
-            {check.debit > 0 ? (
+            {route.blocked ? (
+              <span className="text-danger">{DIRECTOR_MADE_IT}</span>
+            ) : check.debit > 0 ? (
               <>
                 <span className="flex flex-wrap items-center gap-2">
-                  <ApprovalLevelChip level={route.level} />
+                  <ApprovalChip ceoNotified={notifyCeo} />
                   <span className="text-muted-foreground">
                     {formatMoney(baseTotal, { exact: true })}
                     {capital ? " · share capital or loan" : ""}
                   </span>
                 </span>
                 <span className="text-muted-foreground">
-                  Goes to <span className="font-medium text-foreground">{approver?.name ?? "the approver"}</span>
-                  {route.routedUp ? " (one level up, because nobody approves their own entry)" : ""}.
+                  Goes to <span className="font-medium text-foreground">{approver?.name ?? "the Director"}</span> (Director) for approval
+                  {notifyCeo ? `. Above PKR ${CEO_NOTIFY_ABOVE.toLocaleString("en-PK")}, or capital or loans, the CEO / Founder / Owner is notified (view only)` : ""}.
                 </span>
               </>
             ) : (
-              <span className="text-muted-foreground">Up to PKR 50,000 → Director · up to 500,000 → CEO · above, and capital or loans → Owner</span>
+              <span className="text-muted-foreground">Every entry → Director, any amount · above PKR 500,000, and capital or loans, the CEO / Founder / Owner is notified</span>
             )}
           </div>
           <div className="ml-auto flex gap-2">
@@ -358,7 +362,7 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
             </Button>
             <Tip content={!check.ok ? (check.problems[0] ?? "Balance the entry first") : undefined}>
               <span>
-                <Button onClick={() => submit(true)} disabled={!check.ok || locked || save.isPending} loading={save.isPending && !!save.variables?.submit}>
+                <Button onClick={() => submit(true)} disabled={!check.ok || locked || route.blocked || save.isPending} loading={save.isPending && !!save.variables?.submit}>
                   <Send /> Submit for approval
                 </Button>
               </span>

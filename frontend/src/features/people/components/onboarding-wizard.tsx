@@ -16,15 +16,16 @@ import { RequireAccess } from "@/components/shared/can";
 import { LevelMark } from "@/components/shared/level-mark";
 import { Money } from "@/components/shared/money";
 import { DetailList, EmployeeSelect } from "@/components/shared/pickers";
+import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
 import { useLookup } from "@/hooks/use-directory";
-import { LEVEL_LABEL } from "@/lib/auth/permissions";
-import { useCan } from "@/lib/auth/viewer";
+import { LEVEL_LABEL, ROLE_LABEL } from "@/lib/auth/permissions";
+import { useCan, useViewer } from "@/lib/auth/viewer";
 import { formatDate, isoDay } from "@/lib/dates";
 import { maskTail } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Level } from "@/types";
+import { roleFor, type Level } from "@/types";
 import { useCreateEmployee } from "../hooks";
-import { capacityFor, suggestEmail, TYPE_LABEL } from "../logic";
+import { capacityFor, hireLevels, suggestEmail, TYPE_LABEL } from "../logic";
 
 const schema = z.object({
   name: z.string().trim().min(3, "Enter the full name."),
@@ -65,8 +66,14 @@ export function OnboardingWizard() {
 
 function Wizard() {
   const lookup = useLookup();
+  const viewer = useViewer();
   const canPay = useCan("people.manage_pay");
   const create = useCreateEmployee();
+  // You can only add people below your own level, into a department that fits their level (spec §2.1).
+  const myLevel: Level = viewer?.employee.level ?? 5;
+  const departments = lookup.departments.filter((d) => hireLevels(myLevel, d.id).length > 0);
+  /** The one person each level reports to in the fixed structure (Engineering → CTO; CTO, Sales and Finance → Director). */
+  const bossesFor = (l: Level) => lookup.employees.filter((e) => e.status !== "left" && e.level === reportsToLevel(l));
   const [step, setStep] = React.useState(0);
   const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean } | null>(null);
   const form = useForm<Values>({
@@ -79,6 +86,17 @@ function Wizard() {
   const { register, watch, setValue, formState } = form;
   const errors = formState.errors;
   const v = watch();
+
+  /** Picking a level picks its manager too when there is only one person at the level above. */
+  const applyLevel = (l: Level) => {
+    setValue("level", l);
+    const bosses = bossesFor(l);
+    setValue("reportsTo", bosses.length === 1 ? bosses[0].empId : "");
+  };
+  const applyDepartment = (depId: string) => {
+    const levels = hireLevels(myLevel, depId);
+    if (levels.length) applyLevel(levels[levels.length - 1]);
+  };
 
   // Suggest the official email from the name until the user edits it.
   const emailTouched = React.useRef(false);
@@ -188,9 +206,9 @@ function Wizard() {
                   <Input id="o-des" placeholder="Software Developer" {...register("designation")} />
                 </Field>
                 <Field label="Department" htmlFor="o-dep" error={errors.departmentId?.message} required>
-                  <NativeSelect id="o-dep" {...register("departmentId")}>
+                  <NativeSelect id="o-dep" {...register("departmentId", { onChange: (ev) => applyDepartment(ev.target.value) })}>
                     <option value="">Choose a department</option>
-                    {lookup.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                   </NativeSelect>
                 </Field>
                 <Field label="Office" htmlFor="o-off" error={errors.officeId?.message} required>
@@ -208,13 +226,13 @@ function Wizard() {
 
             {step === 1 && (
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Level" htmlFor="o-level" required>
-                  <NativeSelect id="o-level" {...register("level", { valueAsNumber: true, onChange: () => setValue("reportsTo", "") })}>
-                    {[2, 3, 4, 5].map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
+                <Field label="Level" htmlFor="o-level" required hint={`Role: ${ROLE_LABEL[roleFor(level, v.departmentId)]}. Levels that fit ${lookup.department(v.departmentId)?.name ?? "the department"}.`}>
+                  <NativeSelect id="o-level" {...register("level", { valueAsNumber: true, onChange: (ev) => applyLevel(Number(ev.target.value) as Level) })}>
+                    {hireLevels(myLevel, v.departmentId).map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
                   </NativeSelect>
                 </Field>
-                <Field label="Reports to" htmlFor="o-boss" error={errors.reportsTo?.message} required hint="Someone at a higher level.">
-                  <EmployeeSelect id="o-boss" value={v.reportsTo} onChange={(x) => setValue("reportsTo", x, { shouldValidate: true })} filter={(e) => e.level < level} invalid={!!errors.reportsTo} />
+                <Field label="Reports to" htmlFor="o-boss" error={errors.reportsTo?.message} required hint={REPORTS_TO_HINT[level]}>
+                  <EmployeeSelect id="o-boss" value={v.reportsTo} onChange={(x) => setValue("reportsTo", x, { shouldValidate: true })} filter={(e) => e.level === reportsToLevel(level)} invalid={!!errors.reportsTo} />
                 </Field>
                 <Field label="Joining date" htmlFor="o-join" error={errors.joiningDate?.message} required>
                   <Input id="o-join" type="date" {...register("joiningDate")} />

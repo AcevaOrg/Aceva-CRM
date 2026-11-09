@@ -2,6 +2,7 @@
  * Module 3 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
  * Employee records live in the shared directory table (employeesTable).
  */
+import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
 import { recordActivity, sessionsFor } from "@/features/activity/api";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
@@ -14,8 +15,8 @@ import { formatDate } from "@/lib/dates";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedDocuments, seedHistory, seedPay, seedPersonal } from "@/mocks/seed/people-profiles";
-import type { Employee } from "@/types";
-import { capacityFor, nextEmpId, profileAccess, TYPE_LABEL } from "./logic";
+import { roleFor, type Employee, type Level } from "@/types";
+import { capacityFor, fitsDepartment, hireLevels, nextEmpId, profileAccess, TYPE_LABEL } from "./logic";
 import type {
   BasicPatch, DocumentKind, EmployeeDocument, FieldChange, JobPatch, OffboardInput, OffboardPreview, OnboardingInput, PayDetails,
   PayPatch, PersonalDetails, PersonalPatch, ProfileSection, ProfileView,
@@ -41,6 +42,19 @@ function accessFor(target: Employee) {
 function logField(empId: string, section: ProfileSection, field: string, oldValue: string, newValue: string, reason?: string) {
   if (oldValue === newValue) return;
   historyTable().unshift({ id: uid("fc"), empId, section, field, oldValue, newValue, changedBy: getViewer().employee.empId, changedAt: new Date().toISOString(), reason });
+}
+
+/** The fixed structure: the manager must sit at the level each level reports to (Engineering → CTO; CTO, Sales and Finance → Director; Director → CEO / Founder / Owner). */
+function checkReportsTo(level: Level, reportsTo: string | undefined) {
+  const boss = employeesTable().find((x) => x.empId === reportsTo && x.status !== "left");
+  if (!boss || boss.level !== reportsToLevel(level)) throw new ApiError("validation", `${REPORTS_TO_HINT[level]} Choose someone at that level.`);
+}
+
+/** The role follows the level and the department (level 4 in Finance is the finance person, who holds finance duty). */
+function syncRole(e: Employee) {
+  e.role = roleFor(e.level, e.departmentId);
+  const others = e.duties.filter((d) => d !== "finance");
+  e.duties = e.role === "finance" ? [...others, "finance"] : others;
 }
 
 const deptName = (id: string) => departmentsTable().find((d) => d.id === id)?.name ?? id;
@@ -78,20 +92,30 @@ export const peopleApi = {
   updateBasic: (empId: string, patch: BasicPatch, reason?: string) =>
     mock(() => {
       const e = findEmp(empId);
-      if (!accessFor(e).access.edit.basic) throw new ApiError("forbidden", "Only HR or the Director can change these fields.", 403);
+      if (!accessFor(e).access.edit.basic) throw new ApiError("forbidden", "Only the Director (HR duty) can change these fields.", 403);
+      if (patch.departmentId !== undefined && patch.departmentId !== e.departmentId && !fitsDepartment(e.level, patch.departmentId))
+        throw new ApiError("validation", `Level ${e.level} doesn't fit ${deptName(patch.departmentId)}. Change the level first.`);
       if (patch.name !== undefined) logField(empId, "basic", "Name", e.name, patch.name, reason);
       if (patch.designation !== undefined) logField(empId, "basic", "Designation", e.designation, patch.designation, reason);
       if (patch.departmentId !== undefined) logField(empId, "basic", "Department", deptName(e.departmentId), deptName(patch.departmentId), reason);
       if (patch.officeId !== undefined) logField(empId, "basic", "Office", officeName(e.officeId), officeName(patch.officeId), reason);
       if (patch.officialEmail !== undefined) logField(empId, "basic", "Official email", e.officialEmail, patch.officialEmail, reason);
       Object.assign(e, patch);
+      syncRole(e);
     }),
 
   /** PATCH /employees/:empId/job { …, reason } */
   updateJob: (empId: string, patch: JobPatch, reason: string) =>
     mock(() => {
       const e = findEmp(empId);
-      if (!accessFor(e).access.edit.job) throw new ApiError("forbidden", "Only HR or the Director can change job fields.", 403);
+      const { viewer, access } = accessFor(e);
+      if (!access.edit.job) throw new ApiError("forbidden", "Only the Director (HR duty) can change job fields, for people below them.", 403);
+      const levelChanges = patch.level !== undefined && patch.level !== e.level;
+      const bossChanges = patch.reportsTo !== undefined && patch.reportsTo !== e.reportsTo;
+      if ((levelChanges || bossChanges) && !viewer.can("org.manage")) throw new ApiError("forbidden", "Only the Director changes levels and reporting lines.", 403);
+      if (levelChanges && !hireLevels(viewer.employee.level, e.departmentId).includes(patch.level!))
+        throw new ApiError("validation", "That level doesn't fit this department, or is not below your own level.");
+      if (levelChanges || bossChanges) checkReportsTo(patch.level ?? e.level, patch.reportsTo ?? e.reportsTo ?? undefined);
       if (patch.level !== undefined) logField(empId, "job", "Level", `Level ${e.level}`, `Level ${patch.level}`, reason);
       if (patch.reportsTo !== undefined) logField(empId, "job", "Reports to", employeeName(e.reportsTo), employeeName(patch.reportsTo), reason);
       if (patch.joiningDate !== undefined) logField(empId, "job", "Joining date", formatDate(e.joiningDate), formatDate(patch.joiningDate), reason);
@@ -99,6 +123,7 @@ export const peopleApi = {
       if (patch.status !== undefined) logField(empId, "job", "Status", e.status, patch.status, reason);
       if (patch.weeklyCapacityHours !== undefined) logField(empId, "job", "Weekly capacity", `${e.weeklyCapacityHours} h`, `${patch.weeklyCapacityHours} h`, reason);
       Object.assign(e, patch);
+      if (levelChanges) syncRole(e);
     }),
 
   /** PATCH /employees/:empId/personal */
@@ -107,7 +132,7 @@ export const peopleApi = {
       const e = findEmp(empId);
       const mode = accessFor(e).access.edit.personal;
       if (mode === "none") throw new ApiError("forbidden", "You can't change these details.", 403);
-      if (mode === "contact" && patch.cnic !== undefined) throw new ApiError("forbidden", "Ask HR to change your CNIC.", 403);
+      if (mode === "contact" && patch.cnic !== undefined) throw new ApiError("forbidden", "Ask the Director (HR duty) to change your CNIC.", 403);
       const rec = personalTable().find((p) => p.empId === empId);
       if (!rec) notFound("Personal details");
       if (patch.cnic !== undefined) logField(empId, "personal", "CNIC", maskTail(rec.cnic), maskTail(patch.cnic));
@@ -121,11 +146,11 @@ export const peopleApi = {
       Object.assign(rec, patch);
     }),
 
-  /** PATCH /employees/:empId/pay — Director only, after step-up */
+  /** PATCH /employees/:empId/pay — the Director (HR duty, people.manage_pay) for people below them; never their own; after step-up */
   updatePay: (empId: string, patch: PayPatch, reason: string) =>
     mock(() => {
       const e = findEmp(empId);
-      if (!accessFor(e).access.edit.pay) throw new ApiError("forbidden", "Only the Director can change pay.", 403);
+      if (!accessFor(e).access.edit.pay) throw new ApiError("forbidden", "Only the Director can change pay, and never their own.", 403);
       let rec = payTable().find((p) => p.empId === empId);
       if (!rec) {
         rec = { empId, baseSalary: money(0), allowances: [], bankName: "", accountNumber: "" };
@@ -161,10 +186,14 @@ export const peopleApi = {
   create: (input: OnboardingInput) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("people.manage")) throw new ApiError("forbidden", "Only HR or the Director can add employees.", 403);
+      if (!v.can("people.manage")) throw new ApiError("forbidden", "Only the Director (HR duty) can add employees.", 403);
       const list = employeesTable();
       if (list.some((e) => e.officialEmail === input.officialEmail)) throw new ApiError("validation", "That official email is already used.");
+      if (!hireLevels(v.employee.level, input.departmentId).includes(input.level))
+        throw new ApiError("validation", "That level doesn't fit this department, or is not below your own level.");
+      checkReportsTo(input.level, input.reportsTo);
       const empId = nextEmpId(list.map((e) => e.empId));
+      const role = roleFor(input.level, input.departmentId);
       const employee: Employee = {
         id: uid("emp"),
         empId,
@@ -174,8 +203,9 @@ export const peopleApi = {
         officeId: input.officeId,
         officialEmail: input.officialEmail,
         level: input.level,
-        role: input.level === 4 ? "team_lead" : input.departmentId === "dep-sales" ? "sales_exec" : "employee",
-        duties: [],
+        role,
+        // The finance person holds finance duty (prepares; the Director approves).
+        duties: role === "finance" ? ["finance"] : [],
         reportsTo: input.reportsTo,
         joiningDate: input.joiningDate,
         type: input.type,
@@ -216,8 +246,9 @@ export const peopleApi = {
   offboard: (empId: string, input: OffboardInput) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("people.manage")) throw new ApiError("forbidden", "Only HR or the Director can set a last working day.", 403);
       const e = findEmp(empId);
+      if (!v.can("people.manage") || !accessFor(e).access.edit.job)
+        throw new ApiError("forbidden", "Only the Director (HR duty) can set a last working day, for people below them.", 403);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const leavesNow = new Date(input.lastWorkingDay) <= today;

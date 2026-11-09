@@ -1,6 +1,6 @@
 /**
  * Module 6 · Performance and results (plan §10; sales scorecard from §20)
- * Owner: Developer C (cycle 2). Spec §9.6.
+ * Built by: Developer C (cycle 2). Spec §9.6.
  * API contract for the module.
  */
 import type { TaskSize } from "@/features/tasks/types";
@@ -72,7 +72,12 @@ export interface Scorecard {
   taskCount: number;
   smallSample: boolean;
   status: ScorecardStatus;
-  reviewerEmpId: string;
+  /**
+   * The person's manager, who reviews and releases it: the CTO for Engineering, the Director for the CTO, Sales and
+   * Finance. Empty for the Director: the CEO / Founder / Owner reviews nothing, so the Director's scorecard is
+   * released automatically when the month closes and the CEO / Founder / Owner views it.
+   */
+  reviewerEmpId?: string;
   reviewerRemark?: string;
   remarkAt?: string;
   releasedAt?: string;
@@ -100,7 +105,10 @@ export interface RatingDispute {
   currentRating: number;
   reason: string;
   status: "open" | "upheld" | "changed";
-  /** Next level above the reviewer decides (plan §10). */
+  /**
+   * The level above the reviewer decides (plan §10): CTO reviewed → the Director decides. The CEO / Founder / Owner
+   * decides nothing, so a rating the Director gave is looked at again by the Director (the CEO / Founder / Owner can view it).
+   */
   deciderEmpId: string;
   decidedBy?: string;
   decision?: string;

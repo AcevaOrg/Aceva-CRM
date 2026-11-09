@@ -7,13 +7,13 @@ import type { Confidentiality } from "@/types";
 const SEALS: Record<Confidentiality, { label: string; tip: string; icon: typeof Shield; cls: string }> = {
   highly: {
     label: "Highly confidential",
-    tip: "Owner, CEO and Director only (and the finance duty person for assigned work). Views and exports are logged.",
+    tip: "CEO / Founder / Owner and Director only (Finance for the work they prepare). Views and exports are logged.",
     icon: ShieldAlert,
     cls: "border-seal-highly/35 bg-seal-highly/10 [&_svg]:text-seal-highly",
   },
   confidential: {
     label: "Confidential",
-    tip: "Director and above, plus people with a duty for this data. Exports are logged.",
+    tip: "CEO / Founder / Owner and Director, plus managers for their own team's data. Exports are logged.",
     icon: Shield,
     cls: "border-seal-confidential/45 bg-seal-confidential/14 [&_svg]:text-seal-confidential",
   },

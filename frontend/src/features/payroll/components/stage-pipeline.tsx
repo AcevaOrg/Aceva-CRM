@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { STAGES, stageIndex, stageLabel } from "../logic";
 import type { PayrollStage } from "../types";
 
-/** The eight payroll stages as a stepper (spec §9.8). */
+/** The seven payroll stages as a stepper (spec §9.8). Prepared (Finance) → Approved (Director), no separate review. */
 export function StagePipeline({ stage, compact, className }: { stage: PayrollStage; compact?: boolean; className?: string }) {
   const current = stageIndex(stage);
   if (compact) {
@@ -60,7 +60,6 @@ const TONE: Record<PayrollStage, BadgeTone> = {
   draft: "neutral",
   calculated: "info",
   prepared: "warning",
-  reviewed: "warning",
   approved: "primary",
   payslips_sent: "primary",
   posted: "finance",

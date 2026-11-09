@@ -56,7 +56,7 @@ function LiveCard({ live }: { live: LivePerformance }) {
         <p className="text-[12.5px] text-muted-foreground">
           {live.kind === "sales"
             ? "Calculated from the daily sales report and attendance. Self-reported counts count toward Activity only."
-            : "Calculated from your reviewed tasks and attendance. Nobody types a score in; your reviewer can add a remark but can't change the numbers."}
+            : "Calculated from your reviewed tasks and attendance. Nobody types a score in; your manager can add a remark but can't change the numbers."}
         </p>
         {live.kind === "standard" && (
           <p className="text-[12.5px]">
@@ -84,7 +84,10 @@ function LatestScorecardCard() {
       <CardHeader className="flex-wrap">
         <div>
           <CardTitle>{formatMonthKey(sc.month)} scorecard</CardTitle>
-          <p className="text-[13px] text-muted-foreground">Released {sc.releasedAt ? formatDate(sc.releasedAt) : "—"} by {lookup.employee(sc.reviewerEmpId)?.name ?? sc.reviewerEmpId}</p>
+          <p className="text-[13px] text-muted-foreground">
+            Released {sc.releasedAt ? formatDate(sc.releasedAt) : "—"}
+            {sc.reviewerEmpId ? ` by ${lookup.employee(sc.reviewerEmpId)?.name ?? sc.reviewerEmpId}` : " automatically (no reviewer above the Director)"}
+          </p>
         </div>
         <StatusBadge label={st.label} tone={st.tone} />
       </CardHeader>
@@ -110,7 +113,7 @@ function LatestScorecardCard() {
         {sc.employeeComment && <p className="text-[12.5px] text-muted-foreground">Your comment: “{sc.employeeComment}”</p>}
         <div className="flex flex-wrap gap-2">
           {sc.status === "released" && <Button onClick={() => setAck(true)}>Acknowledge</Button>}
-          {sc.kind === "standard" && sc.tasks.some((t) => t.rating) && (
+          {sc.kind === "standard" && !!sc.reviewerEmpId && sc.tasks.some((t) => t.rating) && (
             <Button variant="outline" onClick={() => setDispute(true)}>
               <Flag /> Dispute a rating
             </Button>

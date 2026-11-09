@@ -11,7 +11,7 @@ import { table } from "@/mocks/db";
 import {
   seedAnnouncements, seedConversations, seedMeetings, seedMessages, seedPresence, seedReads, type ConversationRecord, type MessageRecord,
 } from "@/mocks/seed/comms";
-import { parseMentions } from "./logic";
+import { canCreateChannel, parseMentions, seesAllAnnouncements } from "./logic";
 import type {
   Announcement, AnnouncementWithStats, Conversation, LinkedTaskRef, Meeting, MeetingDetail, Message, NewAnnouncementInput,
   NewConversationInput, NewMeetingInput, Presence, Rsvp, SendMessageInput,
@@ -86,9 +86,10 @@ function scheduleReply(conv: ConversationRecord, from: string) {
   }, 3500);
 }
 
+/** DMs and groups: anyone. Channels: the channel's moderators, comms admins and managers (Director, CTO). */
 function canPin(c: ConversationRecord) {
   const v = getViewer();
-  return c.kind !== "channel" || c.moderatorEmpIds.includes(v.employee.empId) || v.employee.level <= 4 || v.can("comms.admin");
+  return c.kind !== "channel" || c.moderatorEmpIds.includes(v.employee.empId) || canCreateChannel(v.employee, v.can("comms.admin"));
 }
 
 export const commsApi = {
@@ -223,7 +224,7 @@ export const commsApi = {
       const m = msgs().find((x) => x.id === id);
       if (!m) notFound("Message");
       const c = memberConv(m.conversationId);
-      if (!canPin(c)) throw new ApiError("forbidden", "Only channel moderators and leads can pin in channels.", 403);
+      if (!canPin(c)) throw new ApiError("forbidden", "Only channel moderators, the Director and the CTO can pin in channels.", 403);
       c.pinnedMessageIds = c.pinnedMessageIds.includes(id) ? c.pinnedMessageIds.filter((x) => x !== id) : [...c.pinnedMessageIds, id];
     }, { delay: 60 }),
 
@@ -242,7 +243,7 @@ export const commsApi = {
       const viewer = v.employee.empId;
       const members = Array.from(new Set([viewer, ...input.memberEmpIds])).filter(isActive);
       if (input.kind === "channel") {
-        if (!(v.can("comms.admin") || v.employee.level <= 4)) throw new ApiError("forbidden", "Only admins and leads can create channels.", 403);
+        if (!canCreateChannel(v.employee, v.can("comms.admin"))) throw new ApiError("forbidden", "Only the Director and the CTO can create channels.", 403);
         if (!input.name?.trim()) throw new ApiError("validation", "Give the channel a name.");
       }
       if (members.length < 2) throw new ApiError("validation", "Choose at least one other person.");
@@ -282,13 +283,15 @@ export const commsApi = {
     mock<AnnouncementWithStats[]>(() => {
       const v = getViewer();
       const viewer = v.employee.empId;
+      // Team announcements stay with their audience; the CEO / Founder / Owner (oversight) and the Director see every one.
+      const seesAll = seesAllAnnouncements(v.employee);
       const active = employeesTable().filter((e) => e.status !== "left");
       return announcementsTable()
         .map((a) => {
           const audienceEmpIds = active.filter((e) => a.audience.all || a.audience.departmentIds.includes(e.departmentId)).map((e) => e.empId);
           return { ...a, audienceEmpIds, acknowledgedByMe: a.ackEmpIds.includes(viewer) };
         })
-        .filter((a) => a.audienceEmpIds.includes(viewer) || a.author === viewer || v.can("announcements.publish"))
+        .filter((a) => a.audienceEmpIds.includes(viewer) || a.author === viewer || seesAll)
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.at.localeCompare(a.at));
     }),
 

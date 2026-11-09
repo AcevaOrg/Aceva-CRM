@@ -13,29 +13,33 @@ import { formatWeekdayLong, greeting, isoDay } from "@/lib/dates";
 import { HOLIDAYS } from "@/mocks/seed/calendar";
 import { HomeLayout } from "./home-layouts";
 
-export type HomeVariant = "employee" | "sales" | "finance" | "lead" | "sales_lead" | "director" | "cto" | "executive";
+/** One home layout per role in the structure: CEO / Founder / Owner, Director, CTO, Sales, Finance, Engineering. */
+export type HomeVariant = "executive" | "director" | "cto" | "sales" | "finance" | "employee";
 
 export function homeVariant(v: Viewer): HomeVariant {
-  const e = v.employee;
-  if (e.level <= 2) return "executive";
-  if (e.role === "cto") return "cto";
-  if (e.level === 3) return "director";
-  if (e.role === "sales_lead") return "sales_lead";
-  if (e.level === 4) return "lead";
-  if (v.isSales) return "sales";
-  if (v.hasFinanceDuty) return "finance";
-  return "employee";
+  switch (v.employee.role) {
+    case "ceo":
+      return "executive";
+    case "director":
+      return "director";
+    case "cto":
+      return "cto";
+    case "sales":
+      return "sales";
+    case "finance":
+      return "finance";
+    default:
+      return "employee";
+  }
 }
 
 const SUBTITLE: Record<HomeVariant, string> = {
-  employee: "Your tasks, attendance and leave for today.",
+  executive: "The whole company at a glance. You see every activity; the Director approves.",
+  director: "Everything waiting for your approval, plus finance, payroll and the sales team.",
+  cto: "Engineering today: who's in, workload, reviews and security alerts.",
   sales: "Your sales day: targets, follow-ups and new replies.",
-  finance: "Entries to finish, bills due and where payroll stands.",
-  lead: "Your team today: workload, reviews and requests.",
-  sales_lead: "Your sales team today, plus approvals waiting for you.",
-  director: "Your department, approvals waiting and the finance summary.",
-  cto: "Engineering today, approvals and security alerts.",
-  executive: "The company at a glance.",
+  finance: "Entries to finish, payroll to prepare, bills and invoices. The Director approves what you prepare.",
+  employee: "Your tasks, attendance and leave for today.",
 };
 
 export function HomeScreen() {

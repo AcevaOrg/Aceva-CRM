@@ -24,7 +24,7 @@ import { toNumber } from "@/lib/format";
 import type { Currency } from "@/types";
 import { useBills, useCreateParty, useParties, usePartyEntries, useReceivables } from "../hooks";
 import type { Party } from "../types";
-import { EntryAmount, EntryStatusBadge } from "./ledger-bits";
+import { EntryAmount, EntryStatusBadge, FinanceRoleNote } from "./ledger-bits";
 
 export function PartiesScreen() {
   return (
@@ -91,6 +91,7 @@ function Parties() {
           </Can>
         }
       />
+      <FinanceRoleNote className="mb-4" prepares="adds clients and vendors" />
       <Tabs value={tab} onValueChange={(v) => setTab(v as "clients" | "vendors")}>
         <TabsList className="mb-5">
           <TabsTrigger value="clients">Clients <Badge tone="outline">{(q.data ?? []).filter((p) => p.kind === "client").length}</Badge></TabsTrigger>

@@ -1,11 +1,14 @@
 /**
  * Module 15 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
- * Scope (plan §20): executives see their own leads and deals; sales.team / sales.all see the team;
- * the finance duty person sees won values and commission lines only.
+ * Scope (plan §20): Sales (L4) see and work their own leads and deals. sales.team / sales.all (the Director and the
+ * CEO / Founder / Owner) see the whole team. The Director is the sales manager (sales.targets): he confirms Won deals,
+ * sets targets, moves leads, asks for proof and approves commission lines. The CEO / Founder / Owner only views:
+ * no add, edit, confirm or approve. Nobody confirms or approves their own item.
  */
 import { ApiError, forbidden, mock, notFound } from "@/lib/api/mock";
 import { getViewer, type Viewer } from "@/lib/auth/viewer";
 import { employeeName, employeesTable, findEmployee } from "@/lib/directory";
+import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { formatWeekdayLong, isoDay, monthKey } from "@/lib/dates";
 import { uid } from "@/lib/utils";
 import { nextNumber, table } from "@/mocks/db";
@@ -45,6 +48,66 @@ const dncTable = () => table<DncEntry>("sales.dnc", seedDnc);
 
 const seesTeam = (v: Viewer) => v.can("sales.team") || v.can("sales.all");
 const me = () => getViewer().employee.empId;
+
+/** The sales manager: the Director (sales.targets). Sets targets, moves leads, confirms Won deals, asks for proof. */
+export function isSalesManager(v: Viewer) {
+  return v.can("sales.team") && v.can("sales.targets");
+}
+
+/** Leads and tool accounts can only belong to people in Sales (L4). */
+export function isSalesPerson(empId: string) {
+  const e = findEmployee(empId);
+  return !!e && e.role === "sales" && e.status !== "left";
+}
+
+/** Salespeople own leads: only they add or import leads and log their own sales day. */
+export function ownsSalesWork(v: Viewer) {
+  return v.can("sales.own") && isSalesPerson(v.employee.empId);
+}
+
+/** Who may change a lead or deal: its owner, or the sales manager. Everyone else with team view (the CEO) only reads. */
+export function canWorkOn(v: Viewer, ownerEmpId: string) {
+  return (v.employee.empId === ownerEmpId && ownsSalesWork(v)) || isSalesManager(v);
+}
+
+/** Sales work that isn't tied to one lead (email checks, do-not-contact list): salespeople and the sales manager. */
+export function canDoSalesWork(v: Viewer) {
+  return ownsSalesWork(v) || isSalesManager(v);
+}
+
+const VIEW_ONLY = "View only. Salespeople work their own leads and deals; the Director confirms and approves.";
+
+function requireWork(v: Viewer, ownerEmpId: string) {
+  if (!canWorkOn(v, ownerEmpId)) forbidden(VIEW_ONLY);
+}
+
+/** The sales manager's Emp-ID: the Director. */
+function salesManagerEmpId() {
+  return employeesTable().find((e) => e.role === "director" && e.status !== "left")?.empId;
+}
+
+/** Who confirms a Won deal: the Director (sales manager). Never the owner, so a deal the Director owns has no confirmer. */
+export function wonConfirmerOf(ownerEmpId: string) {
+  const director = salesManagerEmpId();
+  return director && director !== ownerEmpId ? director : undefined;
+}
+
+export function canConfirmWon(v: Viewer, d: Pick<Deal, "ownerEmpId">) {
+  return isSalesManager(v) && v.employee.empId !== d.ownerEmpId;
+}
+
+const confirmerName = (ownerEmpId: string) => {
+  const id = wonConfirmerOf(ownerEmpId);
+  return id ? employeeName(id) : "the Director";
+};
+
+/**
+ * Commission lines are approved by the Director (sales.commission_approve), never by the person paid.
+ * Nothing goes above the Director: the CEO / Founder / Owner and Finance only view the lines.
+ */
+export function canDecideCommission(v: Viewer, c: Pick<CommissionLine, "empId" | "status">) {
+  return c.status === "calculated" && c.empId !== v.employee.empId && v.can("sales.commission_approve");
+}
 const today = () => isoDay(new Date());
 
 function requireSales(v: Viewer = getViewer()) {
@@ -208,6 +271,7 @@ export const leadsApi = {
     mock(() => {
       const v = getViewer();
       requireSales(v);
+      if (!ownsSalesWork(v)) forbidden("Leads belong to salespeople. Only someone in Sales can add a lead.");
       const dup = findDuplicate(input, leadsTable(), companiesTable());
       if (dup.duplicate) throw new ApiError("duplicate", `This lead already exists. Owner: ${employeeName(dup.ownerEmpId)} (${dup.ownerEmpId}).`, 409);
       return createLead(input, v.employee.empId, true);
@@ -219,14 +283,16 @@ export const leadsApi = {
       const v = getViewer();
       const l = leadOf(id);
       if (!l || !canSeeLead(v, l)) notFound("Lead");
+      requireWork(v, l.ownerEmpId);
       Object.assign(l, patch);
     }),
 
-  /** POST /leads/:id/owner { empId } — sales manager moves leads between people */
+  /** POST /leads/:id/owner { empId } — the Director (sales manager) moves leads between salespeople */
   reassign: (id: string, empId: string) =>
     mock(() => {
       const v = getViewer();
-      if (!seesTeam(v)) forbidden("Only the sales manager can move leads between people.");
+      if (!isSalesManager(v)) forbidden("Only the Director (sales manager) can move leads between people.");
+      if (!isSalesPerson(empId)) throw new ApiError("validation", "Leads can only be owned by someone in Sales.");
       const l = leadOf(id);
       if (!l) notFound("Lead");
       l.ownerEmpId = empId;
@@ -241,6 +307,7 @@ export const leadsApi = {
       const v = getViewer();
       const l = leadOf(id);
       if (!l || !canSeeLead(v, l)) notFound("Lead");
+      requireWork(v, l.ownerEmpId);
       l.doNotContact = true;
       if (l.email && !dncTable().some((d) => d.email === l.email)) dncTable().unshift({ id: uid("dnc"), email: l.email, leadId: l.id, reason, addedBy: v.employee.empId, at: new Date().toISOString() });
       addActivity({ leadId: l.id, empId: v.employee.empId, kind: "note", source: "manual", at: new Date().toISOString(), summary: `Marked do not contact: ${reason}` });
@@ -251,6 +318,7 @@ export const leadsApi = {
     mock<ImportRow[]>(() => {
       const v = getViewer();
       requireSales(v);
+      if (!ownsSalesWork(v)) forbidden("Leads belong to salespeople. Only someone in Sales can import leads.");
       const rows = parseCsv(csv);
       if (!rows.length) return [];
       const header = rows[0].map((h) => h.toLowerCase());
@@ -287,6 +355,7 @@ export const leadsApi = {
     mock(() => {
       const v = getViewer();
       requireSales(v);
+      if (!ownsSalesWork(v)) forbidden("Leads belong to salespeople. Only someone in Sales can import leads.");
       let n = 0;
       for (const r of rows.filter((x) => x.status === "ok")) {
         if (findDuplicate({ email: r.email, website: r.website }, leadsTable(), companiesTable()).duplicate) continue;
@@ -300,7 +369,7 @@ export const leadsApi = {
   verifyPreview: () =>
     mock<VerifyPreview>(() => {
       const v = getViewer();
-      const mine = leadsTable().filter((l) => !l.archived && !l.doNotContact && l.email && canSeeLead(v, l));
+      const mine = leadsTable().filter((l) => !l.archived && !l.doNotContact && l.email && canWorkOn(v, l.ownerEmpId));
       const recent = (l: Lead) => !!l.checkedAt && Date.now() - new Date(l.checkedAt).getTime() < 90 * 86_400_000;
       return { toCheck: mine.filter((l) => !recent(l)).length, skippedRecent: mine.filter(recent).length, creditsLeft: millionVerifierCredits() };
     }),
@@ -310,7 +379,8 @@ export const leadsApi = {
     mock<VerifyResult>(() => {
       const v = getViewer();
       requireSales(v);
-      const mine = leadsTable().filter((l) => !l.archived && !l.doNotContact && l.email && canSeeLead(v, l));
+      if (!canDoSalesWork(v)) forbidden(VIEW_ONLY);
+      const mine = leadsTable().filter((l) => !l.archived && !l.doNotContact && l.email && canWorkOn(v, l.ownerEmpId));
       const recent = (l: Lead) => !!l.checkedAt && Date.now() - new Date(l.checkedAt).getTime() < 90 * 86_400_000;
       const todo = mine.filter((l) => !recent(l));
       const creditsLeft = todo.length ? consumeMillionVerifierCredits(todo.length) : millionVerifierCredits();
@@ -342,6 +412,7 @@ export const activitiesApi = {
       const v = getViewer();
       const l = leadOf(input.leadId);
       if (!l || !canSeeLead(v, l)) notFound("Lead");
+      requireWork(v, l.ownerEmpId);
       const at = input.at ?? new Date().toISOString();
       const a = addActivity({ leadId: l.id, dealId: input.dealId, empId: v.employee.empId, kind: input.kind, source: "manual", at, summary: input.summary });
       if (input.kind === "meeting" && isoDay(at) === today()) summaryFor(l.ownerEmpId).meetings += 1;
@@ -353,7 +424,7 @@ export const activitiesApi = {
 
 /**
  * Won deal handover (plan §20): the company becomes a client, a draft invoice is created in
- * Billing (Module 13) for the finance duty person, and the CTO is told to create project tasks.
+ * Billing (Module 13) for Finance to check and send, and the CTO is told to create project tasks.
  * Mock: the invoice number is recorded on the deal; Billing creates the real draft in live mode.
  */
 export function handoverDeal(d: Deal, by: string) {
@@ -365,7 +436,8 @@ export function handoverDeal(d: Deal, by: string) {
   d.handover = { clientName: companyOf(d.companyId)?.name ?? "Client", invoiceNumber: `INV-2026-${String(n).padStart(4, "0")}`, ctoNotified: true, at: now };
   d.nextStep = undefined;
   d.nextStepDate = undefined;
-  d.history.push({ stage: "won", at: now, by, note: "Confirmed by the sales manager" });
+  const role = findEmployee(by)?.role;
+  d.history.push({ stage: "won", at: now, by, note: `Confirmed by the ${role ? ROLE_LABEL[role] : "manager"}` });
   d.updatedAt = now;
   addActivity({ leadId: d.leadId, dealId: d.id, empId: by, kind: "note", source: "manual", at: now, summary: `Won confirmed. Draft invoice ${d.handover.invoiceNumber} created in Billing; CTO asked to create the project tasks.` });
 }
@@ -413,9 +485,10 @@ export const dealsApi = {
       const v = getViewer();
       const lead = leadOf(input.leadId);
       if (!lead || !canSeeLead(v, lead)) notFound("Lead");
+      requireWork(v, lead.ownerEmpId);
       if (lead.doNotContact) throw new ApiError("dnc", "This lead asked not to be contacted.");
       if (!input.nextStep || !input.nextStepDate) throw new ApiError("validation", "Every open deal needs a next step with a date.");
-      const n = nextNumber("sales.deal", 33);
+      const n = nextNumber("sales.deal", 36);
       const now = new Date().toISOString();
       const deal: Deal = {
         id: uid("dl"),
@@ -443,6 +516,7 @@ export const dealsApi = {
       const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
       if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      requireWork(v, d.ownerEmpId);
       if (d.stage === "lost" || (d.stage === "won" && d.wonStatus === "confirmed")) throw new ApiError("closed", "This deal is closed. Create a new deal to work with the client again.");
       if (d.stage === stage) return { stage };
       if (stage === "lost") {
@@ -457,8 +531,8 @@ export const dealsApi = {
         return { stage, recontactAfter: d.recontactAfter };
       }
       if (stage === "won") {
-        const owner = findEmployee(d.ownerEmpId);
-        if (seesTeam(v) && v.employee.empId !== d.ownerEmpId) {
+        // The Director (sales manager) can mark it Won straight away; a salesperson's Won waits for him.
+        if (canConfirmWon(v, d)) {
           handover(d);
           return { stage, handover: d.handover };
         }
@@ -466,8 +540,8 @@ export const dealsApi = {
         d.stage = "won";
         d.wonStatus = "pending";
         d.wonRequestedAt = new Date().toISOString();
-        pushHistory(d, "won", "Waiting for manager confirmation");
-        return { stage, pending: true, confirmer: employeeName(owner?.reportsTo) };
+        pushHistory(d, "won", "Waiting for the Director to confirm");
+        return { stage, pending: true, confirmer: confirmerName(d.ownerEmpId) };
       }
       d.stage = stage;
       d.wonStatus = undefined;
@@ -475,14 +549,15 @@ export const dealsApi = {
       return { stage };
     }),
 
-  /** POST /deals/:id/confirm-won — sales manager only, never the owner */
+  /** POST /deals/:id/confirm-won — the Director (sales manager), never the owner */
   confirmWon: (id: string) =>
     mock(() => {
       const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
-      if (!d) notFound("Deal");
-      if (!seesTeam(v)) forbidden("Only the sales manager can confirm a won deal.");
-      if (d.ownerEmpId === v.employee.empId) forbidden("You can't confirm your own deal. It goes to your manager.");
+      if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      if (d.ownerEmpId === v.employee.empId) forbidden("You can't confirm your own deal. Nobody approves their own request.");
+      if (!canConfirmWon(v, d)) forbidden(`View only. ${confirmerName(d.ownerEmpId)} (Director) confirms Won deals.`);
+      if (d.wonStatus !== "pending") throw new ApiError("closed", "This deal isn't waiting for confirmation.");
       handover(d);
       return d.handover!;
     }),
@@ -492,8 +567,9 @@ export const dealsApi = {
     mock(() => {
       const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
-      if (!d) notFound("Deal");
-      if (!seesTeam(v)) forbidden("Only the sales manager can answer this.");
+      if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      if (!canConfirmWon(v, d)) forbidden(`View only. ${confirmerName(d.ownerEmpId)} (Director) answers this.`);
+      if (d.wonStatus !== "pending") throw new ApiError("closed", "This deal isn't waiting for confirmation.");
       d.stage = d.previousStage ?? "negotiation";
       d.wonStatus = undefined;
       pushHistory(d, d.stage, `Won not confirmed: ${reason}`);
@@ -505,6 +581,7 @@ export const dealsApi = {
       const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
       if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      requireWork(v, d.ownerEmpId);
       d.nextStep = nextStep;
       d.nextStepDate = nextStepDate;
       d.updatedAt = new Date().toISOString();
@@ -513,8 +590,10 @@ export const dealsApi = {
   /** PATCH /deals/:id { proposalUrl } */
   setProposal: (id: string, url: string) =>
     mock(() => {
+      const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
-      if (!d) notFound("Deal");
+      if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      requireWork(v, d.ownerEmpId);
       d.proposalUrl = url;
       addActivity({ leadId: d.leadId, dealId: d.id, empId: me(), kind: "proposal", source: "manual", at: new Date().toISOString(), summary: "Proposal linked to the deal" });
     }),
@@ -525,6 +604,7 @@ export const dealsApi = {
       const v = getViewer();
       const d = dealsTable().find((x) => x.id === id);
       if (!d || !canSeeDeal(v, d)) notFound("Deal");
+      requireWork(v, d.ownerEmpId);
       addActivity({ leadId: d.leadId, dealId: d.id, empId: v.employee.empId, kind: "follow_up", source: "manual", at: new Date().toISOString(), summary: summary || `Follow-up done: ${d.nextStep ?? ""}` });
       summaryFor(d.ownerEmpId).followUps.manual += 1;
       d.nextStep = nextStep;
@@ -614,6 +694,7 @@ export const salesDayApi = {
     mock(() => {
       const v = getViewer();
       requireSales(v);
+      if (!ownsSalesWork(v)) forbidden("Only salespeople log a sales day.");
       const empId = v.employee.empId;
       const date = today();
       const list = logs();
@@ -670,7 +751,7 @@ export const reportsApi = {
   requestProof: (empId: string, date: string) =>
     mock(() => {
       const v = getViewer();
-      if (!seesTeam(v)) forbidden("Only the sales manager can ask for proof.");
+      if (!isSalesManager(v)) forbidden("Only the Director (sales manager) can ask for proof.");
       const s = summaries().find((x) => x.empId === empId && x.date === date);
       if (s) s.proofRequested = true;
       const l = logs().find((x) => x.empId === empId && x.date === date);
@@ -773,7 +854,8 @@ export const targetsApi = {
   /** PUT /sales/targets */
   save: (daily: DailyTargets[], monthly: MonthlyTargets[]) =>
     mock(() => {
-      if (!getViewer().can("sales.targets")) forbidden("Only the sales manager sets targets.");
+      const v = getViewer();
+      if (!isSalesManager(v)) forbidden("View only. The Director (sales manager) sets targets.");
       daily.forEach((d) => Object.assign(dailyTargets().find((x) => x.empId === d.empId) ?? {}, d));
       monthly.forEach((m) => Object.assign(monthlyTargets().find((x) => x.empId === m.empId) ?? {}, m));
     }),
@@ -794,14 +876,15 @@ export const commissionApi = {
       return { rules: commissionRules(), lines: rows };
     }),
 
-  /** POST /sales/commission/:id/approve — Director; sent to payroll as a bonus line (Module 8) */
+  /** POST /sales/commission/:id/approve — the Director only; sent to payroll as a bonus line (Module 8) */
   approve: (id: string) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("sales.commission_approve")) forbidden("Only the Director approves commission.");
+      if (!v.can("sales.commission_approve")) forbidden("View only. The Director approves commission.");
       const c = commissionLines().find((x) => x.id === id);
       if (!c) notFound("Commission line");
-      if (c.empId === v.employee.empId) forbidden("You can't approve your own commission.");
+      if (c.empId === v.employee.empId) forbidden("You can't approve your own commission. Nobody approves their own request.");
+      if (!canDecideCommission(v, c)) forbidden("This line isn't waiting for approval.");
       c.status = "sent_to_payroll";
       c.approvedBy = v.employee.empId;
       c.approvedAt = new Date().toISOString();
@@ -812,9 +895,10 @@ export const commissionApi = {
   reject: (id: string, reason: string) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("sales.commission_approve")) forbidden("Only the Director answers commission lines.");
+      if (!v.can("sales.commission_approve")) forbidden("View only. The Director answers commission lines.");
       const c = commissionLines().find((x) => x.id === id);
       if (!c) notFound("Commission line");
+      if (!canDecideCommission(v, c)) forbidden(c.empId === v.employee.empId ? "You can't answer your own commission." : "This line isn't waiting for approval.");
       c.status = "rejected";
       c.rejectReason = reason;
       c.approvedBy = v.employee.empId;
@@ -825,7 +909,7 @@ export const commissionApi = {
   updateRule: (id: string, ratePercent: number) =>
     mock(() => {
       const v = getViewer();
-      if (!v.can("sales.commission_approve")) forbidden("Only the Director sets commission rules.");
+      if (!v.can("sales.commission_approve")) forbidden("View only. The Director sets commission rules.");
       const r = commissionRules().find((x) => x.id === id);
       if (!r) notFound("Rule");
       r.ratePercent = ratePercent;
@@ -842,6 +926,7 @@ export const dncApi = {
     mock(() => {
       const v = getViewer();
       requireSales(v);
+      if (!canDoSalesWork(v)) forbidden(VIEW_ONLY);
       const e = email.trim().toLowerCase();
       if (!EMAIL_RE.test(e)) throw new ApiError("validation", "Enter a valid email address.");
       if (dncTable().some((d) => d.email === e)) throw new ApiError("validation", "This email is already on the list.");
@@ -851,7 +936,7 @@ export const dncApi = {
     }),
 };
 
-/** Sales staff for selects (scope-aware). */
+/** Sales staff (L4) for selects. */
 export function salesPeopleOptions() {
-  return employeesTable().filter((e) => SALES_PEOPLE.includes(e.empId));
+  return employeesTable().filter((e) => SALES_PEOPLE.includes(e.empId) && isSalesPerson(e.empId));
 }

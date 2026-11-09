@@ -19,7 +19,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 import { formatMoneyCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { DealRow } from "../api";
+import { canWorkOn, type DealRow } from "../api";
 import { useDeals, useMoveDeal } from "../hooks";
 import { convert, LOST_REASONS, OPEN_STAGES, SERVICE_LABEL, STAGE_META, STAGES } from "../logic";
 import type { DealService, DealStage } from "../types";
@@ -38,6 +38,8 @@ const isClosed = (d: DealRow) => d.stage === "lost" || (d.stage === "won" && d.w
 function PipelineInner() {
   const viewer = useViewer();
   const team = !!viewer?.can(["sales.team", "sales.all"]);
+  // Owners and the Director move deals; the CEO / Founder / Owner sees the whole pipeline but moves nothing.
+  const canMove = (d: DealRow) => !!viewer && canWorkOn(viewer, d.ownerEmpId);
   const deals = useDeals();
   const move = useMoveDeal();
   const askReason = useReason();
@@ -92,7 +94,11 @@ function PipelineInner() {
     <>
       <PageHeader
         title="Pipeline"
-        description="Drag a deal to move it. Lost needs a reason; Won by a salesperson waits for the sales manager."
+        description={
+          all.some(canMove) || !all.length
+            ? "Drag a deal to move it. Lost needs a reason; Won by a salesperson waits for the Director to confirm."
+            : "View only. Salespeople move their own deals; the Director confirms Won deals."
+        }
         seal="confidential"
         actions={
           <>
@@ -122,7 +128,7 @@ function PipelineInner() {
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Open pipeline" value={formatMoneyCompact(sum(open), currency)} hint={`${open.length} open deals`} icon={<Wallet />} accent="var(--zone-sales)" />
         <StatCard label="Won in the last 30 days" value={formatMoneyCompact(sum(wonMonth), currency)} hint={`${wonMonth.length} deals`} icon={<Trophy />} />
-        <StatCard label="Waiting for confirmation" value={pending.length} hint={team ? "Won deals to confirm" : "Won, with your manager"} icon={<Hourglass />} />
+        <StatCard label="Waiting for confirmation" value={pending.length} hint={team ? "Won deals, confirmed by the Director" : "Won, with the Director"} icon={<Hourglass />} />
         <StatCard label="Without a next step date" value={open.filter((d) => !d.nextStepDate).length} hint="every open deal needs one" icon={<TriangleAlert />} />
       </div>
 
@@ -138,8 +144,8 @@ function PipelineInner() {
           items={list}
           columnOf={(d) => d.stage}
           itemKey={(d) => d.id}
-          canDrop={(d, to) => !isClosed(d) && !(d.wonStatus === "pending" && to === "won")}
-          onMove={onMove}
+          canDrop={(d, to) => canMove(d) && !isClosed(d) && !(d.wonStatus === "pending" && to === "won")}
+          onMove={all.some(canMove) ? onMove : undefined}
           columnWidth={264}
           renderCard={(d) => <DealCard d={d} currency={currency} />}
         />
@@ -185,7 +191,7 @@ function DealCard({ d, currency }: { d: DealRow; currency: "USD" | "PKR" }) {
         ))}
       {d.wonStatus === "pending" && (
         <Badge tone="warning" className="w-fit">
-          <Hourglass /> Waiting for manager confirmation
+          <Hourglass /> Waiting for the Director
         </Badge>
       )}
       {d.stage === "won" && d.wonStatus === "confirmed" && (

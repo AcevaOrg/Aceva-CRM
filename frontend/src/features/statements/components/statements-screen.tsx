@@ -16,6 +16,7 @@ import { RequireAccess } from "@/components/shared/can";
 import { useExport } from "@/components/shared/dialogs";
 import { ErrorState, ListSkeleton } from "@/components/shared/states";
 import { AccountPicker } from "@/features/ledger/components/account-picker";
+import { ViewOnlyNote } from "@/features/ledger/components/ledger-bits";
 import { useLookup } from "@/hooks/use-directory";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime } from "@/lib/dates";
@@ -80,7 +81,8 @@ function Statements() {
   const asAt = p.type === "balance-sheet" || p.type === "trial-balance" || p.type === "ar-aging" || p.type === "ap-due";
   const s = q.data;
   const checksOk = !!s && s.checks.every((c) => c.pass);
-  const canFinal = !!viewer && (viewer.can("finance.entry_approve") || viewer.can("finance.close"));
+  // Marking a statement final is a sign-off: the Director only (the CEO / Founder / Owner and Finance view).
+  const canFinal = !!viewer?.can("finance.entry_approve");
 
   const navItem = (t: StatementType) => (
     <li key={t}>
@@ -139,6 +141,11 @@ function Statements() {
         }
       />
 
+      {meta.isStatement && !canFinal && (
+        <ViewOnlyNote className="mb-4 print:hidden">
+          {viewer?.can("statements.export") ? "View and export only." : "View only."} The Director marks statements final once every built-in check passes.
+        </ViewOnlyNote>
+      )}
       <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
         <nav aria-label="Statements and reports" className="print:hidden">
           <Card className="p-2 lg:sticky lg:top-20">

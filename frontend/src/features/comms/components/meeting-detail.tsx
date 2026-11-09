@@ -86,7 +86,7 @@ function MeetingBody({ id }: { id: string }) {
         }
         actions={
           <>
-            <Tip content="Calendar integration can be added if management approves it.">
+            <Tip content="Calendar integration can be added if the Director approves it.">
               <span tabIndex={0}>
                 <Button variant="outline" disabled>
                   <CalendarPlus /> Add to calendar

@@ -1,9 +1,11 @@
 /**
  * Seed: payroll runs, lines, payslips, advances, adjustments (Module 8).
- * July–October are paid; November is reviewed and waiting for the CEO's approval.
+ * Payroll covers the 12 people in PAY (people.ts). July–October are paid; November is prepared by
+ * Finance (ACV-0010 Sana Malik) and waiting for the Director (ACV-0003) to approve with step-up.
+ * Chain: Prepared (Finance) → Approved (Director). No CEO step: the CEO / Founder / Owner views every run.
  */
 import type { PayrollAdjustment, PayrollLine, PayrollRun, PayrollStage, Payslip, SalaryAdvance } from "@/features/payroll/types";
-import { calculateLine, totalsOf, workingDaysInMonth } from "@/features/payroll/logic";
+import { APPROVED_LABEL, calculateLine, PAYROLL_APPROVER, PAYROLL_PREPARER, PREPARED_LABEL, totalsOf, workingDaysInMonth } from "@/features/payroll/logic";
 import { money, toNumber } from "@/lib/format";
 import type { ApprovalStep } from "@/types";
 import { HOLIDAY_DATES } from "./calendar";
@@ -22,7 +24,8 @@ const ADVANCE_DEDUCTION: Record<string, { from: number; amount: number; months: 
   "ACV-0011": { from: -2, amount: 10_000, months: 6 },
   "ACV-0012": { from: -1, amount: 15_000, months: 2 },
 };
-const ADJUSTMENT: Record<number, Record<string, [number, string]>> = { [0]: { "ACV-0010": [5_000, "Overtime for last month's close (adjustment)"] } };
+/** Adjustments carried into a month from an earlier run (none in the seed). */
+const ADJUSTMENT: Record<number, Record<string, [number, string]>> = {};
 
 function endOfMonthIso(offset: number) {
   const d = new Date();
@@ -32,17 +35,19 @@ function endOfMonthIso(offset: number) {
   return d;
 }
 
+/** Finance prepares; the Director approves. */
+const PREPARER = PAYROLL_PREPARER;
+const APPROVER = PAYROLL_APPROVER;
+
 function chainFor(offset: number, stage: PayrollStage): ApprovalStep[] {
   if (offset < 0)
     return [
-      { label: "Prepared by", empId: "ACV-0010", state: "done", at: dayOfMonth(offset, 25, "16:20") },
-      { label: "Reviewed by", empId: "ACV-0003", state: "done", at: dayOfMonth(offset, 26, "11:05") },
-      { label: "Approved by", empId: "ACV-0002", state: "done", at: dayOfMonth(offset, 26, "15:40") },
+      { label: PREPARED_LABEL, empId: PREPARER, state: "done", at: dayOfMonth(offset, 25, "16:20") },
+      { label: APPROVED_LABEL, empId: APPROVER, state: "done", at: dayOfMonth(offset, 26, "15:40") },
     ];
   return [
-    { label: "Prepared by", empId: "ACV-0010", state: "done", at: minutesAgo(60 * 26) },
-    { label: "Reviewed by", empId: "ACV-0003", state: stage === "prepared" ? "waiting" : "done", at: stage === "prepared" ? undefined : minutesAgo(60 * 3) },
-    { label: "Approved by", empId: "ACV-0002", state: stage === "reviewed" ? "waiting" : "pending" },
+    { label: PREPARED_LABEL, empId: PREPARER, state: "done", at: minutesAgo(60 * 26) },
+    { label: APPROVED_LABEL, empId: APPROVER, state: stage === "prepared" ? "waiting" : "pending" },
   ];
 }
 
@@ -64,7 +69,7 @@ function build(): Built {
     const runId = `pr_${month}`;
     const workingDays = workingDaysInMonth(month, HOLIDAY_DATES);
     const end = endOfMonthIso(offset);
-    const stage: PayrollStage = offset < 0 ? "paid" : "reviewed";
+    const stage: PayrollStage = offset < 0 ? "paid" : "prepared";
     const runLines: PayrollLine[] = [];
 
     for (const e of EMPLOYEES) {
@@ -115,11 +120,9 @@ function build(): Built {
       totals: totalsOf(runLines),
       headcount: runLines.length,
       attendanceLockedAt: offset < 0 ? dayOfMonth(offset, 25, "10:00") : minutesAgo(60 * 28),
-      preparedBy: "ACV-0010",
+      preparedBy: PREPARER,
       preparedAt: offset < 0 ? dayOfMonth(offset, 25, "16:20") : minutesAgo(60 * 26),
-      reviewedBy: "ACV-0003",
-      reviewedAt: offset < 0 ? dayOfMonth(offset, 26, "11:05") : minutesAgo(60 * 3),
-      approvedBy: offset < 0 ? "ACV-0002" : undefined,
+      approvedBy: offset < 0 ? APPROVER : undefined,
       approvedAt: offset < 0 ? dayOfMonth(offset, 26, "15:40") : undefined,
       payslipsSentAt: offset < 0 ? dayOfMonth(offset, 27, "10:00") : undefined,
       journalEntryNumber: offset < 0 ? `JE-${month.slice(0, 4)}-0${n}` : undefined,
@@ -197,16 +200,16 @@ export function buildPayslips(runs: PayrollRun[], lines: PayrollLine[]): Payslip
   return out.reverse();
 }
 
+/** Advances are recorded by Finance and repaid through the payroll runs the Director approves. */
 export function seedAdvances(): SalaryAdvance[] {
   return [
-    { id: "adv_1", empId: "ACV-0011", amount: money(60_000), monthlyDeduction: money(10_000), startMonth: monthFromNow(-2), remaining: money(40_000), reason: "Family medical expense", status: "active", createdBy: "ACV-0010", createdAt: dayOfMonth(-3, 22) },
-    { id: "adv_2", empId: "ACV-0012", amount: money(30_000), monthlyDeduction: money(15_000), startMonth: monthFromNow(-1), remaining: money(15_000), reason: "Relocation to Karachi", status: "active", createdBy: "ACV-0010", createdAt: dayOfMonth(-2, 20) },
-    { id: "adv_3", empId: "ACV-0008", amount: money(20_000), monthlyDeduction: money(10_000), startMonth: monthFromNow(-6), remaining: money(0), reason: "Laptop repair", status: "repaid", createdBy: "ACV-0010", createdAt: dayOfMonth(-7, 18) },
+    { id: "adv_1", empId: "ACV-0011", amount: money(60_000), monthlyDeduction: money(10_000), startMonth: monthFromNow(-2), remaining: money(40_000), reason: "Family medical expense", status: "active", createdBy: PREPARER, createdAt: dayOfMonth(-3, 22) },
+    { id: "adv_2", empId: "ACV-0012", amount: money(30_000), monthlyDeduction: money(15_000), startMonth: monthFromNow(-1), remaining: money(15_000), reason: "Relocation to Karachi", status: "active", createdBy: PREPARER, createdAt: dayOfMonth(-2, 20) },
+    { id: "adv_3", empId: "ACV-0008", amount: money(20_000), monthlyDeduction: money(10_000), startMonth: monthFromNow(-6), remaining: money(0), reason: "Laptop repair", status: "repaid", createdBy: PREPARER, createdAt: dayOfMonth(-7, 18) },
   ];
 }
 
+/** No adjustments are carried into the current month. */
 export function seedAdjustments(): PayrollAdjustment[] {
-  return [
-    { id: "adj_1", fromRunId: `pr_${monthFromNow(-1)}`, toMonth: monthFromNow(0), empId: "ACV-0010", amount: money(5_000), note: "Overtime for last month's close", createdBy: "ACV-0003", createdAt: dayOfMonth(-1, 29, "14:00") },
-  ];
+  return [];
 }

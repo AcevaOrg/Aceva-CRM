@@ -8,7 +8,7 @@ import { money, toNumber } from "@/lib/format";
 import type { Money } from "@/types";
 import type { JournalPreviewLine, PayrollLine, PayrollStage, PayrollTotals, TaxSlab } from "./types";
 
-/** Salaried-person slabs (yearly PKR). Example values; the accountant confirms them in Settings. */
+/** Salaried-person slabs (yearly PKR). Example values; the outside accountant confirms them and the Director enters them in Settings. */
 export const DEFAULT_TAX_SLABS: TaxSlab[] = [
   { from: 0, to: 600_000, fixed: 0, rate: 0 },
   { from: 600_000, to: 1_200_000, fixed: 0, rate: 0.01 },
@@ -103,11 +103,19 @@ export function journalPreview(lines: PayrollLine[]): JournalPreviewLine[] {
   ];
 }
 
+/**
+ * Payroll chain: Prepared (Finance) → Approved (Director, step-up). These Emp-IDs only fill the chain for display;
+ * who may act is decided by permissions (payroll.prepare / payroll.approve). The CEO / Founder / Owner views only.
+ */
+export const PAYROLL_PREPARER = "ACV-0010";
+export const PAYROLL_APPROVER = "ACV-0003";
+export const PREPARED_LABEL = "Prepared (Finance)";
+export const APPROVED_LABEL = "Approved (Director)";
+
 export const STAGES: { key: PayrollStage; label: string; short: string }[] = [
   { key: "draft", label: "Attendance open", short: "Draft" },
   { key: "calculated", label: "Calculated", short: "Calculated" },
   { key: "prepared", label: "Prepared", short: "Prepared" },
-  { key: "reviewed", label: "Reviewed", short: "Reviewed" },
   { key: "approved", label: "Approved", short: "Approved" },
   { key: "payslips_sent", label: "Payslips sent", short: "Payslips" },
   { key: "posted", label: "Posted to ledger", short: "Posted" },

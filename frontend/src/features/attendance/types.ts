@@ -1,6 +1,6 @@
 /**
  * Module 7 · Attendance and leave (plan §11)
- * Owner: Developer A (cycle 3). Spec §9.7.
+ * Built by: Developer A (cycle 3). Spec §9.7.
  * API contract for the module.
  */
 import type { ApprovalStep } from "@/types";
@@ -60,7 +60,12 @@ export interface LeaveBalanceView extends LeaveBalance {
   remaining: number | null;
 }
 
-export type LeaveStatus = "pending_lead" | "pending_director" | "approved" | "rejected" | "cancelled";
+/**
+ * pending_manager: waiting for the person's manager (first step: the CTO for Engineering, the Director for the CTO,
+ *   Sales and Finance, the CEO / Founder / Owner only for the Director's own leave).
+ * pending_director: the CTO approved an engineer's leave and it now waits for the Director (second step).
+ */
+export type LeaveStatus = "pending_manager" | "pending_director" | "approved" | "rejected" | "cancelled";
 
 export interface LeaveRequest {
   id: string;
@@ -119,6 +124,7 @@ export interface TeamMonthRow {
 export interface LeaveCalendarEntry {
   requestId: string;
   empId: string;
+  /** "" when the viewer may only see that the person is away (a teammate or their manager, not in their scope). */
   leaveTypeId: string;
   from: string;
   to: string;

@@ -114,7 +114,7 @@ export function LinkTaskDialog({ message, onClose }: { message: Message; onClose
   );
 }
 
-/** New DM / group or (for admins and leads) a new channel (spec §9.14). */
+/** New DM / group or (for managers: Director, CTO, and comms admins) a new channel (spec §9.14). */
 export function NewConversationDialog({ onClose }: { onClose: () => void }) {
   const viewer = useViewer();
   const lookup = useLookup();
@@ -168,7 +168,7 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
       <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>New conversation</DialogTitle>
-          <DialogDescription>Message one person, start a small group, or {allowChannel ? "create a channel." : "ask a lead to create a channel."}</DialogDescription>
+          <DialogDescription>Message one person, start a small group, or {allowChannel ? "create a channel." : "ask the Director or the CTO to create a channel."}</DialogDescription>
         </DialogHeader>
         {allowChannel && (
           <SegmentedControl

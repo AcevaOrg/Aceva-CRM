@@ -1,6 +1,8 @@
 /**
  * Seed: Module 15 Sales and CRM. Prospects are made up; UK/US/UAE/Pakistan companies.
- * Owners: ACV-0009 Hira Baig, ACV-0012 Kamran Javed (sales lead ACV-0014 Saad Mirza).
+ * Owners (L4 Sales): ACV-0009 Hira Baig, ACV-0012 Kamran Javed, ACV-0014 Saad Mirza (Senior Sales Executive).
+ * All three report to the Director, ACV-0003 Bilal Ahmed, who is the sales manager: he confirms Won deals,
+ * sets targets and approves commission lines.
  */
 import type {
   ActivityKind, ActivitySource, CommissionLine, CommissionRule, Company, DailySalesSummary, DailyTargets, Deal, DealService, DealStage,
@@ -39,6 +41,10 @@ const C: [key: string, name: string, website: string, country: string, industry:
   ["emirateshaul", "Emirates Haul", "emirateshaul.ae", "United Arab Emirates", "Logistics"],
   ["bayside", "Bayside Vets", "baysidevets.com", "United States", "Veterinary"],
   ["clarkesons", "Clarke & Sons Builders", "clarkesons.co.uk", "United Kingdom", "Construction"],
+  ["marlow", "Marlow Dental Care", "marlowdental.co.uk", "United Kingdom", "Healthcare"],
+  ["crescent", "Crescent Hotels", "crescenthotels.ae", "United Arab Emirates", "Hospitality"],
+  ["tharsolar", "Thar Solar", "tharsolar.pk", "Pakistan", "Energy"],
+  ["hudson", "Hudson Print Co", "hudsonprint.com", "United States", "Printing"],
 ];
 
 export function seedCompanies(): Company[] {
@@ -78,6 +84,10 @@ const L: LeadRow[] = [
   ["Khalid Rahman", "Fleet Manager", "emirateshaul", "apollo", "ACV-0009", "invalid", 16],
   ["Jessica Moore", "Practice Owner", "bayside", "apollo", "ACV-0012", "unchecked", 1],
   ["Peter Clarke", "Director", "clarkesons", "apollo", "ACV-0009", "unchecked", 0],
+  ["Rachel Turner", "Practice Manager", "marlow", "apollo", "ACV-0014", "valid", 26, { notes: "Two clinics. Wants online booking linked to their practice software." }],
+  ["Yousef Al Hashimi", "General Manager", "crescent", "referral", "ACV-0014", "valid", 38],
+  ["Ahsan Memon", "Chief Executive", "tharsolar", "linkedin", "ACV-0014", "valid", 19],
+  ["Mark Sullivan", "Owner", "hudson", "apollo", "ACV-0014", "unchecked", 4],
 ];
 
 function emailFor(name: string, domain: string) {
@@ -113,9 +123,9 @@ export function seedLeads(): Lead[] {
 type DealRow = [num: number, lead: number, service: DealService, amount: number, currency: "USD" | "PKR", stage: DealStage, nextStep: string | null, nextStepDays: number | null, createdDaysAgo: number, extra?: Partial<Deal>];
 
 const D: DealRow[] = [
-  [4, 9, "website", 2400, "USD", "won", null, null, 75, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0014", handover: { clientName: "Coral Bay Cafe", invoiceNumber: "INV-2026-0031", ctoNotified: true, at: daysFromNow(-60, "15:00") } }],
-  [7, 17, "custom_software", 1850000, "PKR", "won", null, null, 70, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0014", handover: { clientName: "Indus Textiles", invoiceNumber: "INV-2026-0036", ctoNotified: true, at: daysFromNow(-45, "12:30") } }],
-  [12, 2, "website", 4800, "USD", "won", null, null, 40, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0014", handover: { clientName: "Northwind Studio", invoiceNumber: "INV-2026-0045", ctoNotified: true, at: daysFromNow(-12, "11:10") } }],
+  [4, 9, "website", 2400, "USD", "won", null, null, 75, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0003", handover: { clientName: "Coral Bay Cafe", invoiceNumber: "INV-2026-0031", ctoNotified: true, at: daysFromNow(-60, "15:00") } }],
+  [7, 17, "custom_software", 1850000, "PKR", "won", null, null, 70, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0003", handover: { clientName: "Indus Textiles", invoiceNumber: "INV-2026-0036", ctoNotified: true, at: daysFromNow(-45, "12:30") } }],
+  [12, 2, "website", 4800, "USD", "won", null, null, 40, { wonStatus: "confirmed", wonConfirmedBy: "ACV-0003", handover: { clientName: "Northwind Studio", invoiceNumber: "INV-2026-0045", ctoNotified: true, at: daysFromNow(-12, "11:10") } }],
   [19, 14, "ecommerce", 7500, "USD", "won", null, null, 30, { wonStatus: "pending", wonRequestedAt: minutesAgo(48), previousStage: "negotiation" }],
   [20, 1, "ecommerce", 9000, "USD", "replied", "Book a discovery call for Thursday", 0, 21],
   [21, 3, "website", 3200, "USD", "contacted", "Send the second follow-up email", 0, 10],
@@ -131,6 +141,9 @@ const D: DealRow[] = [
   [31, 10, "ai_automation", 6000, "USD", "lost", null, null, 17, { lostReason: "No reply", recontactAfter: daysFromNow(170) }],
   [32, 20, "website", 600000, "PKR", "new", "Visit the showroom with a demo", null, 8],
   [33, 21, "website", 2900, "USD", "new", "Send the first email from the Apollo sequence", 0, 3],
+  [34, 31, "website", 4200, "USD", "proposal_sent", "Chase the proposal with the booking demo", 0, 22],
+  [35, 32, "custom_software", 18000, "USD", "meeting_booked", "Demo the reservations dashboard to the GM", 2, 30],
+  [36, 33, "ai_automation", 1400000, "PKR", "replied", "Send the case study on automated site reports", 1, 15],
 ];
 
 export function seedDeals(): Deal[] {
@@ -142,11 +155,12 @@ export function seedDeals(): Deal[] {
     const history = order.slice(0, upto + 1).map((s, i) => ({
       stage: s,
       at: daysFromNow(-ago + Math.round((i * ago) / (upto + 2)), "11:00"),
-      by: lead.ownerEmpId,
-      note: s === "won" ? "Confirmed by the sales manager" : undefined,
+      // The Won step of a confirmed deal is recorded by the confirmer (the Director, as sales manager).
+      by: s === "won" ? (extra?.wonConfirmedBy ?? lead.ownerEmpId) : lead.ownerEmpId,
+      note: s === "won" ? "Confirmed by the Director" : undefined,
     }));
     if (stage === "lost") history.push({ stage: "lost", at: daysFromNow(-Math.round(ago / 3), "15:00"), by: lead.ownerEmpId, note: extra?.lostReason });
-    if (stage === "won" && extra?.wonStatus === "pending") history.push({ stage: "won", at: minutesAgo(48), by: lead.ownerEmpId, note: "Waiting for manager confirmation" });
+    if (stage === "won" && extra?.wonStatus === "pending") history.push({ stage: "won", at: minutesAgo(48), by: lead.ownerEmpId, note: "Waiting for the Director to confirm" });
     return {
       id: `dl_${num}`,
       number: `DL-${String(num).padStart(4, "0")}`,
@@ -213,17 +227,20 @@ export function seedActivities(): SalesActivity[] {
   reply(13, 28, 185, "“Tomorrow at 3 pm Dubai time works.”");
   reply(11, 27, 40, "“Could you share a few sites you have built for tutors?”");
   reply(5, 23, 125, "“Confirmed for the call. I'll bring our dispatch lead.”");
+  reply(31, 34, 55, "“The partners liked the proposal. Can we start in January?”");
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /* ---------------- Targets, daily summaries and manual logs ---------------- */
 
-export const SALES_PEOPLE = ["ACV-0009", "ACV-0012"];
+/** L4 Sales: everyone with daily sales targets. The Director manages them and has no targets of his own. */
+export const SALES_PEOPLE = ["ACV-0009", "ACV-0012", "ACV-0014"];
 
 export function seedDailyTargets(): DailyTargets[] {
   return [
     { empId: "ACV-0009", leadsAdded: 40, emailsChecked: 40, emailsSent: 30, followUps: 8 },
     { empId: "ACV-0012", leadsAdded: 35, emailsChecked: 35, emailsSent: 30, followUps: 6 },
+    { empId: "ACV-0014", leadsAdded: 30, emailsChecked: 30, emailsSent: 25, followUps: 8 },
   ];
 }
 
@@ -232,6 +249,7 @@ export function seedMonthlyTargets(): MonthlyTargets[] {
   return [
     { empId: "ACV-0009", month: m, meetings: 8, proposals: 5, wonValue: { amount: "6000.00", currency: "USD" } },
     { empId: "ACV-0012", month: m, meetings: 6, proposals: 4, wonValue: { amount: "5000.00", currency: "USD" } },
+    { empId: "ACV-0014", month: m, meetings: 8, proposals: 6, wonValue: { amount: "8000.00", currency: "USD" } },
   ];
 }
 
@@ -285,7 +303,9 @@ export function seedSummariesAndLogs(): { summaries: DailySalesSummary[]; logs: 
     summaries.push(
       p === 0
         ? { id: `ds_${empId}_${today}`, empId, date: today, leadsAdded: { auto: 31, manual: 3 }, emailsChecked: 36, invalid: 3, emailsSent: { apollo: 33, mailbox: 2 }, replies: 3, bounces: 1, meetings: 1, followUps: { auto: 2, manual: 3 }, selfReported: { linkedin: 0, whatsapp: 0, fiverr: 0, calls: 0, fieldVisits: 0 } }
-        : { id: `ds_${empId}_${today}`, empId, date: today, leadsAdded: { auto: 28, manual: 2 }, emailsChecked: 30, invalid: 2, emailsSent: { apollo: 27, mailbox: 1 }, replies: 2, bounces: 2, meetings: 0, followUps: { auto: 1, manual: 2 }, selfReported: { linkedin: 0, whatsapp: 0, fiverr: 0, calls: 0, fieldVisits: 0 } },
+        : p === 1
+          ? { id: `ds_${empId}_${today}`, empId, date: today, leadsAdded: { auto: 28, manual: 2 }, emailsChecked: 30, invalid: 2, emailsSent: { apollo: 27, mailbox: 1 }, replies: 2, bounces: 2, meetings: 0, followUps: { auto: 1, manual: 2 }, selfReported: { linkedin: 0, whatsapp: 0, fiverr: 0, calls: 0, fieldVisits: 0 } }
+          : { id: `ds_${empId}_${today}`, empId, date: today, leadsAdded: { auto: 22, manual: 4 }, emailsChecked: 26, invalid: 1, emailsSent: { apollo: 24, mailbox: 0 }, replies: 2, bounces: 0, meetings: 1, followUps: { auto: 2, manual: 4 }, selfReported: { linkedin: 0, whatsapp: 0, fiverr: 0, calls: 0, fieldVisits: 0 } },
     );
   });
   return { summaries, logs };
@@ -317,4 +337,5 @@ export function seedDnc(): DncEntry[] {
 export const PREVIOUS_MONTH_SCORE: Record<string, { activity: number; meetings: number; won: number; dataQuality: number; attendance: number }> = {
   "ACV-0009": { activity: 82, meetings: 88, won: 100, dataQuality: 90, attendance: 95 },
   "ACV-0012": { activity: 70, meetings: 67, won: 37, dataQuality: 80, attendance: 91 },
+  "ACV-0014": { activity: 86, meetings: 75, won: 64, dataQuality: 95, attendance: 93 },
 };

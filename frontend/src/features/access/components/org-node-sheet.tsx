@@ -14,12 +14,12 @@ import { LevelMark } from "@/components/shared/level-mark";
 import { DetailList, EmployeeSelect } from "@/components/shared/pickers";
 import { useLookup } from "@/hooks/use-directory";
 import { DUTY_LABEL, ROLE_LABEL } from "@/lib/auth/permissions";
-import { useCan } from "@/lib/auth/viewer";
+import { useCan, useViewer } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 import { useMoveEmployee } from "../hooks";
-import { descendantIds } from "../logic";
+import { descendantIds, REPORTS_TO_HINT, reportsToLevel } from "../logic";
 
-/** Side sheet for one org chart node, with "Move under…" for Owner/CEO (spec §9.1). */
+/** Side sheet for one org chart node, with "Move under…" for the Director (org.manage, spec §9.1). */
 export function OrgNodeSheet({ empId, onClose }: { empId: string | null; onClose: () => void }) {
   // Keyed by person so the move form resets when another node is opened.
   return <NodeSheet key={empId ?? "none"} empId={empId} onClose={onClose} />;
@@ -28,6 +28,7 @@ export function OrgNodeSheet({ empId, onClose }: { empId: string | null; onClose
 function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => void }) {
   const lookup = useLookup();
   const canManage = useCan("org.manage");
+  const viewer = useViewer();
   const move = useMoveEmployee();
   const [moving, setMoving] = React.useState(false);
   const [boss, setBoss] = React.useState("");
@@ -101,13 +102,19 @@ function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => vo
             )}
           </section>
 
-          {canManage && e.reportsTo && (
+          {!canManage && e.reportsTo && (
+            <p className="rounded-xl border border-dashed border-border px-4 py-3 text-[12.5px] text-muted-foreground">View only. The Director changes reporting lines.</p>
+          )}
+          {canManage && e.reportsTo && e.empId === viewer?.employee.empId && (
+            <p className="rounded-xl border border-dashed border-border px-4 py-3 text-[12.5px] text-muted-foreground">Nobody changes their own reporting line.</p>
+          )}
+          {canManage && e.reportsTo && e.empId !== viewer?.employee.empId && (
             <section className="rounded-xl border border-border bg-muted/40 p-4">
               {!moving ? (
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[13px] font-medium">Change reporting line</p>
-                    <p className="text-[12px] text-muted-foreground">Only the Owner or CEO can do this. A reason is required.</p>
+                    <p className="text-[12px] text-muted-foreground">Only the Director can do this. A reason is required.</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => setMoving(true)}>
                     <MoveRight /> Move under…
@@ -115,12 +122,12 @@ function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => vo
                 </div>
               ) : (
                 <div className="grid gap-3">
-                  <Field label="New manager" htmlFor="move-boss" required>
+                  <Field label="New manager" htmlFor="move-boss" required hint={`${REPORTS_TO_HINT[e.level]} The structure is fixed.`}>
                     <EmployeeSelect
                       id="move-boss"
                       value={boss}
                       onChange={setBoss}
-                      filter={(x) => x.empId !== e.empId && !below.includes(x.empId) && x.level < e.level}
+                      filter={(x) => x.empId !== e.empId && !below.includes(x.empId) && x.level === reportsToLevel(e.level)}
                       placeholder="Choose who they'll report to"
                     />
                   </Field>

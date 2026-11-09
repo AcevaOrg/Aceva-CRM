@@ -15,7 +15,8 @@ import { Tip } from "@/components/ui/overlays";
 import { Skeleton } from "@/components/ui/misc";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
 import { formatDate, formatRelative, formatTime, isoDay } from "@/lib/dates";
-import { useCan } from "@/lib/auth/viewer";
+import type { Permission } from "@/lib/auth/permissions";
+import { useCan, useViewer } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
 import { useMarkRead, useNotificationPrefs, useNotifications, useSaveNotificationPrefs } from "../hooks";
 import { NOTIFICATION_LABEL } from "../logic";
@@ -29,13 +30,17 @@ const ICON: Record<NotificationType, React.ElementType> = {
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
 };
 
-const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Parameters<typeof useCan>[0] }[] = [
+/** Email preference groups; a group shows only to people who can receive those notifications. */
+const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Permission | Permission[] }[] = [
   { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered"] },
-  { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"] },
+  // Approvers: the Director and the CTO. The CEO / Founder / Owner only approves the Director's own leave or correction;
+  // Finance, Sales and Engineering approve nothing.
+  { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"], permission: ["leave.approve", "payroll.approve", "finance.entry_approve"] },
   { title: "Pay and results", types: ["payslip_available", "scorecard_released"] },
   { title: "Messages", types: ["message_mention", "announcement"] },
   { title: "Security", types: ["security_alert"] },
-  { title: "Sales", types: ["sales_reply", "sales_follow_up", "sales_tool_problem"], permission: "sales.own" },
+  { title: "Sales", types: ["sales_reply", "sales_follow_up"], permission: "sales.own" },
+  { title: "Sales tools", types: ["sales_tool_problem"], permission: "integrations.view" },
   { title: "Finance", types: ["renewal_due", "invoice_overdue"], permission: "billing.view" },
 ];
 
@@ -168,15 +173,14 @@ function EmailPreferences() {
 
 function PrefsForm({ saved }: { saved: NotificationPrefs }) {
   const save = useSaveNotificationPrefs();
-  const canSales = useCan("sales.own");
-  const canBilling = useCan("billing.view");
+  const viewer = useViewer();
   const isManager = useCan("task.view_team");
   const [draft, setDraft] = React.useState<NotificationPrefs | null>(saved);
   const prefs = { data: saved };
 
   const isOn = (t: NotificationType) => ESSENTIAL_TYPES.includes(t) || draft?.email[t] !== false;
   const dirty = !!draft && !!prefs.data && JSON.stringify(draft) !== JSON.stringify(prefs.data);
-  const groups = PREF_GROUPS.filter((g) => (g.title === "Sales" ? canSales : g.title === "Finance" ? canBilling : true));
+  const groups = PREF_GROUPS.filter((g) => !g.permission || !!viewer?.can(g.permission));
 
   return (
     <Card className="h-fit xl:sticky xl:top-20">

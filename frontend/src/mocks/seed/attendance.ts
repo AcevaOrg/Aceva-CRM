@@ -1,6 +1,9 @@
 /**
  * Seed: attendance history, corrections, leave types, balances and requests (Module 7).
  * Deterministic per Emp-ID + date, and relative to today so it never looks stale.
+ * Aceva structure: CEO / Founder / Owner (ACV-0001) → Director (ACV-0003) → CTO (ACV-0004), Sales, Finance (ACV-0010)
+ * → Engineering (report to the CTO). Leave chains come from buildLeaveChain: Engineering CTO → Director;
+ * CTO, Sales and Finance: Director; Director: CEO / Founder / Owner (the only CEO sign-off).
  */
 import type { AttendanceCorrection, AttendanceDay, LeaveRequest, LeaveType } from "@/features/attendance/types";
 import { buildLeaveChain, lateMinutes, leaveDays } from "@/features/attendance/logic";
@@ -84,16 +87,18 @@ export function seedAttendance(): AttendanceDay[] {
   const d4 = workdaysFromNow(-4);
   fix("ACV-0008", -4, { status: "on_time", checkIn: at(new Date(d4), 9 * 60 + 5), checkOut: at(new Date(d4), 18 * 60 + 12), lateMinutes: undefined, correctionId: "cor_2" });
   fix("ACV-0011", -1, { status: "absent", checkIn: undefined, checkOut: undefined, firstLogin: at(new Date(workdaysFromNow(-1)), 9 * 60 + 4), lateMinutes: undefined, correctionId: "cor_3" });
+  const d3 = workdaysFromNow(-3);
+  fix("ACV-0003", -3, { status: "missed_checkout", checkIn: at(new Date(d3), 9 * 60 + 2), checkOut: at(new Date(d3), 18 * 60), lateMinutes: undefined, correctionId: "cor_4" });
+  const d6 = workdaysFromNow(-6);
+  fix("ACV-0010", -6, { status: "on_time", checkIn: at(new Date(d6), 8 * 60 + 58), checkOut: at(new Date(d6), 18 * 60 + 5), firstLogin: at(new Date(d6), 9 * 60), lateMinutes: undefined, correctionId: "cor_5" });
   return out;
 }
 
 /** Today's state for people other than the viewer (the viewer's own day comes from the session). */
 export const TODAY_PLAN: Record<string, { inAt?: string; loginGap?: number; outAt?: string }> = {
   "ACV-0001": {},
-  "ACV-0002": { inAt: "09:12", loginGap: 2 },
   "ACV-0003": { inAt: "09:06", loginGap: 1 },
   "ACV-0004": { inAt: "08:41", loginGap: 3 },
-  "ACV-0005": { inAt: "08:55", loginGap: 4 },
   "ACV-0006": { inAt: "08:49", loginGap: 2 },
   "ACV-0007": { inAt: "08:57", loginGap: 4 },
   "ACV-0008": { inAt: "09:24", loginGap: 52 },
@@ -126,7 +131,8 @@ export function seedCorrections(): AttendanceCorrection[] {
       requested: { checkIn: day(-4, "09:05"), checkOut: day(-4, "18:12") },
       reason: "Internet was down at home; I was on the stand-up call from 09:00 on my phone.",
       status: "approved",
-      decidedBy: "ACV-0006",
+      // Ali Raza reports to the CTO, who approves his corrections.
+      decidedBy: "ACV-0004",
       decidedAt: minutesAgo(60 * 70),
       decisionNote: "Confirmed, I saw you on the call.",
       at: minutesAgo(60 * 90),
@@ -140,6 +146,31 @@ export function seedCorrections(): AttendanceCorrection[] {
       reason: "I forgot to check in. I was in the Karachi office all day (login at 09:04).",
       status: "pending",
       at: minutesAgo(60 * 3),
+    },
+    {
+      // The Director's own correction: the only kind the CEO / Founder / Owner approves.
+      id: "cor_4",
+      empId: "ACV-0003",
+      date: isoDay(workdaysFromNow(-3)),
+      original: { checkIn: day(-3, "09:02"), checkOut: day(-3, "18:00") },
+      requested: { checkIn: day(-3, "09:02"), checkOut: day(-3, "19:40") },
+      reason: "Forgot to check out after the evening client review in the Dadu office.",
+      status: "pending",
+      at: minutesAgo(60 * 6),
+    },
+    {
+      id: "cor_5",
+      empId: "ACV-0010",
+      date: isoDay(workdaysFromNow(-6)),
+      original: { checkIn: day(-6, "09:41"), checkOut: day(-6, "18:05") },
+      requested: { checkIn: day(-6, "08:58"), checkOut: day(-6, "18:05") },
+      reason: "The office tablet was down in the morning; I was at the bank for the salary transfer file from 08:58.",
+      status: "approved",
+      // Sana Malik (Finance) reports to the Director, who approves her corrections.
+      decidedBy: "ACV-0003",
+      decidedAt: minutesAgo(60 * 24 * 5),
+      decisionNote: "Confirmed with the bank visit log.",
+      at: minutesAgo(60 * 24 * 6),
     },
   ];
 }
@@ -164,17 +195,24 @@ export function seedBaseUsed(): { empId: string; leaveTypeId: string; used: numb
 type ReqSeed = [empId: string, type: string, fromWd: number, toWd: number, status: LeaveRequest["status"], reason: string, minAgo: number, opts?: { halfDay?: boolean; note?: string }];
 
 const REQS: ReqSeed[] = [
-  ["ACV-0008", "lt-casual", 3, 4, "pending_lead", "Family wedding in Hyderabad.", 25],
-  ["ACV-0013", "lt-sick", 1, 1, "pending_lead", "Doctor's appointment, fever since last night.", 200],
-  ["ACV-0012", "lt-casual", 2, 2, "pending_director", "Moving to a new flat.", 60 * 26],
-  ["ACV-0010", "lt-annual", 12, 14, "pending_lead", "Visiting family in Lahore.", 60 * 5],
+  // Engineering: CTO first, then the Director.
+  ["ACV-0008", "lt-casual", 3, 4, "pending_manager", "Family wedding in Hyderabad.", 25],
+  ["ACV-0013", "lt-sick", 1, 1, "pending_manager", "Doctor's appointment, fever since last night.", 200],
+  ["ACV-0006", "lt-annual", 15, 16, "pending_director", "Brother's wedding in Multan.", 60 * 30],
+  // Sales and Finance: the Director only (sales manager duty, and the Finance person reports to the Director).
+  ["ACV-0012", "lt-casual", 2, 2, "pending_manager", "Moving to a new flat.", 60 * 26],
+  ["ACV-0010", "lt-annual", 18, 19, "pending_manager", "Visiting family in Lahore.", 60 * 4],
+  // CTO: the Director only.
+  ["ACV-0004", "lt-annual", 12, 14, "pending_manager", "Annual family trip to Skardu.", 60 * 5],
+  // Director: the CEO / Founder / Owner (the only request the CEO approves).
+  ["ACV-0003", "lt-casual", 7, 7, "pending_manager", "Property paperwork at the land office.", 60 * 8],
   ["ACV-0007", "lt-annual", 8, 10, "approved", "Sister's graduation and a short trip.", 60 * 72],
   ["ACV-0011", "lt-casual", -6, -6, "approved", "Personal errand.", 60 * 24 * 9],
   ["ACV-0009", "lt-annual", -12, -11, "approved", "Eid travel with family.", 60 * 24 * 16],
-  ["ACV-0005", "lt-sick", -3, -3, "approved", "Flu.", 60 * 24 * 4],
   ["ACV-0007", "lt-casual", -15, -15, "rejected", "Day off after the release.", 60 * 24 * 20, { note: "Release week. Please pick a day next week." }],
   ["ACV-0013", "lt-unpaid", -20, -20, "approved", "University exam.", 60 * 24 * 26],
   ["ACV-0006", "lt-casual", 5, 5, "approved", "Personal work at the bank.", 60 * 24 * 2, { halfDay: true }],
+  ["ACV-0010", "lt-sick", -9, -9, "approved", "Fever and a doctor's visit.", 60 * 24 * 14],
 ];
 
 export function seedLeaveRequests(): LeaveRequest[] {

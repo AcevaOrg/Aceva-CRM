@@ -18,16 +18,21 @@ import { DetailList, EmployeeSelect } from "@/components/shared/pickers";
 import { StatusBadge } from "@/components/shared/chips";
 import { EmptyState } from "@/components/shared/states";
 import { FileCard, Timeline } from "@/components/shared/timeline";
+import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
 import { useLookup } from "@/hooks/use-directory";
 import { LEVEL_LABEL } from "@/lib/auth/permissions";
+import { useCan, useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime, formatRelative, isoDay } from "@/lib/dates";
 import { formatBytes, formatMoney, toNumber } from "@/lib/format";
 import type { Employee, Level } from "@/types";
 import { useRevealField, useUpdateBasic, useUpdateJob, useUpdatePay, useUpdatePersonal, useUploadDocument } from "../hooks";
-import { DOC_LABEL, STATUS_INFO, TYPE_LABEL } from "../logic";
+import { DOC_LABEL, hireLevels, STATUS_INFO, TYPE_LABEL } from "../logic";
 import type { DocumentKind, ProfileView } from "../types";
 import { LoggedMaskedValue } from "./logged-masked-value";
 import { FormActions, SectionCard } from "./section-card";
+
+/** Shown on sections the viewer can see but not change (the CEO / Founder / Owner views every profile, edits none). */
+const HR_EDITS = "View only. The Director (HR duty) edits.";
 
 const err = (e: unknown) => toast.error(e instanceof Error ? e.message : "Couldn't save the change.");
 
@@ -49,7 +54,7 @@ export function BasicSection({ view }: { view: ProfileView }) {
   const form = useForm<z.infer<typeof basicSchema>>({ resolver: zodResolver(basicSchema), values: { name: e.name, designation: e.designation, departmentId: e.departmentId, officeId: e.officeId, officialEmail: e.officialEmail } });
 
   return (
-    <SectionCard title="Basic" seal="internal" visibleTo="everyone in the company (staff directory)" canEdit={view.access.edit.basic} editing={editing} onEdit={() => setEditing(true)}>
+    <SectionCard title="Basic" seal="internal" visibleTo="everyone in the company (staff directory)" canEdit={view.access.edit.basic} viewOnly={HR_EDITS} editing={editing} onEdit={() => setEditing(true)}>
       {!editing ? (
         <DetailList
           columns={2}
@@ -117,6 +122,10 @@ export function JobSection({ view }: { view: ProfileView }) {
   const e = view.employee;
   const update = useUpdateJob();
   const askReason = useReason();
+  // Levels and reporting lines follow the fixed structure and only the Director (org.manage) changes them (spec §2.1).
+  const canMoveLevel = useCan("org.manage");
+  const viewer = useViewer();
+  const levelOptions = [...new Set([e.level, ...hireLevels(viewer?.employee.level ?? 5, e.departmentId)])].sort((a, b) => a - b) as Level[];
   const [editing, setEditing] = React.useState(false);
   const form = useForm<z.infer<typeof jobSchema>>({
     resolver: zodResolver(jobSchema),
@@ -125,7 +134,7 @@ export function JobSection({ view }: { view: ProfileView }) {
   const level = form.watch("level") as Level;
 
   return (
-    <SectionCard title="Job" seal="internal" visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the levels above, and HR`} canEdit={view.access.edit.job && e.status !== "left"} editing={editing} onEdit={() => setEditing(true)}>
+    <SectionCard title="Job" seal="internal" visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the managers above in the reporting line, the Director (HR duty) and the CEO / Founder / Owner`} canEdit={view.access.edit.job && e.status !== "left"} viewOnly={HR_EDITS} editing={editing} onEdit={() => setEditing(true)}>
       {!editing ? (
         <DetailList
           columns={2}
@@ -154,13 +163,30 @@ export function JobSection({ view }: { view: ProfileView }) {
           })}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Level" htmlFor="j-level">
-              <NativeSelect id="j-level" {...form.register("level", { valueAsNumber: true })}>
-                {[2, 3, 4, 5].map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
-              </NativeSelect>
+            <Field label="Level" htmlFor="j-level" hint={canMoveLevel ? "The role follows the level and the department." : "Only the Director changes levels."}>
+              {canMoveLevel ? (
+                <NativeSelect id="j-level" {...form.register("level", { valueAsNumber: true, onChange: () => form.setValue("reportsTo", "", { shouldDirty: true }) })}>
+                  {levelOptions.map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
+                </NativeSelect>
+              ) : (
+                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+                  <LevelMark level={e.level} showLabel />
+                </div>
+              )}
             </Field>
-            <Field label="Reports to" htmlFor="j-boss" hint="Only someone at a higher level.">
-              <EmployeeSelect id="j-boss" value={form.watch("reportsTo")} onChange={(v) => form.setValue("reportsTo", v, { shouldDirty: true })} filter={(x) => x.level < level && x.empId !== e.empId} />
+            <Field label="Reports to" htmlFor="j-boss" hint={canMoveLevel ? REPORTS_TO_HINT[level] : "Only the Director changes reporting lines."}>
+              {canMoveLevel ? (
+                <EmployeeSelect
+                  id="j-boss"
+                  value={form.watch("reportsTo")}
+                  onChange={(v) => form.setValue("reportsTo", v, { shouldDirty: true })}
+                  filter={(x) => x.level === reportsToLevel(level) && x.empId !== e.empId}
+                />
+              ) : (
+                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">
+                  {e.reportsTo ? <EmpChip empId={e.reportsTo} size="sm" link={false} /> : "Nobody"}
+                </div>
+              )}
             </Field>
             <Field label="Joining date" htmlFor="j-join" error={form.formState.errors.joiningDate?.message}>
               <Input id="j-join" type="date" {...form.register("joiningDate")} />
@@ -217,8 +243,9 @@ export function PersonalSection({ view }: { view: ProfileView }) {
     <SectionCard
       title="Personal"
       seal="confidential"
-      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, HR, the Director and above`}
+      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the Director (HR duty) and the CEO / Founder / Owner`}
       canEdit={mode !== "none"}
+      viewOnly={HR_EDITS}
       editLabel={mode === "contact" ? "Edit my contact details" : "Edit"}
       editing={editing}
       onEdit={() => setEditing(true)}
@@ -254,7 +281,7 @@ export function PersonalSection({ view }: { view: ProfileView }) {
                 <Input id="p-cnic" className="font-mono" {...form.register("cnic")} />
               </Field>
             ) : (
-              <p className="self-end text-[12.5px] text-muted-foreground sm:col-span-2">You can update your phone, address and emergency contact. Ask HR to change your CNIC.</p>
+              <p className="self-end text-[12.5px] text-muted-foreground sm:col-span-2">You can update your phone, address and emergency contact. Ask the Director (HR duty) to change your CNIC.</p>
             )}
             <Field label="Phone" htmlFor="p-phone" error={fe.phone?.message}>
               <Input id="p-phone" inputMode="tel" {...form.register("phone")} />
@@ -324,8 +351,9 @@ export function PaySection({ view }: { view: ProfileView }) {
     <SectionCard
       title="Pay"
       seal="highly"
-      visibleTo={self ? "you (your own only), the Director, CEO, Owner and the finance duty person" : "the Director, CEO, Owner, the finance duty person and the employee"}
+      visibleTo={self ? "you (your own only), the Director, Finance (for payroll) and the CEO / Founder / Owner" : "the employee, the Director, Finance (for payroll) and the CEO / Founder / Owner"}
       canEdit={view.access.edit.pay}
+      viewOnly="View only. The Director edits pay."
       editing={editing}
       onEdit={startEdit}
       editLabel={pay ? "Edit pay" : "Add pay"}
@@ -405,7 +433,8 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
     <SectionCard
       title="Documents"
       seal="confidential"
-      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, HR, the Director and above. Files open through links that expire in minutes`}
+      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the Director (HR duty) and the CEO / Founder / Owner. Files open through links that expire in minutes`}
+      viewOnly={view.access.edit.documents ? undefined : "View only. The Director (HR duty) adds documents."}
       actions={
         view.access.edit.documents && (
           <div className="flex items-center gap-2">

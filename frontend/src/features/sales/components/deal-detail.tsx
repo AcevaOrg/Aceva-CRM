@@ -22,7 +22,9 @@ import { Timeline, type TimelineItem } from "@/components/shared/timeline";
 import { useLookup } from "@/hooks/use-directory";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime, formatMonthKey } from "@/lib/dates";
+import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils";
+import { canConfirmWon, canWorkOn, isSalesManager, wonConfirmerOf } from "../api";
 import { useConfirmWon, useDeal, useMoveDeal, useRejectWon, useSetProposal } from "../hooks";
 import { LOST_REASONS, OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
 import type { DealDetail, DealStage } from "../types";
@@ -64,8 +66,11 @@ function DealBody({ d }: { d: DealDetail }) {
   const { deal, lead, company, activities, commission } = d;
   const viewer = useViewer();
   const lookup = useLookup();
-  const team = !!viewer?.can(["sales.team", "sales.all"]);
   const isOwner = viewer?.employee.empId === deal.ownerEmpId;
+  // Won is confirmed by the Director (sales manager), never by the owner (maker-checker).
+  const canConfirm = !!viewer && canConfirmWon(viewer, deal);
+  // The owner and the Director work the deal; the CEO / Founder / Owner only views it.
+  const canWork = !!viewer && canWorkOn(viewer, deal.ownerEmpId);
   const move = useMoveDeal();
   const confirm = useConfirmWon();
   const reject = useRejectWon();
@@ -74,7 +79,7 @@ function DealBody({ d }: { d: DealDetail }) {
   const [stepMode, setStepMode] = React.useState<"done" | "edit" | null>(null);
   const open = OPEN_STAGES.includes(deal.stage);
   const closed = deal.stage === "lost" || (deal.stage === "won" && deal.wonStatus === "confirmed");
-  const manager = lookup.employee(lookup.employee(deal.ownerEmpId)?.reportsTo);
+  const manager = lookup.employee(wonConfirmerOf(deal.ownerEmpId));
 
   const doMove = async (stage: DealStage) => {
     let reason: string | undefined;
@@ -141,6 +146,7 @@ function DealBody({ d }: { d: DealDetail }) {
           </>
         }
         actions={
+          canWork && (
           <>
             {!closed && (
               <NativeSelect aria-label="Move to stage" value="" onChange={(e) => e.target.value && doMove(e.target.value as DealStage)} className="w-44">
@@ -158,22 +164,29 @@ function DealBody({ d }: { d: DealDetail }) {
               <NotebookPen /> Log activity
             </Button>
           </>
+          )
         }
       />
+
+      {!canWork && (
+        <div className="mb-5">
+          <MakerCheckerNote reason="View only. The salesperson works this deal; the Director confirms Won deals and approves commission." />
+        </div>
+      )}
 
       {deal.wonStatus === "pending" && (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4">
           <div className="flex items-start gap-3">
             <Hourglass className="mt-0.5 size-5 text-[oklch(0.6_0.14_70)]" />
             <div>
-              <p className="text-[13.5px] font-semibold">Won · waiting for the sales manager</p>
+              <p className="text-[13.5px] font-semibold">Won · waiting for {canConfirm ? "you to confirm" : manager ? `${manager.name} (${ROLE_LABEL[manager.role]})` : "the manager"}</p>
               <p className="text-[12.5px] text-muted-foreground">
                 {lookup.employee(deal.ownerEmpId)?.name} marked this deal as Won {deal.wonRequestedAt ? formatDateTime(deal.wonRequestedAt) : ""}. On confirmation the client is created, a draft invoice goes to
                 Billing and the CTO is asked to create the project tasks.
               </p>
             </div>
           </div>
-          {team && !isOwner ? (
+          {canConfirm ? (
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -188,10 +201,12 @@ function DealBody({ d }: { d: DealDetail }) {
                 <Check /> Confirm won
               </Button>
             </div>
-          ) : isOwner && team ? (
-            <MakerCheckerNote reason={`You own this deal, so you can't confirm it.${manager ? ` It goes to ${manager.name}.` : ""}`} />
+          ) : isOwner && viewer && isSalesManager(viewer) ? (
+            <MakerCheckerNote reason="You own this deal, so you can't confirm it. Nobody approves their own request." />
+          ) : !isOwner ? (
+            <MakerCheckerNote reason="View only. The Director confirms Won deals." />
           ) : (
-            <Badge tone="warning">With {manager?.name ?? "your manager"}</Badge>
+            <Badge tone="warning">With {manager?.name ?? "the Director"}</Badge>
           )}
         </div>
       )}
@@ -216,21 +231,25 @@ function DealBody({ d }: { d: DealDetail }) {
             <Card className={cn(!deal.nextStepDate && "border-warning/50")}>
               <CardHeader>
                 <CardTitle>Next step</CardTitle>
-                <Button size="sm" variant="ghost" onClick={() => setStepMode("edit")}>
-                  <Pencil /> Edit
-                </Button>
+                {canWork && (
+                  <Button size="sm" variant="ghost" onClick={() => setStepMode("edit")}>
+                    <Pencil /> Edit
+                  </Button>
+                )}
               </CardHeader>
               <CardContent className="grid gap-3">
                 {deal.nextStepDate ? (
                   <>
                     <p className="text-[13.5px]">{deal.nextStep}</p>
                     <FollowUpDue date={deal.nextStepDate} className="w-fit" />
-                    <Button size="sm" variant="outline" className="w-fit" onClick={() => setStepMode("done")}>
-                      <CircleCheck /> Mark done and set the next one
-                    </Button>
+                    {canWork && (
+                      <Button size="sm" variant="outline" className="w-fit" onClick={() => setStepMode("done")}>
+                        <CircleCheck /> Mark done and set the next one
+                      </Button>
+                    )}
                   </>
                 ) : (
-                  <p className="text-[13px] text-[oklch(0.55_0.13_70)]">Every open deal needs a next step with a date. Add one now.</p>
+                  <p className="text-[13px] text-[oklch(0.55_0.13_70)]">Every open deal needs a next step with a date.{canWork ? " Add one now." : ""}</p>
                 )}
               </CardContent>
             </Card>
@@ -248,7 +267,7 @@ function DealBody({ d }: { d: DealDetail }) {
                     {deal.handover.clientName} is now a client
                   </HandoverRow>
                   <HandoverRow done>
-                    Draft invoice <span className="font-mono">{deal.handover.invoiceNumber}</span> (draft) for the finance duty person
+                    Draft invoice <span className="font-mono">{deal.handover.invoiceNumber}</span> for Finance to check and send
                     <Link href="/billing" className="ml-1 inline-flex items-center gap-0.5 text-primary hover:underline">
                       Billing <ExternalLink className="size-3" />
                     </Link>
@@ -265,7 +284,14 @@ function DealBody({ d }: { d: DealDetail }) {
               <CardHeader>
                 <CardTitle>Commission</CardTitle>
                 <StatusBadge
-                  label={{ calculated: "Waiting for the Director", approved: "Approved", sent_to_payroll: "Sent to payroll", rejected: "Rejected" }[commission.status]}
+                  label={
+                    {
+                      calculated: "Waiting for the Director",
+                      approved: "Approved",
+                      sent_to_payroll: "Sent to payroll",
+                      rejected: "Rejected",
+                    }[commission.status]
+                  }
                   tone={commission.status === "sent_to_payroll" ? "success" : commission.status === "rejected" ? "danger" : "warning"}
                 />
               </CardHeader>
@@ -308,7 +334,7 @@ function DealBody({ d }: { d: DealDetail }) {
             </CardContent>
           </Card>
 
-          <ProposalCard dealId={deal.id} url={deal.proposalUrl} editable={!closed} />
+          <ProposalCard dealId={deal.id} url={deal.proposalUrl} editable={!closed && canWork} />
         </div>
       </div>
 

@@ -11,41 +11,50 @@ type Row = [minAgo: number, empId: string, module: string, action: AuditAction, 
 const H = 60;
 const D = 60 * 24;
 
+/*
+ * Actors follow the structure: ACV-0001 CEO / Founder / Owner (views and exports, approves nothing),
+ * ACV-0003 Director (approves everything; settings incl. ★, reporting lines; HR and sales-manager duty),
+ * ACV-0004 CTO (engineering, security, backups, integrations), ACV-0010 Finance (prepares entries, payroll,
+ * invoices, the month close; approves nothing).
+ */
 const ROWS: Row[] = [
-  [12, "ACV-0006", "Tasks", "approve", "task", "TSK-0123", "Approved “Org chart tree component” with a 5-star rating"],
+  [12, "ACV-0004", "Tasks", "approve", "task", "TSK-0123", "Approved “Org chart tree component” with a 5-star rating"],
   [48, "ACV-0011", "Tasks", "create", "extension", "TSK-0131", "Asked for 2 more days on “Payslip PDF layout”"],
-  [2 * H, "ACV-0003", "People", "edit", "employee", "ACV-0011", "Changed pay: internet allowance", [{ field: "Internet allowance", from: "PKR 3,000", to: "PKR 5,000" }], "Annual review"],
-  [3 * H, "ACV-0003", "Payroll", "approve", "payroll_run", "PR-2026-11", "Reviewed November payroll and sent it to the CEO"],
-  [3 * H + 20, "ACV-0003", "Payroll", "reveal", "bank_account", "ACV-0007", "Viewed bank account number of ACV-0007"],
-  [5 * H, "ACV-0010", "Ledger", "create", "journal_entry", "JE-2026-0311", "Created entry “Annual hosting prepayment” PKR 120,000"],
-  [6 * H, "ACV-0002", "Ledger", "approve", "journal_entry", "JE-2026-0309", "Approved entry “Office rent November” PKR 85,000"],
-  [7 * H, "ACV-0004", "Access", "permission_change", "role", "Team lead", "Added task.review to the Team lead role", [{ field: "task.review", from: "Off", to: "On" }], "Leads review their own team's tasks"],
-  [9 * H, "ACV-0006", "Attendance", "approve", "leave_request", "LV-0021", "Approved casual leave for ACV-0008 (2 days)"],
+  [2 * H, "ACV-0003", "People", "edit", "person", "ACV-0011", "Changed pay: internet allowance", [{ field: "Internet allowance", from: "PKR 3,000", to: "PKR 5,000" }], "Annual review"],
+  [3 * H + 20, "ACV-0010", "Payroll", "reveal", "bank_account", "ACV-0007", "Viewed bank account number of ACV-0007 while checking November payroll"],
+  [4 * H, "ACV-0001", "Payroll", "reveal", "payroll_run", "PR-2026-11", "Opened the November payroll run (view only)"],
+  [5 * H, "ACV-0010", "Ledger", "create", "journal_entry", "JE-2026-0311", "Created entry “Annual hosting prepayment” PKR 120,000 and sent it to the Director"],
+  [6 * H, "ACV-0003", "Ledger", "approve", "journal_entry", "JE-2026-0309", "Approved entry “Office rent November” PKR 85,000 made by ACV-0010"],
+  [7 * H, "ACV-0003", "Access", "permission_change", "role", "CTO", "Added task.review to the CTO role", [{ field: "task.review", from: "Off", to: "On" }], "The CTO reviews engineering tasks"],
   [20 * H, "ACV-0004", "Access", "unlock", "account", "ACV-0008", "Unlocked account after 5 wrong passwords"],
-  [26 * H, "ACV-0010", "Payroll", "create", "payroll_run", "PR-2026-11", "Prepared November payroll (13 people)"],
+  [26 * H, "ACV-0010", "Payroll", "create", "payroll_run", "PR-2026-11", "Prepared November payroll (12 people) and sent it to the Director"],
   [28 * H, "ACV-0010", "Payroll", "lock", "attendance", "2026-11", "Locked November attendance for payroll"],
-  [30 * H, "ACV-0014", "Sales", "approve", "deal", "DL-0017", "Confirmed won deal: Northwind Studio website"],
+  [29 * H, "ACV-0004", "Attendance", "approve", "leave_request", "LV-0412", "Approved annual leave for ACV-0006 (2 days) and sent it to the Director"],
+  [30 * H, "ACV-0003", "Sales", "approve", "deal", "DL-0017", "Confirmed won deal: Northwind Studio website"],
   [31 * H, "ACV-0003", "Sales", "approve", "commission", "CM-0004", "Approved commission PKR 9,000 for ACV-0012"],
   [33 * H, "ACV-0010", "Billing", "create", "invoice", "INV-2026-0047", "Created invoice USD 2,400 for Harbor & Co"],
   [2 * D, "ACV-0003", "Statements", "export", "statement", "Income statement · Oct 2026", "Exported the income statement (PDF, watermarked)"],
-  [2 * D + 3 * H, "ACV-0006", "Tasks", "edit", "task", "TSK-0125", "Changed deadline", [{ field: "Deadline", from: "12 Nov 2026", to: "14 Nov 2026" }], "Extension approved"],
-  [3 * D, "ACV-0002", "Ledger", "close", "period", "2026-10", "Approved the October 2026 month close"],
-  [3 * D + 2 * H, "ACV-0010", "Ledger", "post", "journal_entry", "JE-2026-0301", "Posted October revaluation: USD gain PKR 14,220"],
-  [4 * D, "ACV-0001", "Settings", "edit", "settings", "approval-limits", "Changed approval limits", [{ field: "CEO approves up to", from: "PKR 400,000", to: "PKR 500,000" }], "Contract sizes have grown"],
+  [2 * D + 2 * H, "ACV-0001", "Statements", "export", "statement", "Balance sheet · Oct 2026", "Exported the balance sheet (PDF, watermarked)"],
+  [2 * D + 3 * H, "ACV-0004", "Tasks", "edit", "task", "TSK-0125", "Changed deadline", [{ field: "Deadline", from: "12 Nov 2026", to: "14 Nov 2026" }], "Extension approved"],
+  [3 * D, "ACV-0003", "Ledger", "approve", "period", "2026-10", "Approved the October 2026 month close"],
+  [3 * D + H, "ACV-0010", "Ledger", "close", "period", "2026-10", "Ran the October 2026 month close and sent it to the Director"],
+  [3 * D + 2 * H, "ACV-0010", "Ledger", "post", "journal_entry", "JE-2026-0301", "Posted October revaluation: USD gain PKR 14,220 (approved by the Director)"],
+  [4 * D, "ACV-0003", "Settings", "edit", "settings", "approval-limits", "Changed approval limits", [{ field: "CEO / Founder / Owner notified above", from: "PKR 1,000,000", to: "PKR 500,000" }], "The Director approves every entry; the CEO / Founder / Owner sees the large ones"],
   [5 * D, "ACV-0004", "Integrations", "edit", "connection", "apollo", "Changed the Apollo API key", [{ field: "API key", from: "••••a91c", to: "••••4f2e" }], "Quarterly key rotation"],
-  [6 * D, "ACV-0005", "People", "edit", "employee", "ACV-0009", "Updated emergency contact", [{ field: "Emergency phone", from: "+92 300 2003571", to: "+92 301 7741200" }]],
-  [7 * D, "ACV-0006", "Performance", "approve", "scorecard", "SC-2026-10-ACV-0007", "Released the October scorecard for ACV-0007"],
-  [8 * D, "ACV-0010", "Ledger", "reverse", "journal_entry", "JE-2026-0298", "Reversed JE-2026-0298 (posted to the wrong expense account)"],
-  [9 * D, "ACV-0010", "Payroll", "export", "bank_sheet", "PR-2026-10", "Exported the October bank transfer sheet (Excel)"],
-  [9 * D + H, "ACV-0002", "Payroll", "approve", "payroll_run", "PR-2026-10", "Approved October payroll"],
+  [6 * D, "ACV-0003", "People", "edit", "person", "ACV-0009", "Updated emergency contact", [{ field: "Emergency phone", from: "+92 300 2003571", to: "+92 301 7741200" }]],
+  [7 * D, "ACV-0004", "Performance", "approve", "scorecard", "SC-2026-10-ACV-0007", "Released the October scorecard for ACV-0007"],
+  [8 * D, "ACV-0010", "Ledger", "reverse", "journal_entry", "JE-2026-0298", "Reversed JE-2026-0298 (posted to the wrong expense account); reversal approved by the Director"],
+  [9 * D, "ACV-0003", "Payroll", "export", "bank_sheet", "PR-2026-10", "Exported the October bank transfer sheet (Excel)"],
+  [9 * D + H, "ACV-0003", "Payroll", "approve", "payroll_run", "PR-2026-10", "Approved October payroll prepared by ACV-0010"],
+  [9 * D + 3 * H, "ACV-0010", "Payroll", "create", "payroll_run", "PR-2026-10", "Prepared October payroll (12 people) and sent it to the Director"],
   [10 * D, "ACV-0003", "Settings", "edit", "settings", "score-weights", "Saved new standard score weights", [{ field: "Quality", from: "40%", to: "35%" }, { field: "On-time", from: "20%", to: "25%" }], "Deadlines matter more after go-live"],
-  [12 * D, "ACV-0002", "Access", "edit", "reporting_line", "ACV-0013", "Moved ACV-0013 under ACV-0006", [{ field: "Reports to", from: "ACV-0004", to: "ACV-0006" }], "Joined the engineering team"],
-  [14 * D, "ACV-0003", "People", "edit", "employee", "ACV-0010", "Added Finance duty to ACV-0010", [{ field: "Duties", from: "—", to: "Finance duty" }], "Written assignment dated 1 Oct, review in 3 months"],
-  [18 * D, "ACV-0005", "People", "create", "employee", "ACV-0013", "Onboarded Nida Aslam (intern)"],
+  [12 * D, "ACV-0003", "Access", "edit", "reporting_line", "ACV-0013", "Moved ACV-0013 under ACV-0004", [{ field: "Reports to", from: "ACV-0003", to: "ACV-0004" }], "Joined the engineering team"],
+  [18 * D, "ACV-0003", "People", "create", "person", "ACV-0013", "Onboarded Nida Aslam (intern)"],
   [20 * D, "ACV-0004", "Access", "lock", "account", "ACV-0012", "Locked account after repeated finance access attempts"],
-  [21 * D, "ACV-0004", "Access", "unlock", "account", "ACV-0012", "Unlocked account after review"],
-  [25 * D, "ACV-0001", "Settings", "edit", "settings", "security", "Changed session rules", [{ field: "Finance idle timeout", from: "15 min", to: "10 min" }], "Plan §6"],
-  [30 * D, "ACV-0002", "Ledger", "close", "period", "2026-09", "Approved the September 2026 month close"],
+  [21 * D, "ACV-0003", "Access", "unlock", "account", "ACV-0012", "Unlocked account after review"],
+  [25 * D, "ACV-0003", "Settings", "edit", "settings", "security", "Changed session rules", [{ field: "Finance idle timeout", from: "15 min", to: "10 min" }], "Plan §6"],
+  [30 * D, "ACV-0003", "Ledger", "approve", "period", "2026-09", "Approved the September 2026 month close"],
+  [30 * D + 2 * H, "ACV-0010", "Ledger", "close", "period", "2026-09", "Ran the September 2026 month close and sent it to the Director"],
 ];
 
 let built: AuditRecord[] | null = null;
@@ -99,17 +108,21 @@ const SETTINGS: Record<SettingsSectionKey, SettingsValues> = {
   },
   "task-sizes": { sizes: SIZE_RULES.map((r) => ({ size: r.size, meaning: r.meaning, hours: r.hours, points: r.points, days: r.days })) },
   "score-weights": {},
-  "approval-limits": { directorUpTo: 50_000, ceoUpTo: 500_000, capitalAndLoansToOwner: true, escalateIfMaker: true },
+  /*
+   * The Director approves every entry, any amount (no CEO tier). Entries above PKR 500,000 and every capital or
+   * loan entry are flagged "CEO / Founder / Owner notified" (view only). An entry the Director made is blocked (plan §13).
+   */
+  "approval-limits": { ceoNotifiedAbove: 500_000, capitalAndLoansNotifyCeo: true, blockIfDirectorMade: true },
   currencies: {
     base: "PKR",
     secondary: "USD",
     revalueAtMonthEnd: true,
     rates: [
-      { date: daysFromNow(-1).slice(0, 10), rate: 281.35, by: "ACV-0010" },
-      { date: daysFromNow(-8).slice(0, 10), rate: 281.1, by: "ACV-0010" },
-      { date: daysFromNow(-15).slice(0, 10), rate: 280.85, by: "ACV-0010" },
-      { date: daysFromNow(-22).slice(0, 10), rate: 280.6, by: "ACV-0010" },
-      { date: daysFromNow(-29).slice(0, 10), rate: 280.45, by: "ACV-0010" },
+      { date: daysFromNow(-1).slice(0, 10), rate: 281.35, by: "ACV-0003" },
+      { date: daysFromNow(-8).slice(0, 10), rate: 281.1, by: "ACV-0003" },
+      { date: daysFromNow(-15).slice(0, 10), rate: 280.85, by: "ACV-0003" },
+      { date: daysFromNow(-22).slice(0, 10), rate: 280.6, by: "ACV-0003" },
+      { date: daysFromNow(-29).slice(0, 10), rate: 280.45, by: "ACV-0003" },
     ],
   },
   "finance-year": { startMonth: "07", startDay: "01", currentLabel: "FY 2026–27 (1 July 2026 to 30 June 2027)", reportingFramework: "IFRS for SMEs (accountant to confirm)" },
@@ -163,7 +176,8 @@ export function seedSettings(): SettingsRecord[] {
     section,
     values: structuredClone(SETTINGS[section]),
     updatedAt: minutesAgo(D * (5 + i * 3)),
-    updatedBy: i % 3 === 0 ? "ACV-0001" : "ACV-0003",
+    // The Director changes every section (★ sections with step-up); the CEO / Founder / Owner only views.
+    updatedBy: "ACV-0003",
   }));
 }
 

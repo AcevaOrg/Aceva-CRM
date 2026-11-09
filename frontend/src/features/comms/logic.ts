@@ -20,7 +20,7 @@ export function checkFile(name: string, size: number): string | null {
 export const QUICK_REACTIONS = ["👍", "🎉", "✅", "👀", "🙏", "😂"];
 
 /** Messages older than this are deleted by policy (placeholder until management decides, spec §14). */
-export const RETENTION_TEXT = "Messages and files are kept for 2 years (placeholder until management confirms the retention period).";
+export const RETENTION_TEXT = "Messages and files are kept for 2 years (placeholder until the Director confirms the retention period).";
 
 export function dayLabel(iso: string) {
   const d = new Date(iso);
@@ -56,9 +56,25 @@ export function splitMentions(body: string) {
   return body.split(/(@[A-Za-z]+)/g).filter(Boolean);
 }
 
-/** Who can create channels: admins and leads (levels 1–4). */
-export function canCreateChannel(e: Pick<Employee, "level">, isAdmin: boolean) {
-  return isAdmin || e.level <= 4;
+/**
+ * People who manage others day to day: the Director and the CTO.
+ * The CEO / Founder / Owner oversees everything but manages nothing; Sales, Finance and Engineering don't manage.
+ */
+export function managesPeople(e: Pick<Employee, "role">) {
+  return e.role === "director" || e.role === "cto";
+}
+
+/**
+ * Who can create channels, and pin in any channel: comms admins (comms.admin) and managers (Director, CTO).
+ * The CEO / Founder / Owner reads and posts in the channels he belongs to, but doesn't create or moderate them.
+ */
+export function canCreateChannel(e: Pick<Employee, "role">, isAdmin: boolean) {
+  return isAdmin || managesPeople(e);
+}
+
+/** Who sees every announcement, including team-only ones: the CEO / Founder / Owner (oversight) and the Director. */
+export function seesAllAnnouncements(e: Pick<Employee, "role">) {
+  return e.role === "ceo" || e.role === "director";
 }
 
 /** Meetings not cancelled and not yet finished, soonest first. */

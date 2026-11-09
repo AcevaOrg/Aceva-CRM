@@ -238,6 +238,9 @@ export function LeaveTypesSection() {
                 </tbody>
               </table>
             </div>
+            <p className="text-[12px] text-muted-foreground">
+              Who approves: Engineering → the CTO, then the Director. The CTO, Sales and Finance → the Director. The Director&apos;s own leave → the CEO / Founder / Owner. Nobody approves their own leave.
+            </p>
             <p className="text-[12px] text-muted-foreground">Unpaid leave days are passed to payroll at month end and deducted as base ÷ working days × unpaid days.</p>
             {can && (
               <Button variant="outline" className="w-fit" onClick={() => set({ types: [...d.types, { name: "New leave type", days: 0, paid: true }] })}>
@@ -323,7 +326,7 @@ const SALES: { key: string; label: string; hint: string }[] = [
   { key: "attendance", label: "Attendance (A)", hint: "Same as standard" },
 ];
 
-function WeightsEditor({ kind, title, fields, current, canEdit }: { kind: WeightsVersion["kind"]; title: string; fields: typeof STANDARD; current?: WeightsVersion; canEdit: boolean }) {
+function WeightsEditor({ kind, title, usedFor, fields, current, canEdit }: { kind: WeightsVersion["kind"]; title: string; usedFor: string; fields: typeof STANDARD; current?: WeightsVersion; canEdit: boolean }) {
   // Parent keys this component by version id, so the draft resets when a new version is saved.
   const [draft, setDraft] = React.useState<Record<string, number>>(() => current?.weights ?? {});
   const save = useSaveWeights();
@@ -341,7 +344,9 @@ function WeightsEditor({ kind, title, fields, current, canEdit }: { kind: Weight
       <CardHeader>
         <div>
           <CardTitle>{title}</CardTitle>
-          <CardDescription>{current ? `In use since ${formatDate(current.effectiveFrom)}.` : "No version yet."}</CardDescription>
+          <CardDescription>
+            {usedFor} {current ? `In use since ${formatDate(current.effectiveFrom)}.` : "No version yet."}
+          </CardDescription>
         </div>
         <Badge tone={total === 100 ? "success" : "danger"}>Total {total}%</Badge>
       </CardHeader>
@@ -393,9 +398,12 @@ export function ScoreWeightsSection() {
   return (
     <div className="grid gap-5">
       <div className="grid gap-5 2xl:grid-cols-2">
-        <WeightsEditor key={latest("standard")?.id ?? "standard"} kind="standard" title="Standard scorecard" fields={STANDARD} current={latest("standard")} canEdit={canEdit} />
-        <WeightsEditor key={latest("sales")?.id ?? "sales"} kind="sales" title="Sales scorecard" fields={SALES} current={latest("sales")} canEdit={canEdit} />
+        <WeightsEditor key={latest("standard")?.id ?? "standard"} kind="standard" title="Standard scorecard" usedFor="Engineering and development, Finance and Management." fields={STANDARD} current={latest("standard")} canEdit={canEdit} />
+        <WeightsEditor key={latest("sales")?.id ?? "sales"} kind="sales" title="Sales scorecard" usedFor="The Sales department." fields={SALES} current={latest("sales")} canEdit={canEdit} />
       </div>
+      <p className="text-[12px] text-muted-foreground">
+        Each scorecard is reviewed and released by the person&apos;s manager: the CTO for Engineering; the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is shown to the CEO / Founder / Owner to view. Only the Director changes weights.
+      </p>
       <section>
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Version history</h3>
         <ul className="grid gap-2">

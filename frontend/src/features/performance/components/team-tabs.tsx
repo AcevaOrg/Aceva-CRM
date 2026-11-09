@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, ClipboardCheck, ExternalLink, Gavel, Info, Scale, Users } from "lucide-react";
+import { Check, ClipboardCheck, ExternalLink, Eye, Gavel, Info, Scale, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,15 +28,23 @@ import { BandBadge, SCORECARD_STATUS, Sparkline } from "./parts";
 import { DecideDisputeDialog, ReviewTaskDialog } from "./perf-dialogs";
 
 export function TeamPerformance() {
+  const viewer = useViewer();
   const q = useTeamPerformance();
   const lookup = useLookup();
   const router = useRouter();
+  const canRelease = !!viewer?.can("task.review");
   return (
     <div className="grid gap-3">
       <p className="flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-[12.5px] text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" />
-        Side by side, sorted by name. There is no ranking. Sales staff are scored with the sales weights, so compare them with each other, not with task-based scores.
+        Side by side, sorted by name. There is no ranking. You see the people below you in the reporting line. Sales staff are scored with the sales weights, so compare them with each other, not with task-based scores.
       </p>
+      {!canRelease && (
+        <p className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
+          <Eye className="mt-0.5 size-4 shrink-0" />
+          View only. Each person&apos;s manager releases their scorecard: the CTO for Engineering, the Director for the CTO, Sales and Finance. The Director&apos;s own scorecard is released automatically.
+        </p>
+      )}
       <DataTable
         rows={q.data}
         loading={q.isPending}
@@ -169,9 +177,14 @@ export function DisputesPanel() {
   const q = useDisputes();
   const [deciding, setDeciding] = React.useState<RatingDispute | null>(null);
   const me = viewer?.employee.empId;
+  // The CEO / Founder / Owner sees every dispute but decides none.
+  const canDecide = !!viewer?.can("task.review");
   return (
     <section className="grid gap-3">
-      <SectionTitle title="Rating disputes" description="If someone disagrees with a task rating, the level above the reviewer decides." />
+      <SectionTitle
+        title="Rating disputes"
+        description="If someone disagrees with a task rating, the level above the reviewer decides: the Director for ratings the CTO gave. The Director looks again at ratings the Director gave."
+      />
       <QueryState query={q} isEmpty={(d) => d.length === 0} empty={<EmptyState compact icon={<Scale />} title="No disputes" description="Disputes you raise or need to decide appear here." />}>
         {(list) => (
           <div className="grid gap-3">
@@ -212,7 +225,7 @@ export function DisputesPanel() {
                     <Button asChild size="sm" variant="ghost">
                       <Link href={`/performance/scorecards/${d.scorecardId}`}>Scorecard</Link>
                     </Button>
-                    {d.status === "open" && d.deciderEmpId === me && (
+                    {d.status === "open" && d.deciderEmpId === me && canDecide && (
                       <Button size="sm" onClick={() => setDeciding(d)}>
                         <Gavel /> Decide
                       </Button>

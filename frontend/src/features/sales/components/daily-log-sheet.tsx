@@ -46,7 +46,7 @@ function LogForm({ existing, onDone }: { existing?: ManualDailyLog; onDone: () =
           <div className="flex gap-2.5 rounded-lg border border-info/30 bg-info/10 px-3 py-2.5 text-[12.5px]">
             <Info className="mt-0.5 size-4 shrink-0 text-info" />
             <p>
-              These counts are marked <span className="font-semibold">self-reported</span>. They count toward Activity only, and the sales manager can ask for proof,
+              These counts are marked <span className="font-semibold">self-reported</span>. They count toward Activity only, and the Director can ask for proof,
               such as a screenshot, for any day.
             </p>
           </div>

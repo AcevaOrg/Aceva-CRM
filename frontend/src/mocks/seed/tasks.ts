@@ -25,37 +25,37 @@ type Row = [
 ];
 
 const ROWS: Row[] = [
-  ["Build leave balance widget for the home screen", "ACV-0007", "ACV-0006", "M", "in_progress", -1, 2, "high", "prj-ads"],
-  ["API contract for payroll lines", "ACV-0007", "ACV-0006", "S", "assigned", 0, 1, "urgent", "prj-ads"],
-  ["Fix typo on the login screen", "ACV-0007", "ACV-0006", "XS", "submitted", -1, 0, "low", "prj-ads", { submittedAt: minutesAgo(90) }],
-  ["Org chart tree component", "ACV-0007", "ACV-0006", "L", "approved", -9, -2, "medium", "prj-ads", { rating: 5, reviewComment: "Clean and fast. Great keyboard support." }],
-  ["Unit tests for working-day calculator", "ACV-0007", "ACV-0006", "S", "rework", -3, -1, "medium", "prj-ads", { reviewComment: "Holidays crossing a weekend are not covered." }],
-  ["Checkout flow for Harbor & Co", "ACV-0008", "ACV-0006", "L", "in_progress", -4, 3, "high", "prj-harbor"],
-  ["Product listing filters", "ACV-0008", "ACV-0006", "M", "in_progress", -2, 1, "medium", "prj-harbor"],
-  ["Payment gateway sandbox test", "ACV-0008", "ACV-0006", "M", "assigned", 0, 3, "high", "prj-harbor"],
-  ["Database index review", "ACV-0008", "ACV-0006", "S", "submitted", -2, 0, "medium", "prj-ads", { submittedAt: minutesAgo(200) }],
-  ["Course progress API for Bright Path", "ACV-0008", "ACV-0006", "M", "in_progress", -6, -1, "high", "prj-brightpath"],
-  ["Shipping rules engine", "ACV-0008", "ACV-0006", "M", "assigned", 1, 5, "medium", "prj-harbor"],
-  ["Payslip PDF layout", "ACV-0011", "ACV-0006", "M", "in_progress", -3, 1, "high", "prj-ads", { extensionsCount: 1 }],
-  ["Strata icon set for the sidebar", "ACV-0011", "ACV-0006", "S", "submitted", -1, 1, "low", "prj-ads", { submittedAt: minutesAgo(45) }],
-  ["Northwind homepage hero", "ACV-0011", "ACV-0006", "M", "approved", -10, -6, "medium", "prj-northwind", { rating: 4 }],
-  ["Empty-state illustrations", "ACV-0011", "ACV-0006", "S", "under_review", -2, 0, "low", "prj-ads", { submittedAt: minutesAgo(300) }],
-  ["Check-in card UI", "ACV-0013", "ACV-0006", "S", "in_progress", -1, 1, "medium", "prj-ads"],
-  ["Write README for the tasks module", "ACV-0013", "ACV-0006", "XS", "assigned", 0, 0, "low", "prj-ads"],
-  ["Learn the API contract process", "ACV-0013", "ACV-0006", "S", "approved", -6, -4, "low", "prj-ads", { rating: 4 }],
-  ["Bright Path quiz builder", "ACV-0013", "ACV-0006", "M", "on_hold", -5, 2, "medium", "prj-brightpath"],
-  ["Sprint plan for cycle 3", "ACV-0006", "ACV-0004", "S", "in_progress", -1, 1, "high", "prj-ads"],
+  ["Build leave balance widget for the home screen", "ACV-0007", "ACV-0004", "M", "in_progress", -1, 2, "high", "prj-ads"],
+  ["API contract for payroll lines", "ACV-0007", "ACV-0004", "S", "assigned", 0, 1, "urgent", "prj-ads"],
+  ["Fix typo on the login screen", "ACV-0007", "ACV-0004", "XS", "submitted", -1, 0, "low", "prj-ads", { submittedAt: minutesAgo(90) }],
+  ["Org chart tree component", "ACV-0007", "ACV-0004", "L", "approved", -9, -2, "medium", "prj-ads", { rating: 5, reviewComment: "Clean and fast. Great keyboard support." }],
+  ["Unit tests for working-day calculator", "ACV-0007", "ACV-0004", "S", "rework", -3, -1, "medium", "prj-ads", { reviewComment: "Holidays crossing a weekend are not covered." }],
+  ["Checkout flow for Harbor & Co", "ACV-0008", "ACV-0004", "L", "in_progress", -4, 3, "high", "prj-harbor"],
+  ["Product listing filters", "ACV-0008", "ACV-0004", "M", "in_progress", -2, 1, "medium", "prj-harbor"],
+  ["Payment gateway sandbox test", "ACV-0008", "ACV-0004", "M", "assigned", 0, 3, "high", "prj-harbor"],
+  ["Database index review", "ACV-0008", "ACV-0004", "S", "submitted", -2, 0, "medium", "prj-ads", { submittedAt: minutesAgo(200) }],
+  ["Course progress API for Bright Path", "ACV-0008", "ACV-0004", "M", "in_progress", -6, -1, "high", "prj-brightpath"],
+  ["Shipping rules engine", "ACV-0008", "ACV-0004", "M", "assigned", 1, 5, "medium", "prj-harbor"],
+  ["Payslip PDF layout", "ACV-0011", "ACV-0004", "M", "in_progress", -3, 1, "high", "prj-ads", { extensionsCount: 1 }],
+  ["Strata icon set for the sidebar", "ACV-0011", "ACV-0004", "S", "submitted", -1, 1, "low", "prj-ads", { submittedAt: minutesAgo(45) }],
+  ["Northwind homepage hero", "ACV-0011", "ACV-0004", "M", "approved", -10, -6, "medium", "prj-northwind", { rating: 4 }],
+  ["Empty-state illustrations", "ACV-0011", "ACV-0004", "S", "under_review", -2, 0, "low", "prj-ads", { submittedAt: minutesAgo(300) }],
+  ["Check-in card UI", "ACV-0013", "ACV-0004", "S", "in_progress", -1, 1, "medium", "prj-ads"],
+  ["Write README for the tasks module", "ACV-0013", "ACV-0004", "XS", "assigned", 0, 0, "low", "prj-ads"],
+  ["Learn the API contract process", "ACV-0013", "ACV-0004", "S", "approved", -6, -4, "low", "prj-ads", { rating: 4 }],
+  ["Bright Path quiz builder", "ACV-0013", "ACV-0004", "M", "on_hold", -5, 2, "medium", "prj-brightpath"],
+  ["Sprint plan for cycle 3", "ACV-0004", "ACV-0003", "S", "in_progress", -1, 1, "high", "prj-ads"],
   ["Review deployment checklist", "ACV-0006", "ACV-0004", "M", "assigned", 0, 3, "medium", "prj-ops"],
-  ["Team code-review rota", "ACV-0006", "ACV-0004", "XS", "approved", -4, -3, "low", "prj-ops", { rating: 5 }],
-  ["Prepare go-live employee list", "ACV-0005", "ACV-0003", "M", "in_progress", -2, 2, "high", "prj-ops"],
-  ["Tracking policy wording", "ACV-0005", "ACV-0003", "S", "submitted", -2, 0, "high", "prj-ops", { submittedAt: minutesAgo(150) }],
+  ["Team code-review rota", "ACV-0004", "ACV-0003", "XS", "approved", -4, -3, "low", "prj-ops", { rating: 5 }],
+  ["Prepare go-live employee list", "ACV-0010", "ACV-0003", "M", "in_progress", -2, 2, "high", "prj-ops"],
+  ["Tracking policy wording", "ACV-0004", "ACV-0003", "S", "submitted", -2, 0, "high", "prj-ops", { submittedAt: minutesAgo(150) }],
   ["Opening balances import file", "ACV-0010", "ACV-0003", "L", "in_progress", -3, 4, "urgent", "prj-ops"],
   ["Bank reconciliation for October", "ACV-0010", "ACV-0003", "M", "approved", -8, -5, "high", "prj-ops", { rating: 4 }],
   ["Vendor list clean-up", "ACV-0010", "ACV-0003", "S", "assigned", 0, 1, "medium", "prj-ops"],
-  ["Proposal deck for Harbor & Co", "ACV-0009", "ACV-0014", "M", "in_progress", -1, 2, "high", "prj-harbor"],
-  ["Clean up duplicate leads from Fiverr", "ACV-0012", "ACV-0014", "S", "assigned", 0, 1, "medium"],
+  ["Proposal deck for Harbor & Co", "ACV-0009", "ACV-0003", "M", "in_progress", -1, 2, "high", "prj-harbor"],
+  ["Clean up duplicate leads from Fiverr", "ACV-0012", "ACV-0003", "S", "assigned", 0, 1, "medium"],
   ["Weekly sales report", "ACV-0014", "ACV-0003", "S", "assigned", 0, 1, "medium", "prj-ops", { repeat: { every: "week", on: 1 } }],
-  ["Cancel: old CRM export", "ACV-0012", "ACV-0014", "XS", "cancelled", -5, -4, "low"],
+  ["Cancel: old CRM export", "ACV-0012", "ACV-0003", "XS", "cancelled", -5, -4, "low"],
 ];
 
 const DESCRIPTIONS = [
@@ -112,9 +112,9 @@ export function seedPersonalTodos(): Task[] {
 
 export function seedComments(): TaskComment[] {
   return [
-    { id: "cm1", taskId: "tsk_1", author: "ACV-0006", body: "Use the ProgressRing from shared for each leave type. @Mariam ping me if the balances API isn't ready.", mentions: ["ACV-0007"], attachments: [], at: minutesAgo(400) },
+    { id: "cm1", taskId: "tsk_1", author: "ACV-0004", body: "Use the ProgressRing from shared for each leave type. @Mariam ping me if the balances API isn't ready.", mentions: ["ACV-0007"], attachments: [], at: minutesAgo(400) },
     { id: "cm2", taskId: "tsk_1", author: "ACV-0007", body: "Will do. Using mock data for now; switching once M7 lands.", mentions: [], attachments: [], at: minutesAgo(380) },
-    { id: "cm3", taskId: "tsk_5", author: "ACV-0006", body: "Sent back: holidays that fall next to a weekend aren't covered by the tests.", mentions: [], attachments: [], at: minutesAgo(1500) },
+    { id: "cm3", taskId: "tsk_5", author: "ACV-0004", body: "Sent back: holidays that fall next to a weekend aren't covered by the tests.", mentions: [], attachments: [], at: minutesAgo(1500) },
     { id: "cm4", taskId: "tsk_12", author: "ACV-0011", body: "Asked for 2 more days: the accountant changed the payslip layout.", mentions: [], attachments: [], at: minutesAgo(130) },
   ];
 }
@@ -122,7 +122,7 @@ export function seedComments(): TaskComment[] {
 export function seedExtensions(): ExtensionRequest[] {
   return [
     { id: "ext1", taskId: "tsk_12", requestedBy: "ACV-0011", currentDeadline: workdaysFromNow(1, "18:00"), requestedDeadline: workdaysFromNow(3, "18:00"), reason: "The accountant changed the payslip layout on Friday.", status: "pending", late: false, at: minutesAgo(130) },
-    { id: "ext2", taskId: "tsk_6", requestedBy: "ACV-0008", currentDeadline: workdaysFromNow(1, "18:00"), requestedDeadline: workdaysFromNow(3, "18:00"), reason: "Waiting for payment gateway sandbox keys.", status: "approved", late: false, decidedBy: "ACV-0006", decidedAt: minutesAgo(3000), at: minutesAgo(3200) },
+    { id: "ext2", taskId: "tsk_6", requestedBy: "ACV-0008", currentDeadline: workdaysFromNow(1, "18:00"), requestedDeadline: workdaysFromNow(3, "18:00"), reason: "Waiting for payment gateway sandbox keys.", status: "approved", late: false, decidedBy: "ACV-0004", decidedAt: minutesAgo(3000), at: minutesAgo(3200) },
   ];
 }
 

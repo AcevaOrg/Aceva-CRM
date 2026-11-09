@@ -1,9 +1,13 @@
 /**
  * Module 16 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
  * Keys never come back to the browser: only the last 4 characters (plan §21).
+ * Access: the CTO and the Director manage connections (integrations.manage): keys, tests, syncs, pauses and user
+ * links. The CEO / Founder / Owner views everything (integrations.view) and changes nothing. Sales, Finance and
+ * Engineering have no access. Tool users link only to people in Sales.
  */
 import { ApiError, forbidden, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
+import { findEmployee } from "@/lib/directory";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedConnections, seedMailboxes, seedSyncRuns, seedToolUsers, seedUnmatched } from "@/mocks/seed/integrations";
@@ -17,7 +21,7 @@ const mailboxes = () => table<MailboxStat>("integrations.mailboxes", seedMailbox
 const unmatched = () => table<UnmatchedItem>("integrations.unmatched", seedUnmatched);
 
 function requireManage() {
-  if (!getViewer().can("integrations.manage")) forbidden("Only the CTO or the Director can change sales tool connections.");
+  if (!getViewer().can("integrations.manage")) forbidden("View only. The CTO and the Director manage sales tool connections.");
 }
 function requireView() {
   if (!getViewer().can("integrations.view")) notFound("Integration");
@@ -91,7 +95,7 @@ export const integrationsApi = {
   /** POST /integrations/:tool/test */
   test: (tool: ToolId) =>
     mock<TestResult>(() => {
-      requireView();
+      requireManage();
       const c = conn(tool);
       if (!c.keyLast4) return { ok: false, canRead: [], error: "No key saved yet." };
       if (c.keyLast4.toLowerCase().includes("bad")) return { ok: false, canRead: [], error: "The tool rejected the key (401 Unauthorized)." };
@@ -105,7 +109,7 @@ export const integrationsApi = {
     }, { delay: 900 }),
 
   /** GET /integrations/:tool/users */
-  users: (tool: ToolId) => mock(() => users().filter((u) => u.tool === tool)),
+  users: (tool: ToolId) => mock(() => { requireView(); return users().filter((u) => u.tool === tool); }),
 
   /** PUT /integrations/:tool/users/:externalUserId { empId } */
   linkUser: (tool: ToolId, externalUserId: string, empId: string | null) =>
@@ -113,6 +117,12 @@ export const integrationsApi = {
       requireManage();
       const u = users().find((x) => x.tool === tool && x.externalUserId === externalUserId);
       if (!u) notFound("Tool user");
+      if (empId) {
+        // Sales tool accounts only count work for people in Sales (L4), never managers or engineers.
+        const e = findEmployee(empId);
+        if (!e || e.status === "left") throw new ApiError("validation", "That Emp-ID doesn't exist.");
+        if (e.role !== "sales") throw new ApiError("validation", "Tool users can only be linked to people in Sales.");
+      }
       u.empId = empId ?? undefined;
       if (empId) {
         const list = unmatched();
@@ -140,7 +150,7 @@ export const integrationsApi = {
   /** POST /integrations/:tool/sync-now */
   syncNow: (tool: ToolId) =>
     mock(() => {
-      requireView();
+      requireManage();
       const c = conn(tool);
       if (c.status === "not_connected" || !c.keyLast4) throw new ApiError("validation", `${TOOL_META[tool].name} isn't connected.`);
       const items = tool === "apollo" ? 6 + Math.round(Math.random() * 12) : tool === "mailboxes" ? 1 + Math.round(Math.random() * 4) : Math.round(Math.random() * 20);

@@ -39,6 +39,11 @@ export function LeaveCalendar() {
                 <span className="size-2.5 rounded-full" style={{ background: t.color }} /> {t.name}
               </li>
             ))}
+            {entries.some((e) => !e.leaveTypeId) && (
+              <li className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-full bg-muted-foreground" /> Away (your team)
+              </li>
+            )}
           </ul>
         </CardHeader>
         <CardContent>

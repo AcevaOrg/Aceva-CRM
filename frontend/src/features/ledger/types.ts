@@ -6,7 +6,7 @@
  * Money amounts are decimal STRINGS with 2 decimals. PKR is the base currency;
  * USD entries keep the exchange rate used on the entry (plan §13).
  */
-import type { ApprovalStep, Attachment, Currency, Level, Money } from "@/types";
+import type { ApprovalStep, Attachment, Currency, Money, RoleKey } from "@/types";
 
 export type AccountGroup = "asset" | "liability" | "equity" | "income" | "expense";
 
@@ -77,7 +77,7 @@ export interface JournalLine {
 export interface EntryEvent {
   at: string;
   by: string;
-  action: "created" | "edited" | "submitted" | "approved" | "rejected" | "posted" | "reversed" | "routed_up";
+  action: "created" | "edited" | "submitted" | "approved" | "rejected" | "posted" | "reversed" | "ceo_notified" | "blocked";
   note?: string;
 }
 
@@ -97,9 +97,12 @@ export interface JournalEntry {
   /** Total debits in PKR (drives the approval level). */
   baseTotal: Money;
   status: EntryStatus;
-  requiredApproverLevel: Level;
-  /** Who must approve now (after maker-checker routing). */
+  /** Who approves: always the Director, any amount (maker-checker). */
   approverEmpId?: string;
+  /** Above PKR 500,000, or a share-capital or loan entry: the CEO / Founder / Owner is notified (view only). */
+  ceoNotified?: boolean;
+  /** The Director made it, so nobody else may approve it and it can't be posted. */
+  blocked?: boolean;
   createdBy: string;
   createdAt: string;
   postedAt?: string;
@@ -211,7 +214,8 @@ export interface FinanceProject {
 }
 
 export interface ApprovalLimit {
-  level: Level;
+  /** The role that approves journal entries (only the Director). */
+  role: RoleKey;
   label: string;
   upTo: number | null;
 }

@@ -17,6 +17,7 @@ export function SectionCard({
   editLabel = "Edit",
   children,
   actions,
+  viewOnly,
 }: {
   title: string;
   seal?: Confidentiality;
@@ -27,6 +28,8 @@ export function SectionCard({
   editLabel?: string;
   children: React.ReactNode;
   actions?: React.ReactNode;
+  /** Short note shown when the viewer can't edit, such as "View only. The Director edits." */
+  viewOnly?: string;
 }) {
   return (
     <Card>
@@ -41,6 +44,7 @@ export function SectionCard({
         </div>
         <div className="flex items-center gap-2">
           {actions}
+          {!canEdit && viewOnly && <span className="text-[12px] text-muted-foreground">{viewOnly}</span>}
           {canEdit && !editing && (
             <Button size="sm" variant="outline" onClick={onEdit}>
               <Pencil /> {editLabel}

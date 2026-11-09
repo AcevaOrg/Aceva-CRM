@@ -11,6 +11,8 @@ import { EmpChip } from "@/components/shared/emp-chip";
 import { EmployeeSelect } from "@/components/shared/pickers";
 import { EmptyState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { descendantsOf } from "@/lib/auth/scope";
+import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, isoDay } from "@/lib/dates";
 import { useActivityEvents, useLogExport } from "../hooks";
 import type { ActivityAction, ActivityEvent, ActivityQuery, ActivitySource } from "../types";
@@ -21,6 +23,9 @@ const MODULES = ["Login", "Tasks", "Ledger", "Banking", "Payroll", "Statements",
 /** Activity search with export (plan §8). The export itself is logged. */
 export function SearchPanel() {
   const lookup = useLookup();
+  const viewer = useViewer();
+  // Only people the viewer may see: themselves and everyone below them in their reporting line.
+  const inScope = new Set(viewer ? [viewer.employee.empId, ...descendantsOf(viewer.employee.empId, lookup.employees)] : []);
   const weekAgo = new Date();
   weekAgo.setDate(weekAgo.getDate() - 7);
   const [q, setQ] = React.useState<ActivityQuery>({ from: isoDay(weekAgo), to: isoDay(new Date()) });
@@ -34,7 +39,7 @@ export function SearchPanel() {
     <div className="grid gap-4">
       <div className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-strata sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Person" htmlFor="s-emp">
-          <EmployeeSelect id="s-emp" value={q.empId ?? ""} onChange={(v) => set({ empId: v || undefined })} placeholder="Anyone" />
+          <EmployeeSelect id="s-emp" value={q.empId ?? ""} onChange={(v) => set({ empId: v || undefined })} filter={(e) => inScope.has(e.empId)} placeholder="Anyone in your reporting line" />
         </Field>
         <Field label="Department" htmlFor="s-dep">
           <NativeSelect id="s-dep" value={q.departmentId ?? ""} onChange={(e) => set({ departmentId: e.target.value || undefined })}>

@@ -20,6 +20,7 @@ import { ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useCorrection } from "@/features/ledger/hooks";
 import { GROUP_LABEL, GROUP_ORDER, STATUS_LABEL } from "@/features/ledger/logic";
 import type { AccountGroup, EntryStatus } from "@/features/ledger/types";
+import { useCan } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey } from "@/lib/dates";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -66,6 +67,8 @@ function LedgerSheet() {
   const deleteView = useDeleteView();
   const updateDraft = useUpdateDraftLine();
   const correction = useCorrection();
+  // Only the finance person edits (drafts, or correcting drafts for posted rows). Everyone else views.
+  const canEdit = useCan("finance.entry_create");
   const apiRef = React.useRef<GridApi<LedgerRow> | null>(null);
   const [filters, setFilters] = React.useState<SheetFilters>(DEFAULT_FILTERS);
   const [quick, setQuick] = React.useState("");
@@ -125,12 +128,12 @@ function LedgerSheet() {
         },
       },
       { field: "account", headerName: "Account", width: 250 },
-      { field: "description", headerName: "Description", width: 260, editable: (p) => p.data?.status !== "pending_approval" },
+      { field: "description", headerName: "Description", width: 260, editable: (p) => canEdit && p.data?.status !== "pending_approval" },
       { field: "client", headerName: "Client or vendor", width: 170 },
       { field: "project", headerName: "Project", width: 190 },
       { field: "employee", headerName: "Employee", width: 140 },
-      { field: "debit", headerName: "Debit (PKR)", width: 150, type: "rightAligned", filter: "agNumberColumnFilter", valueFormatter: (p) => money(p.value), cellClass: "font-mono", editable: (p) => p.data?.status !== "pending_approval" },
-      { field: "credit", headerName: "Credit (PKR)", width: 150, type: "rightAligned", filter: "agNumberColumnFilter", valueFormatter: (p) => money(p.value), cellClass: "font-mono", editable: (p) => p.data?.status !== "pending_approval" },
+      { field: "debit", headerName: "Debit (PKR)", width: 150, type: "rightAligned", filter: "agNumberColumnFilter", valueFormatter: (p) => money(p.value), cellClass: "font-mono", editable: (p) => canEdit && p.data?.status !== "pending_approval" },
+      { field: "credit", headerName: "Credit (PKR)", width: 150, type: "rightAligned", filter: "agNumberColumnFilter", valueFormatter: (p) => money(p.value), cellClass: "font-mono", editable: (p) => canEdit && p.data?.status !== "pending_approval" },
       { field: "currency", headerName: "Currency", width: 104 },
       {
         field: "status",
@@ -141,7 +144,7 @@ function LedgerSheet() {
           p.data ? <span className={cn("rounded-full px-2 py-0.5 text-[11.5px] font-medium", STATUS_CLASS[p.data.status])}>{STATUS_LABEL[p.data.status]}</span> : null,
       },
     ],
-    [router],
+    [router, canEdit],
   );
 
   const recompute = React.useCallback(() => {
@@ -362,7 +365,8 @@ function LedgerSheet() {
         </div>
       )}
       <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Bookmark className="size-3.5" /> Double-click a cell to edit. Every edit, import and export is logged.
+        <Bookmark className="size-3.5" />{" "}
+        {canEdit ? "Double-click a cell to edit. Every edit, import and export is logged." : "View only. The finance person edits and imports entries; the Director approves them."}
       </p>
 
       {edit && (

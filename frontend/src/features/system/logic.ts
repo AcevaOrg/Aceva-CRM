@@ -1,6 +1,7 @@
 /**
  * Pure helpers for Module 12: audit hash chain, value diffs, settings catalogue, labels.
  */
+import type { Permission } from "@/lib/auth/permissions";
 import type { AuditAction, AuditChange, NotificationType, SettingsSectionKey, SettingsValues } from "./types";
 
 /* ---------------- Hash chain (plan §16) ---------------- */
@@ -48,8 +49,13 @@ export interface SectionMeta {
   label: string;
   group: "Company" | "Work and performance" | "Finance" | "Security and records" | "Sales";
   description: string;
-  /** ★ Owner or CEO only, with step-up confirmation. */
+  /** ★ Director only, with step-up confirmation (the CEO / Founder / Owner views it). */
   protected?: boolean;
+  /**
+   * Extra permission (any of) needed to see the section on top of settings.view. Finance and sales rules
+   * stay hidden from the CTO, who has no finance, payroll or sales access.
+   */
+  viewPermission?: Permission | Permission[];
 }
 
 export const SECTIONS: SectionMeta[] = [
@@ -59,20 +65,25 @@ export const SECTIONS: SectionMeta[] = [
   { key: "leave-types", label: "Leave types", group: "Company", description: "Leave types and their yearly balance." },
   { key: "task-sizes", label: "Task sizes and deadlines", group: "Work and performance", description: "Hours, points and suggested working days for each task size." },
   { key: "score-weights", label: "Score weights", group: "Work and performance", description: "How the monthly scorecard is weighted. Old scorecards keep the weights they were made with." },
-  { key: "approval-limits", label: "Approval limits", group: "Finance", description: "Who approves journal entries by amount.", protected: true },
-  { key: "currencies", label: "Currencies and exchange rates", group: "Finance", description: "PKR is the main currency. USD entries save the rate used." },
-  { key: "finance-year", label: "Finance year", group: "Finance", description: "When the finance year starts and ends." },
-  { key: "chart-of-accounts", label: "Chart of accounts", group: "Finance", description: "Accounts are managed in the ledger." },
-  { key: "tax-slabs", label: "Tax slabs", group: "Finance", description: "Yearly salary income tax slabs used by payroll." },
+  { key: "approval-limits", label: "Approval limits", group: "Finance", description: "The Director approves every journal entry, any amount. The CEO / Founder / Owner is notified of large entries and of every capital or loan entry.", protected: true, viewPermission: "finance.view" },
+  { key: "currencies", label: "Currencies and exchange rates", group: "Finance", description: "PKR is the main currency. USD entries save the rate used.", viewPermission: "finance.view" },
+  { key: "finance-year", label: "Finance year", group: "Finance", description: "When the finance year starts and ends.", viewPermission: "finance.view" },
+  { key: "chart-of-accounts", label: "Chart of accounts", group: "Finance", description: "Accounts are managed in the ledger.", viewPermission: "finance.view" },
+  { key: "tax-slabs", label: "Tax slabs", group: "Finance", description: "Yearly salary income tax slabs used by payroll.", viewPermission: ["payroll.view", "finance.view"] },
   { key: "security", label: "Password and session rules", group: "Security and records", description: "Password length, lockout, session timeouts and two-step login.", protected: true },
-  { key: "alert-rules", label: "Alert rules", group: "Security and records", description: "When the system alerts the Director and CTO." },
+  { key: "alert-rules", label: "Alert rules", group: "Security and records", description: "When the system alerts the CEO / Founder / Owner, the Director and the CTO." },
   { key: "retention", label: "Data retention", group: "Security and records", description: "How long records are kept before they are archived or removed." },
   { key: "backups", label: "Backups", group: "Security and records", description: "Nightly encrypted backups and monthly restore tests." },
-  { key: "sales", label: "Sales targets and rules", group: "Sales", description: "Default daily targets, deal stages, lost reasons and commission." },
-  { key: "sales-tools", label: "Sales tools", group: "Sales", description: "Apollo, MillionVerifier and outreach mailboxes are connected in Integrations." },
+  { key: "sales", label: "Sales targets and rules", group: "Sales", description: "Default daily targets, deal stages, lost reasons and commission. Set by the Director (sales manager).", viewPermission: "sales.targets" },
+  { key: "sales-tools", label: "Sales tools", group: "Sales", description: "Apollo, MillionVerifier and outreach mailboxes are connected in Integrations.", viewPermission: "integrations.view" },
 ];
 
 export const sectionMeta = (k: string) => SECTIONS.find((s) => s.key === k) ?? SECTIONS[0];
+
+/** Whether someone with these permissions may see a section (settings.view is checked separately). */
+export function canViewSection(meta: SectionMeta, can: (p: Permission | Permission[]) => boolean) {
+  return !meta.viewPermission || can(meta.viewPermission);
+}
 
 /* ---------------- Labels ---------------- */
 

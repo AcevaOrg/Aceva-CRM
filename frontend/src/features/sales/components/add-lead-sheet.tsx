@@ -121,7 +121,7 @@ export function AddLeadSheet({ open, onOpenChange }: { open: boolean; onOpenChan
                 <Input id="ld-li" placeholder="linkedin.com/in/…" {...register("linkedinUrl")} />
               </Field>
             </div>
-            <Field label="Notes" htmlFor="ld-notes" hint="Only you and the sales manager can read notes.">
+            <Field label="Notes" htmlFor="ld-notes" hint="Only you, the Director and the CEO can read notes.">
               <Textarea id="ld-notes" {...register("notes")} />
             </Field>
           </SheetBody>

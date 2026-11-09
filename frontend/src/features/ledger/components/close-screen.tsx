@@ -23,12 +23,13 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatMonthKey } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useAccounts, useApproveClose, usePeriods, usePostRevaluation, useRejectClose, useReopenMonth, useRevaluationPreview, useRunClose } from "../hooks";
-import { num } from "../logic";
+import { canApproveClose, canRunClose, num } from "../logic";
 import type { FinancePeriod } from "../types";
+import { ViewOnlyNote } from "./ledger-bits";
 
 export function CloseScreen() {
   return (
-    <RequireAccess permission="finance.close" mode="404">
+    <RequireAccess permission="finance.view" mode="404">
       <Close />
     </RequireAccess>
   );
@@ -44,7 +45,7 @@ function Close() {
     <>
       <PageHeader
         title="Month close"
-        description="When the checklist is complete the finance duty person runs the close and the CEO approves it. The month is then locked and its statements saved as a snapshot."
+        description="When the checklist is complete the finance person runs the close and the Director approves it. The month is then locked and its statements saved as a snapshot."
         seal="highly"
       />
       <div className="grid gap-6">
@@ -52,7 +53,7 @@ function Close() {
           <OpenPeriod key={p.month} period={p} />
         ))}
         <section>
-          <SectionTitle title="Closed months" description="Only the Owner or CEO can reopen a closed month, with a written reason. Reopening is logged and alerted." />
+          <SectionTitle title="Closed months" description="Only the Director can reopen a closed month, with a step-up check and a written reason. Reopening is logged and the CEO / Founder / Owner is notified." />
           <ClosedTable periods={closed} />
         </section>
       </div>
@@ -71,17 +72,18 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
   const [reval, setReval] = React.useState(false);
   const allDone = period.checklist.every((c) => c.done);
   const missing = period.checklist.filter((c) => !c.done);
-  const isFinanceDuty = !!viewer?.hasFinanceDuty;
-  const isTop = !!viewer && viewer.employee.level <= 2;
+  // The finance person runs the close; the Director approves it (maker-checker). The CEO / Founder / Owner views only.
+  const canRun = !!viewer && canRunClose(viewer.can);
+  const canApprove = !!viewer && canApproveClose(viewer.can);
   const isMaker = period.closedBy === viewer?.employee.empId;
   const done = period.checklist.filter((c) => c.done).length;
 
-  const financeDuty = lookup.employees.find((e) => e.duties.includes("finance"))?.empId;
-  const ceo = lookup.employees.find((e) => e.role === "ceo")?.empId;
+  const financePerson = lookup.employees.find((e) => e.duties.includes("finance") && e.status !== "left")?.empId;
+  const director = lookup.employees.find((e) => e.role === "director" && e.status !== "left")?.empId;
   const closing = period.status === "closing";
   const steps = [
-    { label: "Run by (finance duty)", empId: closing ? period.closedBy : financeDuty, state: closing ? ("done" as const) : ("waiting" as const), at: closing ? period.closedAt : undefined },
-    { label: "Approved by (CEO)", empId: ceo, state: closing ? ("waiting" as const) : ("pending" as const) },
+    { label: "Run by (Finance)", empId: closing ? period.closedBy : financePerson, state: closing ? ("done" as const) : ("waiting" as const), at: closing ? period.closedAt : undefined },
+    { label: "Approved by (Director)", empId: director, state: closing ? ("waiting" as const) : ("pending" as const) },
   ];
 
   return (
@@ -93,7 +95,7 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
           {period.reopenReason && <p className="mt-1 text-[12.5px] text-muted-foreground">{period.reopenReason}</p>}
         </div>
         <Badge tone={period.status === "closing" ? "warning" : period.status === "reopened" ? "danger" : "info"} dot>
-          {period.status === "closing" ? "Waiting for CEO approval" : period.status === "reopened" ? "Reopened" : "Open"}
+          {period.status === "closing" ? "Waiting for Director approval" : period.status === "reopened" ? "Reopened" : "Open"}
         </Badge>
       </CardHeader>
       <CardContent className="grid gap-6 pt-5 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -131,7 +133,7 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
           <ApprovalRelay steps={steps} />
           {period.status !== "closing" && (
             <>
-              {isFinanceDuty ? (
+              {canRun ? (
                 <Tip content={!allDone ? `Still to do: ${missing.map((m) => m.label.toLowerCase()).join(", ")}` : undefined}>
                   <span>
                     <Button
@@ -141,7 +143,7 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
                       onClick={async () => {
                         try {
                           await run.mutateAsync(period.month);
-                          toast.success(`${formatMonthKey(period.month)} sent to the CEO for approval`);
+                          toast.success(`${formatMonthKey(period.month)} sent to the Director for approval`);
                         } catch (err) {
                           toast.error(err instanceof Error ? err.message : "Couldn't run the close.");
                         }
@@ -151,13 +153,15 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
                     </Button>
                   </span>
                 </Tip>
+              ) : canApprove ? (
+                <MakerCheckerNote reason="The finance person runs the close when every item is done. Then it comes to you for approval." />
               ) : (
-                <MakerCheckerNote reason="The finance duty person runs the close when every item is done. Then it comes to the CEO for approval." />
+                <ViewOnlyNote>View only. The finance person runs the close and the Director approves it.</ViewOnlyNote>
               )}
               {!allDone && <p className="text-[12.5px] text-muted-foreground">Finish the checklist first. Every item updates live from the ledger.</p>}
             </>
           )}
-          {period.status === "closing" && isTop && !isMaker && (
+          {period.status === "closing" && canApprove && !isMaker && (
             <div className="grid gap-2">
               <Button
                 loading={approve.isPending}
@@ -180,7 +184,8 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
               </Button>
             </div>
           )}
-          {period.status === "closing" && (!isTop || isMaker) && <MakerCheckerNote reason={isMaker ? "You ran this close, so another person must approve it." : "Waiting for the CEO to approve the close."} />}
+          {period.status === "closing" && isMaker && <MakerCheckerNote reason="You ran this close, so you can't approve it. It goes to the Director." />}
+          {period.status === "closing" && !isMaker && !canApprove && <ViewOnlyNote>View only. Waiting for the Director to approve the close.</ViewOnlyNote>}
         </div>
       </CardContent>
       {reval && <RevaluationDialog month={period.month} onClose={() => setReval(false)} />}
@@ -305,14 +310,14 @@ function ClosedTable({ periods }: { periods: FinancePeriod[] }) {
                       onClick={async () => {
                         const reason = await askReason({
                           title: `Reopen ${formatMonthKey(p.month)}`,
-                          description: "Reopening lets entries be dated in this month again. It is logged in the audit trail and alerted to the Owner, CEO and Director.",
+                          description: "Reopening lets entries be dated in this month again. It is logged in the audit trail and the CEO / Founder / Owner is notified.",
                           confirmLabel: "Continue",
                           destructive: true,
                         });
                         if (!reason) return;
                         if (!(await stepUp({ action: `Reopen ${formatMonthKey(p.month)}`, detail: reason }))) return;
                         await reopen.mutateAsync({ month: p.month, reason });
-                        toast.warning(`${formatMonthKey(p.month)} reopened`, { description: "Security alert sent. Close it again when the fix is posted." });
+                        toast.warning(`${formatMonthKey(p.month)} reopened`, { description: "The CEO / Founder / Owner is notified. Close it again when the fix is posted." });
                       }}
                     >
                       <LockOpen /> Reopen

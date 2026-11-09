@@ -17,7 +17,8 @@ export interface Viewer {
   hasFinanceDuty: boolean;
 }
 
-function buildViewer(empId: string | null): Viewer | null {
+/** Build the viewer object for any person (mock mode; used for oversight lists). */
+export function viewerFor(empId: string | null): Viewer | null {
   const employee = EMPLOYEES.find((e) => e.empId === empId);
   if (!employee) return null;
   const permissions = permissionsFor(employee.role, employee.duties);
@@ -32,14 +33,14 @@ function buildViewer(empId: string | null): Viewer | null {
 
 /** Non-hook access for api.ts (mock mode only). */
 export function getViewer(): Viewer {
-  const v = buildViewer(useSession.getState().empId);
+  const v = viewerFor(useSession.getState().empId);
   if (!v) throw new Error("Not signed in");
   return v;
 }
 
 export function useViewer(): Viewer | null {
   const empId = useSession((s) => s.empId);
-  return useMemo(() => buildViewer(empId), [empId]);
+  return useMemo(() => viewerFor(empId), [empId]);
 }
 
 /** true if the viewer has the permission (or any of a list). */

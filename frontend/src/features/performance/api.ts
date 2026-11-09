@@ -15,7 +15,7 @@ import { attendanceRate } from "@/features/attendance/api";
 import { tasksTable } from "@/features/tasks/api";
 import { openHours } from "@/features/tasks/logic";
 import type { Task } from "@/features/tasks/types";
-import { bandOf, computeScore, salesMetrics, SMALL_SAMPLE, taskMetrics } from "./logic";
+import { bandOf, canReviewWork, computeScore, salesMetrics, SMALL_SAMPLE, taskMetrics } from "./logic";
 import type {
   LivePerformance, MetricSet, RatingDispute, SalesDetail, Scorecard, ScorecardDetail, ScorecardTask, TeamPerformanceRow, TrendPoint, WeightsVersion,
 } from "./types";
@@ -24,7 +24,8 @@ export const scorecardsTable = () => table<Scorecard>("performance.scorecards", 
 export const disputesTable = () => table<RatingDispute>("performance.disputes", () => seedDisputes(scorecardsTable()));
 const weightsTable = () => table<WeightsVersion>("performance.weights", () => structuredClone(WEIGHT_VERSIONS));
 
-const isSalesPerson = (empId: string) => employeesTable().find((e) => e.empId === empId)?.departmentId === "dep-sales";
+/** Sales staff (L4) are scored with the sales weights; everyone else with the standard (task-based) weights. */
+const isSalesPerson = (empId: string) => employeesTable().find((e) => e.empId === empId)?.role === "sales";
 
 /** The newest weights of a kind (live month uses the current version). */
 function currentWeights(kind: "standard" | "sales") {
@@ -39,17 +40,29 @@ function latestFor(empId: string, includeDraft: boolean) {
     .sort((a, b) => b.month.localeCompare(a.month))[0];
 }
 
-/** Who may see a person's scorecards: themselves, the levels above (scope), and level 1–3 with view_all. */
+/**
+ * Who may see a person's scorecards: themselves and the people above them in the reporting line.
+ * CEO / Founder / Owner: everyone (view only). Director: everyone below (CTO, Sales, Finance, Engineering).
+ * CTO: Engineering only (never Sales or Finance). Sales, Finance and Engineering: only their own.
+ */
 function canSeePerson(empId: string) {
-  const v = getViewer();
-  const me = v.employee.empId;
-  if (me === empId) return true;
-  if (isInScope(me, empId)) return true;
-  if (v.can("performance.view_all")) {
-    const target = employeesTable().find((e) => e.empId === empId);
-    return !!target && target.level >= v.employee.level;
-  }
-  return false;
+  const me = getViewer().employee.empId;
+  return me === empId || isInScope(me, empId);
+}
+
+/**
+ * Who decides a rating dispute: the level above the task's reviewer (plan §10).
+ * The reviewer is whoever assigned and rated the task (the CTO for Engineering, the Director for the CTO, Sales
+ * and Finance). Only people who review work decide, and the CEO / Founder / Owner reviews nothing, so a rating
+ * the Director gave is looked at again by the Director; the CEO / Founder / Owner can view the dispute.
+ * Null when there is no reviewer at all (the Director's own scorecard).
+ */
+function disputeDecider(sc: Scorecard, taskId?: string) {
+  const list = employeesTable();
+  const reviewer = (taskId && tasksTable().find((t) => t.id === taskId)?.assignedBy) || sc.reviewerEmpId;
+  if (!reviewer) return null;
+  const above = chainAbove(reviewer, list).find((e) => e.empId !== sc.empId && canReviewWork(e));
+  return above?.empId ?? reviewer;
 }
 
 function taskToScorecardTask(t: Task): ScorecardTask {
@@ -216,9 +229,10 @@ export const performanceApi = {
     mock<TeamPerformanceRow[]>(() => {
       const v = getViewer();
       const me = v.employee.empId;
-      const ids = v.can("performance.view_all")
-        ? employeesTable().filter((e) => e.empId !== me && e.reportsTo && e.level >= v.employee.level && e.status !== "left").map((e) => e.empId)
-        : descendantsOf(me);
+      // Reporting line only: CTO → Engineering; Director → CTO, Sales, Finance and Engineering;
+      // CEO / Founder / Owner → everyone, view only (they release nothing).
+      const active = new Set(employeesTable().filter((e) => e.status !== "left").map((e) => e.empId));
+      const ids = v.can(["performance.view_team", "performance.view_all"]) ? descendantsOf(me).filter((id) => active.has(id)) : [];
       return ids.map((empId) => {
         const live = computeLive(empId);
         return {
@@ -236,7 +250,8 @@ export const performanceApi = {
     mock(() => {
       const sc = scorecardsTable().find((s) => s.id === id);
       if (!sc) notFound("Scorecard");
-      if (sc.reviewerEmpId !== getViewer().employee.empId) throw new ApiError("forbidden", "Only the reviewer adds a remark.", 403);
+      const v = getViewer();
+      if (!sc.reviewerEmpId || sc.reviewerEmpId !== v.employee.empId || !v.can("task.review")) throw new ApiError("forbidden", "View only. Only the reviewer adds a remark.", 403);
       sc.reviewerRemark = remark;
       sc.remarkAt = new Date().toISOString();
     }),
@@ -246,7 +261,9 @@ export const performanceApi = {
     mock(() => {
       const sc = scorecardsTable().find((s) => s.id === id);
       if (!sc) notFound("Scorecard");
-      if (sc.reviewerEmpId !== getViewer().employee.empId) throw new ApiError("forbidden", "Only the reviewer releases a scorecard.", 403);
+      const v = getViewer();
+      if (!sc.reviewerEmpId || sc.reviewerEmpId !== v.employee.empId || !v.can("task.review")) throw new ApiError("forbidden", "View only. Only the person's manager releases a scorecard.", 403);
+      if (sc.empId === sc.reviewerEmpId) throw new ApiError("forbidden", "Nobody releases their own scorecard.", 403);
       applyRelease(sc, remark);
     }),
 
@@ -280,8 +297,8 @@ export const performanceApi = {
       if (!task?.rating) throw new ApiError("validation", "Choose a rated task.");
       if (disputesTable().some((d) => d.scorecardId === scorecardId && d.taskNumber === taskNumber && d.status === "open"))
         throw new ApiError("validation", "This rating is already disputed.");
-      const chain = chainAbove(me);
-      const decider = chain[1] ?? chain[0];
+      const decider = disputeDecider(sc, task.taskId);
+      if (!decider || decider === me) throw new ApiError("validation", "Your scorecard has no reviewer, so there is no one to decide a dispute.");
       const d: RatingDispute = {
         id: uid("dsp"),
         scorecardId,
@@ -291,7 +308,7 @@ export const performanceApi = {
         currentRating: task.rating,
         reason,
         status: "open",
-        deciderEmpId: decider?.empId ?? me,
+        deciderEmpId: decider,
         at: new Date().toISOString(),
       };
       disputesTable().unshift(d);
@@ -301,10 +318,14 @@ export const performanceApi = {
   /** POST /disputes/:id/decide */
   decideDispute: (id: string, change: boolean, decision: string, newRating?: number) =>
     mock(() => {
-      const me = getViewer().employee.empId;
+      const v = getViewer();
+      const me = v.employee.empId;
       const d = disputesTable().find((x) => x.id === id);
       if (!d) notFound("Dispute");
-      if (d.deciderEmpId !== me) throw new ApiError("forbidden", "This dispute is decided by the next level up.", 403);
+      if (!v.can("task.review")) throw new ApiError("forbidden", "View only. Disputes are decided by the level above the reviewer.", 403);
+      if (d.deciderEmpId !== me) throw new ApiError("forbidden", "This dispute is decided by the level above the reviewer.", 403);
+      if (d.empId === me) throw new ApiError("forbidden", "You can't decide your own dispute.", 403);
+      if (d.status !== "open") throw new ApiError("validation", "This dispute was already decided.");
       applyDisputeDecision(d, change, me, decision, newRating);
     }),
 

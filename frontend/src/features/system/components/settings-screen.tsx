@@ -5,8 +5,9 @@ import { PageHeader } from "@/components/layout/page-header";
 import { NativeSelect } from "@/components/ui/controls";
 import { RequireAccess } from "@/components/shared/can";
 import { useUrlState } from "@/hooks/use-url-state";
+import { useViewer } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
-import { SECTIONS, sectionMeta } from "../logic";
+import { canViewSection, SECTIONS, sectionMeta } from "../logic";
 import type { SettingsSectionKey } from "../types";
 import { ProtectedBadge, useSectionAccess } from "./settings-kit";
 import {
@@ -35,8 +36,6 @@ const PANELS: Record<SettingsSectionKey, React.ComponentType> = {
   "sales-tools": SalesToolsLink,
 };
 
-const GROUPS = Array.from(new Set(SECTIONS.map((s) => s.group)));
-
 export function SettingsScreen() {
   return (
     <RequireAccess permission="settings.view">
@@ -46,8 +45,12 @@ export function SettingsScreen() {
 }
 
 function SettingsInner() {
+  const viewer = useViewer();
   const [raw, setSection] = useUrlState<string>("section", "company");
-  const section = (SECTIONS.some((s) => s.key === raw) ? raw : "company") as SettingsSectionKey;
+  // Finance and sales sections are hidden from people without that access (the CTO sees neither).
+  const visible = SECTIONS.filter((s) => !!viewer && canViewSection(s, viewer.can));
+  const groups = Array.from(new Set(visible.map((s) => s.group)));
+  const section = (visible.some((s) => s.key === raw) ? raw : "company") as SettingsSectionKey;
   const meta = sectionMeta(section);
   const access = useSectionAccess(section);
   const Panel = PANELS[section];
@@ -59,9 +62,9 @@ function SettingsInner() {
       <div className="grid gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
         <div className="lg:hidden">
           <NativeSelect value={section} onChange={(e) => setSection(e.target.value)} aria-label="Settings section">
-            {GROUPS.map((g) => (
+            {groups.map((g) => (
               <optgroup key={g} label={g}>
-                {SECTIONS.filter((s) => s.group === g).map((s) => (
+                {visible.filter((s) => s.group === g).map((s) => (
                   <option key={s.key} value={s.key}>
                     {s.label}
                     {s.protected ? " ★" : ""}
@@ -73,11 +76,11 @@ function SettingsInner() {
         </div>
         <nav aria-label="Settings sections" className="hidden lg:block">
           <div className="sticky top-20 grid gap-4">
-            {GROUPS.map((g) => (
+            {groups.map((g) => (
               <div key={g}>
                 <p className="mb-1 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{g}</p>
                 <ul className="grid gap-0.5">
-                  {SECTIONS.filter((s) => s.group === g).map((s) => {
+                  {visible.filter((s) => s.group === g).map((s) => {
                     const active = s.key === section;
                     return (
                       <li key={s.key}>
@@ -90,7 +93,7 @@ function SettingsInner() {
                           )}
                         >
                           <span className="truncate">{s.label}</span>
-                          {s.protected && <Star className="size-3 shrink-0 fill-warning text-warning" aria-label="Owner or CEO only" />}
+                          {s.protected && <Star className="size-3 shrink-0 fill-warning text-warning" aria-label="Director only, with step-up" />}
                         </button>
                       </li>
                     );

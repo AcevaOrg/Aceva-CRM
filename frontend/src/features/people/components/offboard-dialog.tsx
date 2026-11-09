@@ -30,9 +30,9 @@ export function OffboardDialog({ employee, onClose }: { employee: Employee; onCl
         { icon: KeyRound, text: "Login is disabled." },
         { icon: LogOut, text: `All sessions end${p.activeSessions ? ` (${p.activeSessions} active now)` : ""}.` },
         { icon: ListTodo, text: p.openTasks ? `${p.openTasks} open task${p.openTasks === 1 ? "" : "s"} move to ${manager?.name ?? "the manager"}.` : "No open tasks to move." },
-        ...(p.directReports ? [{ icon: ListTodo, text: `${p.directReports} direct report${p.directReports === 1 ? "" : "s"} need a new manager (change it in Org and access).` }] : []),
-        ...(p.isSales ? [{ icon: Contact, text: "Their leads and deals move to the sales manager." }] : []),
-        { icon: Wallet, text: "The final salary goes to the next payroll run." },
+        ...(p.directReports ? [{ icon: ListTodo, text: `${p.directReports} direct report${p.directReports === 1 ? "" : "s"} need a new manager (the Director changes it in Org and access).` }] : []),
+        ...(p.isSales ? [{ icon: Contact, text: "Their leads and deals move to the Director (sales manager)." }] : []),
+        { icon: Wallet, text: "Finance adds the final salary to the next payroll run; the Director approves it." },
         { icon: Archive, text: "The record is kept, never deleted." },
       ]
     : [];
