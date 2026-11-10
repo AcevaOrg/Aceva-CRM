@@ -1,4 +1,5 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
+import { DUTY_SEEDS, PERMISSION_KEYS, ROLE_SEEDS } from './permission-catalogue';
 
 /**
  * Development and test seed data. Safe to run more than once (it only adds what is missing).
@@ -17,111 +18,14 @@ export const LEVELS = [
   { number: 5, name: 'Employee' },
 ] as const;
 
-export const PERMISSIONS: Array<{ key: string; module: string; description: string }> = [
-  { key: 'org.view', module: 'hierarchy', description: 'View the organisation chart' },
-  { key: 'org.manage', module: 'hierarchy', description: 'Change employee levels and reporting lines (Owner or CEO)' },
-  { key: 'duty.assign', module: 'hierarchy', description: 'Give or remove an additional duty (Finance, HR)' },
-  { key: 'standin.manage', module: 'hierarchy', description: 'Name a stand-in for approvals during leave' },
-  { key: 'approval.approve', module: 'hierarchy', description: 'Approve requests from people below' },
-  { key: 'task.assign', module: 'tasks', description: 'Assign tasks to people below' },
-  { key: 'task.view', module: 'tasks', description: 'View tasks in scope' },
-  { key: 'employee.directory.view', module: 'employees', description: 'View the staff directory (basic information)' },
-  { key: 'employee.create', module: 'employees', description: 'Create an employee profile (joining workflow)' },
-  { key: 'employee.job.manage', module: 'employees', description: 'Change job-related fields' },
-  { key: 'employee.personal.view', module: 'employees', description: 'View personal information' },
-  { key: 'employee.pay.view', module: 'employees', description: 'View pay information' },
-  { key: 'employee.pay.manage', module: 'employees', description: 'Change pay-related fields (Director only)' },
-  { key: 'employee.documents.view', module: 'employees', description: 'View employee documents' },
-  { key: 'employee.documents.manage', module: 'employees', description: 'Upload employee documents' },
-  { key: 'employee.offboard', module: 'employees', description: 'Set the last working day (leaving workflow)' },
-  { key: 'auth.account.unlock', module: 'auth', description: 'Unlock a locked account' },
-  { key: 'auth.session.force_logout', module: 'auth', description: 'Force an employee to log out on every device' },
-  { key: 'auth.password.set_temporary', module: 'auth', description: 'Set a temporary password' },
-  { key: 'finance.view', module: 'finance', description: 'View finance data' },
-  { key: 'finance.prepare', module: 'finance', description: 'Prepare finance entries' },
-  { key: 'finance.approve', module: 'finance', description: 'Approve finance entries' },
-  { key: 'payroll.view', module: 'payroll', description: 'View payroll' },
-  { key: 'payroll.prepare', module: 'payroll', description: 'Prepare payroll runs' },
-  { key: 'payroll.approve', module: 'payroll', description: 'Approve payroll runs' },
-  { key: 'audit.view', module: 'audit', description: 'View the audit log' },
-  { key: 'settings.manage', module: 'settings', description: 'Change system settings' },
-];
+export const PERMISSIONS: Array<{ key: string; module: string; description: string }> = PERMISSION_KEYS.map((key) => {
+  const [module, action] = key.split('.');
+  const words = action.replace(/_/g, ' ');
+  return { key, module, description: `${module}: ${words}` };
+});
 
-const VIEW_ALL = [
-  'org.view',
-  'employee.directory.view',
-  'employee.personal.view',
-  'employee.pay.view',
-  'employee.documents.view',
-  'finance.view',
-  'payroll.view',
-  'audit.view',
-  'task.view',
-];
-
-const LEVEL3_COMMON = ['employee.directory.view', 'org.view', 'task.assign', 'task.view', 'approval.approve', 'standin.manage'];
-
-/** Default role of each level, plus the named Director and CTO roles (both Level 3). */
-export const ROLES: Array<{
-  key: string;
-  name: string;
-  level: number;
-  isDefault: boolean;
-  permissions: string[];
-}> = [
-  { key: 'owner', name: 'Owner', level: 1, isDefault: true, permissions: [...VIEW_ALL, 'org.manage'] },
-  {
-    key: 'ceo',
-    name: 'CEO',
-    level: 2,
-    isDefault: true,
-    permissions: [
-      ...VIEW_ALL,
-      'org.manage',
-      'approval.approve',
-      'standin.manage',
-      'auth.account.unlock',
-      'auth.session.force_logout',
-    ],
-  },
-  { key: 'level3_default', name: 'Director / CTO (default)', level: 3, isDefault: true, permissions: LEVEL3_COMMON },
-  {
-    key: 'director',
-    name: 'Director',
-    level: 3,
-    isDefault: false,
-    permissions: [
-      ...LEVEL3_COMMON,
-      'duty.assign',
-      'employee.create',
-      'employee.job.manage',
-      'employee.personal.view',
-      'employee.pay.view',
-      'employee.pay.manage',
-      'employee.documents.view',
-      'employee.documents.manage',
-      'employee.offboard',
-      'auth.account.unlock',
-      'auth.session.force_logout',
-      'auth.password.set_temporary',
-      'finance.view',
-      'finance.approve',
-      'payroll.view',
-      'payroll.approve',
-      'audit.view',
-      'settings.manage',
-    ],
-  },
-  { key: 'cto', name: 'CTO', level: 3, isDefault: false, permissions: LEVEL3_COMMON },
-  {
-    key: 'level4_default',
-    name: 'Department Head / Team Lead (default)',
-    level: 4,
-    isDefault: true,
-    permissions: ['employee.directory.view', 'org.view', 'task.assign', 'task.view', 'approval.approve', 'standin.manage'],
-  },
-  { key: 'employee', name: 'Employee (default)', level: 5, isDefault: true, permissions: ['employee.directory.view', 'org.view', 'task.view'] },
-];
+export const ROLES = ROLE_SEEDS;
+export const DUTIES = DUTY_SEEDS;
 
 /**
  * The only allowed same-level reporting lines (plan: the CTO reports to the Director, both Level 3).
@@ -129,36 +33,6 @@ export const ROLES: Array<{
  */
 export const SAME_LEVEL_RULES: Array<{ manager: string; employee: string; reason: string }> = [
   { manager: 'director', employee: 'cto', reason: 'The CTO (Level 3) reports to the Director (Level 3), as documented in the company structure.' },
-];
-
-/** Extra duties. Their permissions are kept apart from role permissions. */
-export const DUTIES: Array<{
-  key: string;
-  name: string;
-  requiresTwoFactor: boolean;
-  permissions: string[];
-}> = [
-  {
-    key: 'finance',
-    name: 'Finance duty',
-    requiresTwoFactor: true,
-    permissions: ['finance.view', 'finance.prepare', 'payroll.view', 'payroll.prepare', 'employee.pay.view'],
-  },
-  {
-    key: 'hr',
-    name: 'HR duty',
-    requiresTwoFactor: false,
-    permissions: [
-      'employee.create',
-      'employee.job.manage',
-      'employee.personal.view',
-      'employee.documents.view',
-      'employee.documents.manage',
-      'employee.offboard',
-      'auth.account.unlock',
-      'auth.password.set_temporary',
-    ],
-  },
 ];
 
 /** Department and office codes match the ids the frontend already uses (dep-eng, off-khi ...). */
@@ -210,12 +84,12 @@ export const DEMO_EMPLOYEES: DemoEmployee[] = [
   { empId: 'ACV-0006', slug: 'dev1', name: 'Fahad Khan', email: 'fahad', designation: 'Senior Backend Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0007', slug: 'dev2', name: 'Mariam Shah', email: 'mariam', designation: 'Software Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0008', slug: 'dev3', name: 'Ali Raza', email: 'ali', designation: 'Backend Developer', department: 'dep-eng', office: 'off-remote', level: 5, role: 'employee', reportsTo: 'cto' },
-  { empId: 'ACV-0009', slug: 'sales1', name: 'Hira Baig', email: 'hira', designation: 'Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0009', slug: 'sales1', name: 'Hira Baig', email: 'hira', designation: 'Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'sales', reportsTo: 'director' },
   { empId: 'ACV-0010', slug: 'finance', name: 'Sana Malik', email: 'sana', designation: 'Finance Officer', department: 'dep-fin', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['finance'] },
   { empId: 'ACV-0011', slug: 'sqa1', name: 'Danish Iqbal', email: 'danish', designation: 'SQA Engineer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
-  { empId: 'ACV-0012', slug: 'sales2', name: 'Kamran Javed', email: 'kamran', designation: 'Sales Executive', department: 'dep-sales', office: 'off-remote', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0012', slug: 'sales2', name: 'Kamran Javed', email: 'kamran', designation: 'Sales Executive', department: 'dep-sales', office: 'off-remote', level: 4, role: 'sales', reportsTo: 'director' },
   { empId: 'ACV-0013', slug: 'sqa2', name: 'Nida Aslam', email: 'nida', designation: 'SQA Intern', department: 'dep-eng', office: 'off-dadu', level: 5, role: 'employee', reportsTo: 'cto', type: 'intern', weeklyHours: 20 },
-  { empId: 'ACV-0014', slug: 'sales3', name: 'Saad Mirza', email: 'saad', designation: 'Senior Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0014', slug: 'sales3', name: 'Saad Mirza', email: 'saad', designation: 'Senior Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'sales', reportsTo: 'director' },
   { empId: 'ACV-0015', slug: 'hr', name: 'Rabia Anwar (DEMO HR)', email: 'rabia', designation: 'HR Officer', department: 'dep-hr', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['hr'] },
 ];
 

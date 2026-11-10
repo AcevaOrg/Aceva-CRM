@@ -2,8 +2,10 @@ import { existsSync } from 'node:fs';
 
 /** Loads backend/.env (when present) and returns the database URL used by automated tests. */
 export function testDatabaseUrl(): string {
-  if (existsSync('.env')) {
-    process.loadEnvFile('.env'); // does not override variables that are already set (CI)
+  // Works from backend/ (unit tests) and from the repository root (Playwright end-to-end tests).
+  const envFile = ['.env', 'backend/.env'].find((f) => existsSync(f));
+  if (envFile) {
+    process.loadEnvFile(envFile); // does not override variables that are already set (CI)
   }
   const url = process.env.TEST_DATABASE_URL;
   if (!url) {

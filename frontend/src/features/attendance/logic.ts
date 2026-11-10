@@ -6,6 +6,7 @@ import { isoDay, isWorkingDay } from "@/lib/dates";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import type { BadgeTone } from "@/components/ui/badge";
 import type { ApprovalStep, Employee } from "@/types";
+import { isTopLevelRole } from "@/types";
 import type { DayStatus, LeaveStatus, WorkSchedule } from "./types";
 
 /**
@@ -28,7 +29,7 @@ export function buildLeaveChain(empId: string, employees: Employee[]): ApprovalS
   // The Director gives the final sign-off, unless the Director is the first step or the CEO / Founder / Owner is
   // (that only happens for the Director's own leave).
   const director = employees.find((e) => e.role === "director" && e.status !== "left");
-  const needsDirector = manager.role !== "director" && manager.role !== "ceo";
+  const needsDirector = manager.role !== "director" && !isTopLevelRole(manager.role);
   if (director && needsDirector && director.empId !== empId && director.empId !== manager.empId) {
     steps.push({ label: ROLE_LABEL.director, empId: director.empId, state: "pending" });
   }

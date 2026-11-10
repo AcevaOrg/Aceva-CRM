@@ -66,6 +66,7 @@ describe('M1 five levels and role mapping', () => {
     expect(perms('director')).toContain('payroll.approve');
     expect(perms('employee')).not.toContain('org.manage');
     expect(perms('employee')).not.toContain('finance.view');
+    expect(perms('sales')).toContain('sales.own'); // a named Level 4 role
     expect(perms('level4_default')).toContain('task.assign');
   });
 
@@ -80,12 +81,12 @@ describe('M1 five levels and role mapping', () => {
   it('adds Finance duty permissions on top of the role (kept separate), and 2FA rules follow the plan', async () => {
     const finance = (await t.as(FINANCE).get('/api/v1/access/me').expect(200)).body;
     expect(finance.duties).toEqual(['finance']);
-    expect(finance.permissions).toEqual(expect.arrayContaining(['finance.prepare', 'payroll.prepare', 'task.assign']));
+    expect(finance.permissions).toEqual(expect.arrayContaining(['finance.entry_create', 'payroll.prepare', 'task.assign']));
     expect(finance.permissions).not.toContain('payroll.approve'); // finance prepares, never approves
     expect(finance.twoFactorRequired).toBe(true); // Finance duty
 
     const dev = (await t.as(DEV1).get('/api/v1/access/me').expect(200)).body;
-    expect(dev.permissions).not.toContain('finance.prepare');
+    expect(dev.permissions).not.toContain('finance.entry_create');
     expect(dev.twoFactorRequired).toBe(false); // optional for ordinary employees
 
     for (const [empId, level] of [[OWNER, 1], [CEO, 2], [DIRECTOR, 3], [CTO, 3]] as const) {

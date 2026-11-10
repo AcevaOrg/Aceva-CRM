@@ -4,11 +4,13 @@ import { DUTY_LABEL, DUTY_PERMISSIONS, ROLE_LABEL, ROLE_PERMISSIONS } from "@/li
 import { ROLE_LEVEL, type Duty, type RoleKey } from "@/types";
 import { daysFromNow, minutesAgo } from "../time";
 
-/** One role per level (spec §2.1): CEO / Founder / Owner → Director → CTO, Sales, Finance → Development. */
+/** Roles of the five levels (plan §5): Owner, CEO, Director and CTO, Heads and Leads, Employees. */
 const ROLE_DESCRIPTION: Record<RoleKey, string> = {
-  ceo: "One person: CEO, Founder and Owner. Sees everything (all activity, data, reports and exports) but approves, prepares, assigns and changes nothing. Signs off only the Director's own leave and attendance corrections.",
-  director: "The approver for the whole company: payroll, journal entries, month close and reopen, Won deals, commission, targets, the last step of leave, settings and org changes. Also holds HR duty and sales-manager duty. Prepares no finance items. Reports to the CEO / Founder / Owner.",
-  cto: "Runs development: assigns and reviews tasks, first step of developers' leave and corrections, security alerts, backups and integrations. No finance, payroll or sales data. Reports to the Director.",
+  owner: "Level 1. Sees everything (all activity, data, reports and exports) but approves, prepares and assigns nothing. Changes employee levels and reporting lines, with a reason, and every change is logged.",
+  ceo: "Level 2. Oversight like the Owner, plus signs off the Director's own leave and attendance corrections. Changes levels and reporting lines below the CEO, with a reason.",
+  lead: "Level 4 default role: Department Heads and Team Leads. Own work plus assigning tasks to, and approving for, the people below. HR and Finance people hold their extra duty on top.",
+  director: "The approver for the whole company: payroll, journal entries, month close and reopen, Won deals, commission, targets, the last step of leave, settings. Also holds HR duty and sales-manager duty, and gives extra duties such as Finance. Prepares no finance items. Level 3, reports to the CEO.",
+  cto: "Runs development: assigns and reviews tasks, first step of developers' leave and corrections, security alerts, backups and integrations. No finance, payroll or sales data. Level 3, reports to the Director (the one configured same-level reporting line).",
   sales: "Own leads, deals, follow-ups, targets and daily report. Reports to the Director. Manages nobody.",
   finance: "The finance person. Prepares journal entries, payroll runs, bills, invoices, payments, bank reconciliation, salary advances and the month close. Approves nothing: the Director approves. Reports to the Director.",
   developer: "Software Development. Own tasks, attendance, leave, scorecard and payslips. Reports to the CTO.",

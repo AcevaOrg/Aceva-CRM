@@ -5,8 +5,9 @@
  */
 
 /**
- * Hierarchy level (Aceva structure, spec §2.1):
- * 1 CEO / Founder / Owner · 2 Director · 3 CTO · 4 Sales and Finance · 5 Software Development employees
+ * Hierarchy level (development plan §5, the five levels):
+ * 1 Owner · 2 CEO · 3 Director and CTO · 4 Department Heads and Team Leads (Sales, Finance, HR) · 5 Employees
+ * Level and reporting line are separate: the CTO (Level 3) reports to the Director (Level 3).
  */
 export type Level = 1 | 2 | 3 | 4 | 5;
 
@@ -26,20 +27,23 @@ export type Zone = "home" | "work" | "finance" | "sales" | "control";
 export type Duty = "finance" | "hr" | "sales_manager";
 
 /**
- * The structure is fixed: CEO / Founder / Owner → Director → (CTO → Development) · Sales · Finance.
- * "ceo" is one person who is the CEO, the Founder and the Owner: sees everything, approves nothing.
- * "finance" is the finance person (finance duty): prepares; the Director approves.
+ * One role per person; the role belongs to a level (plan §5). Extra duties (Finance, HR) are separate.
+ * "owner" and "ceo" are two different people. "lead" is the default Level 4 role (Department Head / Team Lead).
  */
-export type RoleKey = "ceo" | "director" | "cto" | "sales" | "finance" | "developer";
+export type RoleKey = "owner" | "ceo" | "director" | "cto" | "lead" | "sales" | "finance" | "developer";
 
-export const ROLE_LEVEL: Record<RoleKey, Level> = { ceo: 1, director: 2, cto: 3, sales: 4, finance: 4, developer: 5 };
+export const ROLE_LEVEL: Record<RoleKey, Level> = { owner: 1, ceo: 2, director: 3, cto: 3, lead: 4, sales: 4, finance: 4, developer: 5 };
 
-/** Default role for a level. Level 4 holds both Sales and Finance: use roleFor() when the department is known. */
-export const LEVEL_ROLE: Record<Level, RoleKey> = { 1: "ceo", 2: "director", 3: "cto", 4: "sales", 5: "developer" };
+/** Default role for a level. Level 3 holds both Director and CTO: the role is chosen when the person is set up. */
+export const LEVEL_ROLE: Record<Level, RoleKey> = { 1: "owner", 2: "ceo", 3: "cto", 4: "lead", 5: "developer" };
+
+/** Roles that oversee the whole company (Owner and CEO). */
+export const isTopLevelRole = (role: RoleKey) => role === "owner" || role === "ceo";
 
 /** Role for a level in a department (level 4 in the Finance department is the finance person). */
 export function roleFor(level: Level, departmentId?: string): RoleKey {
   if (level === 4 && departmentId === "dep-fin") return "finance";
+  if (level === 4 && departmentId === "dep-sales") return "sales";
   return LEVEL_ROLE[level];
 }
 

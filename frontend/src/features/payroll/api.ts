@@ -14,6 +14,7 @@ import { HOLIDAY_DATES } from "@/mocks/seed/calendar";
 import { PAY } from "@/mocks/seed/people";
 import { buildPayslips, seedAdjustments, seedAdvances, seedPayrollLines, seedPayrollRuns } from "@/mocks/seed/payroll";
 import type { ApprovalStep } from "@/types";
+import { isTopLevelRole } from "@/types";
 import { APPROVED_LABEL, calculateLine, DEFAULT_TAX_SLABS, nextMonthKey, PAYROLL_APPROVER, PREPARED_LABEL, totalsOf, workingDaysInMonth } from "./logic";
 import type { NewAdvanceInput, PayrollAdjustment, PayrollLine, PayrollRun, Payslip, RunDetail, SalaryAdvance, TaxSlab } from "./types";
 
@@ -270,7 +271,7 @@ export const payrollApi = {
       const v = requireView();
       if (!canPrepare(v)) throw new ApiError("forbidden", "Only Finance records salary advances.", 403);
       const target = employeesTable().find((e) => e.empId === input.empId);
-      if (!target || target.role === "ceo") throw new ApiError("validation", "Salary advances are for employees, not the CEO / Founder / Owner.");
+      if (!target || isTopLevelRole(target.role)) throw new ApiError("validation", "Salary advances are for employees, not the Owner or CEO.");
       const adv: SalaryAdvance = {
         id: uid("adv"),
         empId: input.empId,

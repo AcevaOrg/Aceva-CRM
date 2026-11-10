@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Permission } from "@/lib/auth/permissions";
 import { useSession } from "@/lib/auth/session";
 import { accessApi } from "./api";
-import type { DepartmentInput, MoveInput, OfficeInput, StandInInput } from "./types";
+import type { ChangeLevelInput, DepartmentInput, DutyInput, MoveInput, OfficeInput, StandInInput } from "./types";
 
 export const accessKeys = {
   all: ["access"] as const,
@@ -75,4 +75,19 @@ export function useCreateStandIn() {
 export function useEndStandIn() {
   const done = useDone();
   return useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => accessApi.endStandIn(id, reason), onSuccess: done });
+}
+
+export function useChangeLevel() {
+  const done = useDone();
+  return useMutation({ mutationFn: (input: ChangeLevelInput) => accessApi.changeLevel(input), onSuccess: done });
+}
+
+export function useAssignDuty() {
+  const done = useDone();
+  return useMutation({ mutationFn: (input: DutyInput) => accessApi.assignDuty(input), onSuccess: done });
+}
+
+export function useEndDuty() {
+  const done = useDone();
+  return useMutation({ mutationFn: (input: DutyInput) => accessApi.endDuty(input), onSuccess: done });
 }

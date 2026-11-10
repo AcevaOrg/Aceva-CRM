@@ -1,4 +1,5 @@
 /** Seed: personal details, pay, documents and change history (Module 3). */
+import { isTopLevelRole } from "@/types";
 import type { DocumentKind, EmployeeDocument, FieldChange, PayDetails, PersonalDetails } from "@/features/people/types";
 import { money } from "@/lib/format";
 import { EMPLOYEES, PAY, PERSONAL } from "./people";
@@ -27,7 +28,7 @@ const DOCS: [DocumentKind, string, number][] = [
 
 export function seedDocuments(): EmployeeDocument[] {
   return EMPLOYEES.flatMap((e, i) =>
-    DOCS.slice(0, e.role === "ceo" ? 2 : i % 2 === 0 ? 4 : 3).map(([kind, fileName, sizeBytes], j) => ({
+    DOCS.slice(0, isTopLevelRole(e.role) ? 2 : i % 2 === 0 ? 4 : 3).map(([kind, fileName, sizeBytes], j) => ({
       id: `doc_${e.empId}_${j}`,
       empId: e.empId,
       kind,

@@ -4,7 +4,9 @@
  * Live: GET /employees?fields=directory
  */
 import type { Department, Employee, Office } from "@/types";
+import { isLive } from "@/lib/api/http";
 import { mock } from "@/lib/api/mock";
+import { fetchLiveOrgNodes } from "@/lib/live-org";
 import { table } from "@/mocks/db";
 import { DEPARTMENTS, OFFICES, seedEmployees } from "@/mocks/seed/people";
 
@@ -19,8 +21,26 @@ export interface Directory {
 }
 
 export const directoryApi = {
-  /** GET /directory */
-  get: () => mock<Directory>(() => ({ employees: employeesTable(), departments: departmentsTable(), offices: officesTable() }), { delay: 80 }),
+  /**
+   * GET /directory
+   * Module 3 (profiles) is still mock, so names and profile data come from the mock roster. While Module 1 is live, the
+   * hierarchy fields (level, role, reports to, duties, status, department, office) come from the real server, so every
+   * screen shows the same reporting lines as the org chart.
+   */
+  get: async (): Promise<Directory> => {
+    const base = await mock<Directory>(() => ({ employees: employeesTable(), departments: departmentsTable(), offices: officesTable() }), { delay: 80 });
+    if (!isLive("m1")) return base;
+    const live = new Map((await fetchLiveOrgNodes()).map((n) => [n.empId, n]));
+    return {
+      ...base,
+      employees: base.employees.map((e) => {
+        const n = live.get(e.empId);
+        return n
+          ? { ...e, level: n.level, role: n.role, reportsTo: n.reportsTo, duties: n.duties, status: n.status, departmentId: n.departmentId, officeId: n.officeId, designation: n.designation }
+          : e;
+      }),
+    };
+  },
 };
 
 /** Synchronous lookup for mock api.ts code. */

@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Client } from 'pg';
 import { PrismaClient } from '../../src/generated/prisma/client';
@@ -21,6 +22,7 @@ export async function resetTestDatabase(): Promise<void> {
     await client.end();
   }
   execSync('npx prisma migrate deploy', {
+    cwd: resolve(__dirname, '..', '..'), // the backend folder
     stdio: 'pipe',
     env: { ...process.env, DATABASE_URL: url, SHADOW_DATABASE_URL: '' },
   });

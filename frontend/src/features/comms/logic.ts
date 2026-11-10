@@ -3,6 +3,7 @@
  */
 import { isSameDay, isToday, isYesterday } from "date-fns";
 import type { Employee } from "@/types";
+import { isTopLevelRole } from "@/types";
 import { formatWeekdayLong } from "@/lib/dates";
 import type { Message } from "./types";
 
@@ -74,7 +75,7 @@ export function canCreateChannel(e: Pick<Employee, "role">, isAdmin: boolean) {
 
 /** Who sees every announcement, including team-only ones: the CEO / Founder / Owner (oversight) and the Director. */
 export function seesAllAnnouncements(e: Pick<Employee, "role">) {
-  return e.role === "ceo" || e.role === "director";
+  return isTopLevelRole(e.role) || e.role === "director";
 }
 
 /** Meetings not cancelled and not yet finished, soonest first. */

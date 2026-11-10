@@ -230,7 +230,7 @@ describe('M1 additional duties (Director)', () => {
     expect(res.body).toEqual({ empId: DEV2, duty: 'finance' });
     const me = (await t.as(DEV2).get('/api/v1/access/me').expect(200)).body;
     expect(me.duties).toEqual(['finance']);
-    expect(me.permissions).toEqual(expect.arrayContaining(['finance.prepare', 'payroll.prepare']));
+    expect(me.permissions).toEqual(expect.arrayContaining(['finance.entry_create', 'payroll.prepare']));
     expect(me.twoFactorRequired).toBe(true);
     const [entry] = await auditFor('duty.assigned', DEV2);
     expect(entry).toMatchObject({ reason: 'Covering for the finance team' });
@@ -253,7 +253,7 @@ describe('M1 additional duties (Director)', () => {
   it('removes the permissions when the duty ends, keeping the record', async () => {
     await t.as(DIRECTOR).delete(`/api/v1/org/employees/${DEV2}/duties/finance`).send({ reason: 'Finance cover finished' }).expect(200);
     const me = (await t.as(DEV2).get('/api/v1/access/me').expect(200)).body;
-    expect(me.permissions).not.toContain('finance.prepare');
+    expect(me.permissions).not.toContain('finance.entry_create');
     expect(me.twoFactorRequired).toBe(false);
     expect(await prisma.employeeDuty.count({ where: { employee: { empId: DEV2 }, endedAt: { not: null } } })).toBe(1);
     expect((await auditFor('duty.ended', DEV2))[0].reason).toBe('Finance cover finished');
@@ -310,12 +310,11 @@ describe('M1 stand-in approvals', () => {
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(50), endsOn: day(55) }).expect(400);
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: 'ACV-9999', startsOn: day(50), endsOn: day(55) }).expect(404);
     await prisma.employee.update({ where: { empId: SALES2 }, data: { status: 'left' } });
-    await t.as(SALES1).post('/api/v1/stand-ins').send({ standInEmpId: SALES2, startsOn: day(50), endsOn: day(55) }).expect(400);
+    await t.as(HR).post('/api/v1/stand-ins').send({ standInEmpId: SALES2, startsOn: day(50), endsOn: day(55) }).expect(400);
     await prisma.employee.update({ where: { empId: SALES2 }, data: { status: 'active' } });
     // someone without the approval permission
     await prisma.rolePermission.deleteMany({ where: { role: { key: 'level4_default' }, permission: { key: 'approval.approve' } } });
-    await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: FINANCE, startsOn: day(50), endsOn: day(55) }).expect(400); // finance (Level 4) is below the Director anyway
-    await t.as(SALES1).post('/api/v1/stand-ins').send({ standInEmpId: HR, startsOn: day(50), endsOn: day(55) }).expect(400);
+    await t.as(HR).post('/api/v1/stand-ins').send({ standInEmpId: FINANCE, startsOn: day(50), endsOn: day(55) }).expect(400); // same level, but no longer allowed to approve
     await prisma.rolePermission.create({ data: { role: { connect: { key: 'level4_default' } }, permission: { connect: { key: 'approval.approve' } } } });
   });
 
@@ -339,15 +338,15 @@ describe('M1 stand-in approvals', () => {
   });
 
   it('routes to the next level up when the manager is away with no stand-in', async () => {
-    const created = await t.as(SALES1).post('/api/v1/stand-ins').send({ startsOn: START, endsOn: END, reason: 'Away, nobody covering' }).expect(201);
+    const created = await t.as(HR).post('/api/v1/stand-ins').send({ startsOn: START, endsOn: END, reason: 'Away, nobody covering' }).expect(201);
     expect(created.body.standIn).toBeNull();
-    // SALES1 has nobody reporting to them in the seed, so route a request from someone below them
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: SALES1, reason: 'test setup for no-stand-in routing' }).expect(200);
+    // HR has nobody reporting to them in the seed, so route a request from someone below them
+    await t.as(CEO).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: HR, reason: 'test setup for no-stand-in routing' }).expect(200);
     const step = await route(DEV5, during);
     expect(step).toMatchObject({ approver: DIRECTOR, seat: DIRECTOR });
-    expect(step.skipped).toEqual([{ seat: SALES1, reason: 'away_no_stand_in' }]);
-    await t.as(SALES1).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'back from leave' }).expect(200);
-    expect((await route(DEV5, during)).approver).toBe(SALES1); // revoked period is ignored
+    expect(step.skipped).toEqual([{ seat: HR, reason: 'away_no_stand_in' }]);
+    await t.as(HR).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'back from leave' }).expect(200);
+    expect((await route(DEV5, during)).approver).toBe(HR); // revoked period is ignored
   });
 
   it('lets only the manager (or the Owner/CEO above) end a period, and records why', async () => {

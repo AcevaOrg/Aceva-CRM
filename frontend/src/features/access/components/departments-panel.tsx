@@ -15,12 +15,14 @@ import { CardsSkeleton, QueryState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { useCan } from "@/lib/auth/viewer";
 import { useAddOffice, useCreateDepartment, useDepartments } from "../hooks";
+import { isLive } from "@/lib/api/http";
 import { isManager } from "../logic";
 
 export function DepartmentsPanel() {
   const query = useDepartments();
   const lookup = useLookup();
-  const canManage = useCan("org.manage");
+  // Adding departments and offices is not part of Module 1 yet, so it is switched off while the real server is connected.
+  const canManage = useCan("org.manage") && !isLive("m1");
   const [newDept, setNewDept] = React.useState(false);
   const [newOffice, setNewOffice] = React.useState(false);
 
@@ -29,7 +31,7 @@ export function DepartmentsPanel() {
       <section>
         <SectionTitle
           title="Departments"
-          description={`Each department has a head. Headcount counts active staff and people on notice.${canManage ? "" : " View only: the Director adds departments and offices."}`}
+          description={`Each department has a head. Headcount counts active staff and people on notice.${canManage ? "" : " View only: the Owner and the CEO add departments and offices."}`}
           actions={
             canManage && (
               <Button size="sm" onClick={() => setNewDept(true)}>

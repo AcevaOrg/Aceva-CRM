@@ -15,9 +15,13 @@
     "test": "npm run build:contracts && npm run test -w @aceva/contracts && npm run test -w backend",
     "build": "npm run build:contracts && npm run build -w backend && npm run build -w aceva-digital-system-web",
     "db:migrate": "npm run db:migrate -w backend",
-    "db:seed": "npm run db:seed -w backend"
+    "db:seed": "npm run db:seed -w backend",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0"
   }
 }

@@ -10,6 +10,7 @@
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import type { Viewer } from "@/lib/auth/viewer";
 import type { Employee } from "@/types";
+import { isTopLevelRole } from "@/types";
 
 export interface ActivityAccess {
   online: boolean;
@@ -60,8 +61,9 @@ export function canCheckAlert(viewer: Pick<Viewer, "can" | "employee">, alertEmp
 export function alertCheckerLabel(alertEmpId: string, list: Pick<Employee, "empId" | "role" | "reportsTo">[]) {
   const e = list.find((x) => x.empId === alertEmpId);
   if (!e) return "their manager";
+  if (e.role === "owner") return "the CEO";
   if (e.role === "ceo") return "the Director";
   if (e.role === "director") return "the CTO";
   const boss = list.find((x) => x.empId === e.reportsTo);
-  return boss && boss.role !== "ceo" ? `the ${ROLE_LABEL[boss.role]}` : "their manager";
+  return boss && !isTopLevelRole(boss.role) ? `the ${ROLE_LABEL[boss.role]}` : "their manager";
 }

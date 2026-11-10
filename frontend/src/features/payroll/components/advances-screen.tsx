@@ -1,4 +1,5 @@
 "use client";
+import { isTopLevelRole } from "@/types";
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -170,7 +171,7 @@ function NewAdvanceSheet({ open, onOpenChange }: { open: boolean; onOpenChange: 
         <form onSubmit={onSubmit} className="flex min-h-0 flex-1 flex-col">
           <SheetBody className="grid content-start gap-4">
             <Field label="Employee" htmlFor="adv-emp" error={formState.errors.empId?.message} required>
-              <EmployeeSelect id="adv-emp" value={empId} onChange={(v) => setValue("empId", v, { shouldValidate: true })} filter={(e) => e.role !== "ceo"} invalid={!!formState.errors.empId} />
+              <EmployeeSelect id="adv-emp" value={empId} onChange={(v) => setValue("empId", v, { shouldValidate: true })} filter={(e) => !isTopLevelRole(e.role)} invalid={!!formState.errors.empId} />
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Advance (PKR)" htmlFor="adv-amount" error={formState.errors.amount?.message} required>
