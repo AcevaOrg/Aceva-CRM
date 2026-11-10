@@ -14,20 +14,21 @@ import { EmployeeSelect } from "@/components/shared/pickers";
 import { CardsSkeleton, QueryState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { useCan } from "@/lib/auth/viewer";
-import { useAddOffice, useCreateDepartment, useDepartments } from "../hooks";
-import { isLive } from "@/lib/api/http";
+import { useAddOffice, useChangeDepartmentHead, useCreateDepartment, useDepartments } from "../hooks";
 import { isManager } from "../logic";
 
 export function DepartmentsPanel() {
   const query = useDepartments();
   const lookup = useLookup();
-  // Adding departments and offices is not part of Module 1 yet, so it is switched off while the real server is connected.
-  const canManage = useCan("org.manage") && !isLive("m1");
+  // Owner and CEO add and change departments and offices. The head is chosen explicitly, never worked out.
+  const canManage = useCan("org.manage");
+  const [headFor, setHeadFor] = React.useState<{ id: string; name: string } | null>(null);
   const [newDept, setNewDept] = React.useState(false);
   const [newOffice, setNewOffice] = React.useState(false);
 
   return (
     <div className="grid gap-8">
+      {headFor && <ChangeHeadDialog department={headFor} onClose={() => setHeadFor(null)} />}
       <section>
         <SectionTitle
           title="Departments"
@@ -57,7 +58,12 @@ export function DepartmentsPanel() {
                     </div>
                     <div className="mt-4">
                       <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Head</p>
-                      <EmpChip empId={dep.headEmpId} subtitle={lookup.employee(dep.headEmpId)?.designation} />
+                      {dep.headEmpId ? <EmpChip empId={dep.headEmpId} subtitle={lookup.employee(dep.headEmpId)?.designation} /> : <p className="text-[13px] text-muted-foreground">No head set.</p>}
+                      {canManage && (
+                        <Button size="sm" variant="ghost" className="mt-1 -ml-2" onClick={() => setHeadFor({ id: dep.id, name: dep.name })}>
+                          Change head
+                        </Button>
+                      )}
                     </div>
                     <div className="mt-4 flex flex-wrap gap-1.5">
                       {dep.officeIds.map((o) => (
@@ -205,6 +211,47 @@ function NewOfficeDialog({ onClose }: { onClose: () => void }) {
             }}
           >
             Add office
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ChangeHeadDialog({ department, onClose }: { department: { id: string; name: string }; onClose: () => void }) {
+  const change = useChangeDepartmentHead();
+  const [head, setHead] = React.useState("");
+  const [reason, setReason] = React.useState("");
+  const submit = async () => {
+    try {
+      await change.mutateAsync({ departmentId: department.id, headEmpId: head, reason: reason.trim() });
+      toast.success(`Head of ${department.name} changed`, { description: "Reporting lines are not affected. The change is in the audit log." });
+      onClose();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't change the head.");
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Change the head of {department.name}</DialogTitle>
+          <DialogDescription>The head is chosen explicitly. Only the Owner and the CEO can change it.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <Field label="New head" htmlFor="head-person" required>
+            <EmployeeSelect id="head-person" value={head} onChange={setHead} placeholder="Choose a person" />
+          </Field>
+          <Field label="Reason" htmlFor="head-reason" required hint="At least 5 characters. Saved in the audit log.">
+            <Textarea id="head-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!head || reason.trim().length < 5} loading={change.isPending}>
+            Change head
           </Button>
         </DialogFooter>
       </DialogContent>

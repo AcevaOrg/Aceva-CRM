@@ -153,7 +153,7 @@ export class OrgService {
   /** Departments and offices with headcount. The head is the most senior active person (derived). */
   async departments(): Promise<DepartmentsResponse> {
     const [departments, offices, people] = await Promise.all([
-      this.prisma.department.findMany({ where: { archivedAt: null }, orderBy: { code: 'asc' } }),
+      this.prisma.department.findMany({ where: { archivedAt: null }, orderBy: { code: 'asc' }, include: { head: { select: { empId: true } } } }),
       this.prisma.office.findMany({ where: { archivedAt: null }, orderBy: { code: 'asc' } }),
       this.prisma.employee.findMany({
         where: { status: { not: 'left' } },
@@ -163,19 +163,17 @@ export class OrgService {
     ]);
     const headcount: Record<string, number> = {};
     const officeHeadcount: Record<string, number> = {};
-    const heads = new Map<string, string>();
     const deptOffices = new Map<string, Set<string>>();
     for (const p of people) {
       headcount[p.department.code] = (headcount[p.department.code] ?? 0) + 1;
       officeHeadcount[p.office.code] = (officeHeadcount[p.office.code] ?? 0) + 1;
-      if (!heads.has(p.department.code)) heads.set(p.department.code, p.empId);
       (deptOffices.get(p.department.code) ?? deptOffices.set(p.department.code, new Set()).get(p.department.code)!).add(p.office.code);
     }
     return {
       departments: departments.map((d) => ({
         id: d.code,
         name: d.name,
-        headEmpId: heads.get(d.code) ?? null,
+        headEmpId: d.head?.empId ?? null,
         officeIds: [...(deptOffices.get(d.code) ?? [])].sort(),
       })),
       offices: offices.map((o) => ({ id: o.code, name: o.name, city: o.city ?? '' })),
@@ -189,7 +187,7 @@ export class OrgService {
     const rows = await this.prisma.auditLog.findMany({
       where: {
         outcome: 'success',
-        action: { in: ['org.level.changed', 'org.reporting_line.changed', 'duty.assigned', 'duty.ended', 'standin.created', 'standin.revoked'] },
+        action: { in: ['org.level.changed', 'org.reporting_line.changed', 'duty.assigned', 'duty.ended', 'standin.created', 'standin.revoked', 'org.department.created', 'org.department.head_changed', 'org.department.updated', 'org.department.deactivated', 'org.office.created', 'org.office.updated', 'org.office.deactivated'] },
       },
       orderBy: { occurredAt: 'desc' },
       take: limit,
@@ -201,6 +199,8 @@ export class OrgService {
       if (r.targetId && r.targetId.startsWith('ACV-')) empIds.add(r.targetId);
       const d = r.details as { before?: { reportsTo?: string | null }; after?: { reportsTo?: string | null }; standIn?: string | null } | null;
       if (d?.after?.reportsTo) empIds.add(d.after.reportsTo);
+      const head = (r.details as { after?: { head?: string | null } } | null)?.after?.head;
+      if (head) empIds.add(head);
       if (d?.standIn) empIds.add(d.standIn);
     }
     const people = await this.prisma.employee.findMany({ where: { empId: { in: [...empIds] } }, select: { empId: true, fullName: true } });
@@ -231,6 +231,25 @@ export class OrgService {
         case 'standin.created':
           kind = 'stand_in';
           summary = d.standIn ? `${name(d.standIn)} stands in for ${r.actor?.fullName ?? 'a manager'}` : `${r.actor?.fullName ?? 'A manager'} is away with no stand-in`;
+          break;
+        case 'org.department.created':
+          kind = 'department';
+          summary = `Department added: ${(r.details as { name?: string } | null)?.name ?? r.targetId}`;
+          break;
+        case 'org.department.head_changed':
+          kind = 'department';
+          summary = `${r.targetId} department has a new head: ${name((r.details as { after?: { head?: string | null } } | null)?.after?.head)}`;
+          break;
+        case 'org.department.updated':
+        case 'org.department.deactivated':
+          kind = 'department';
+          summary = r.action === 'org.department.updated' ? `Department updated: ${r.targetId}` : `Department deactivated: ${r.targetId}`;
+          break;
+        case 'org.office.created':
+        case 'org.office.updated':
+        case 'org.office.deactivated':
+          kind = 'office';
+          summary = `Office ${r.action.split('.')[2]}: ${(r.details as { name?: string } | null)?.name ?? r.targetId}`;
           break;
         default:
           kind = 'stand_in';

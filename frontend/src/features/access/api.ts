@@ -159,9 +159,9 @@ export const accessApi = {
     });
   },
 
-  /** POST /departments (not part of Module 1 yet) */
+  /** POST /org/departments { name, headEmpId, reason }: Owner or CEO */
   createDepartment: async (input: DepartmentInput) => {
-    if (live()) return notInLive("Adding departments");
+    if (live()) return http.post("/org/departments", { name: input.name, headEmpId: input.headEmpId || undefined, reason: input.reason });
     return mock(() => {
       requirePermission("org.manage", "Only the Owner or the CEO can add departments.");
       const head = employeesTable().find((e) => e.empId === input.headEmpId);
@@ -172,9 +172,21 @@ export const accessApi = {
     });
   },
 
-  /** POST /offices (not part of Module 1 yet) */
+  /** PATCH /org/departments/:code { headEmpId, reason }: Owner or CEO (an explicit head, audited) */
+  changeDepartmentHead: async ({ departmentId, headEmpId, reason }: { departmentId: string; headEmpId: string; reason: string }) => {
+    if (live()) return http.patch(`/org/departments/${departmentId}`, { headEmpId, reason });
+    return mock(() => {
+      requirePermission("org.manage", "Only the Owner or the CEO can change a department head.");
+      const dep = departmentsTable().find((d) => d.id === departmentId);
+      if (!dep) notFound("Department");
+      dep.headEmpId = headEmpId;
+      logChange("department", `${employeeName(headEmpId)} is now head of ${dep.name}`, reason);
+    });
+  },
+
+  /** POST /org/offices { name, city, reason }: Owner or CEO */
   addOffice: async (input: OfficeInput) => {
-    if (live()) return notInLive("Adding offices");
+    if (live()) return http.post("/org/offices", { name: input.name, city: input.city || undefined, reason: input.reason ?? "New office" });
     return mock(() => {
       requirePermission("org.manage", "Only the Owner or the CEO can add offices.");
       officesTable().push({ id: uid("off"), name: input.name, city: input.city });
@@ -205,7 +217,7 @@ export const accessApi = {
     return mock(() => rolesTable());
   },
 
-  /** PATCH /roles/:id/permissions (not part of Module 1: roles change through duties) */
+  /** PATCH /roles/:id/permissions: not available. Role permissions are read only and change only through duties (decision). */
   updateRole: async (roleId: string, permissions: Permission[], reason: string, summary: string) => {
     if (live()) return notInLive("Editing role permissions");
     return mock(() => {

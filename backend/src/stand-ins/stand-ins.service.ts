@@ -84,6 +84,15 @@ export class StandInsService {
       });
       if (overlap) throw new ConflictException('You already have an away period that overlaps these dates');
 
+      const overlapping = { revokedAt: null, startsOn: { lte: toDate(dto.endsOn) }, endsOn: { gte: toDate(dto.startsOn) } };
+      // Conflicts: the stand-in must not be away themselves, and the manager must not already be covering for someone.
+      if (standInId && (await tx.standIn.findFirst({ where: { managerId: standInId, ...overlapping } }))) {
+        throw new ConflictException({ statusCode: 409, code: 'stand_in_is_away', message: 'The stand-in is away themselves on some of these dates' });
+      }
+      if (await tx.standIn.findFirst({ where: { standInId: actor.id, ...overlapping } })) {
+        throw new ConflictException({ statusCode: 409, code: 'manager_is_covering', message: 'You are already covering for someone else on some of these dates' });
+      }
+
       const created = await tx.standIn.create({
         data: {
           managerId: actor.id,

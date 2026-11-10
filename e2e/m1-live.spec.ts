@@ -110,3 +110,16 @@ test('a manager names a stand-in and approvals route to them', async ({ browser,
   expect(after).toMatchObject({ approver: 'ACV-0004', via: 'manager' }); // the period is over
   await context.close();
 });
+
+test('the CEO changes a department head explicitly; reporting lines stay as they were', async ({ browser, playwright }) => {
+  const { page, context } = await openAs(browser, 'ACV-0002', '/org?tab=departments');
+  await page.getByRole('button', { name: 'Change head' }).nth(4).click(); // the Sales card (departments are listed by code)
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('#head-person').selectOption('ACV-0014'); // Saad Mirza
+  await dialog.locator('#head-reason').fill('Saad now leads the sales team');
+  await dialog.getByRole('button', { name: 'Change head' }).click();
+  await expect(page.getByText(/Head of .* changed/)).toBeVisible();
+  const departments = await (await (await apiAs(playwright, 'ACV-0002')).get('/org/departments')).json();
+  expect(departments.departments.some((d: { headEmpId: string }) => d.headEmpId === 'ACV-0014')).toBe(true);
+  await context.close();
+});

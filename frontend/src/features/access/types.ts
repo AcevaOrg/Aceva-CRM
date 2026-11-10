@@ -90,6 +90,7 @@ export interface DepartmentInput {
 export interface OfficeInput {
   name: string;
   city: string;
+  reason?: string;
 }
 
 export interface DepartmentsView {

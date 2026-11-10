@@ -91,3 +91,11 @@ export function useEndDuty() {
   const done = useDone();
   return useMutation({ mutationFn: (input: DutyInput) => accessApi.endDuty(input), onSuccess: done });
 }
+
+export function useChangeDepartmentHead() {
+  const done = useDone();
+  return useMutation({
+    mutationFn: (input: { departmentId: string; headEmpId: string; reason: string }) => accessApi.changeDepartmentHead(input),
+    onSuccess: done,
+  });
+}

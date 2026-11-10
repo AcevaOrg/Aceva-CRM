@@ -15,10 +15,13 @@ export async function inRolledBackTransaction<T>(
 ): Promise<T> {
   let result: T | undefined;
   try {
-    await prisma.$transaction(async (tx) => {
-      result = await fn(tx);
-      throw new Rollback();
-    });
+    await prisma.$transaction(
+      async (tx) => {
+        result = await fn(tx);
+        throw new Rollback();
+      },
+      { maxWait: 30_000, timeout: 30_000 }, // many tests at once share a small connection pool
+    );
   } catch (error) {
     if (!(error instanceof Rollback)) throw error;
   }

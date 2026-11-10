@@ -333,8 +333,8 @@ describe('M1 stand-in approvals', () => {
 
   it('never lets the requester approve their own request: the stand-in is the requester, so it goes one level up', async () => {
     // The Director is away and names the CTO as stand-in; the CTO's own request must not go to the CTO.
-    const created = await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: START, endsOn: END }).expect(201);
-    const step = await route(CTO, during, undefined, CTO);
+    const created = await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(80), endsOn: day(85) }).expect(201);
+    const step = await route(CTO, day(82), undefined, CTO);
     expect(step.approver).toBe(CEO);
     expect(step.skipped).toEqual([{ seat: DIRECTOR, reason: 'stand_in_is_requester' }]);
     await t.as(DIRECTOR).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'cleanup for test' }).expect(200);

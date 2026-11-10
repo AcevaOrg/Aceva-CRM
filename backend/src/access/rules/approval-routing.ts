@@ -10,7 +10,8 @@
  *  2. If the seat holder is away AND named a stand-in, the stand-in approves
  *     (provided the stand-in is still authorized and is not the requester).
  *  3. If the seat holder is away and named nobody, the request goes one level up.
- *  4. Nobody ever approves their own request: if the approver would be the requester,
+ *  4. A person who has left the company is passed over (the next eligible person upward approves).
+ *  5. Nobody ever approves their own request: if the approver would be the requester,
  *     the request goes one level up.
  *
  * Pure function: no database, easy to test.
@@ -28,7 +29,7 @@ export interface AwayPeriod {
   revoked?: boolean;
 }
 
-export type SkipReason = 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized';
+export type SkipReason = 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' | 'not_active';
 
 export interface RoutingInput {
   requesterId: string;
@@ -41,6 +42,8 @@ export interface RoutingInput {
   afterSeatId?: string | null;
   /** People who may currently act as a stand-in (active and allowed to approve). */
   authorizedStandInIds: ReadonlySet<string>;
+  /** People in the chain who are no longer with the company: their position is passed over. */
+  inactiveIds?: ReadonlySet<string>;
 }
 
 export interface RoutingResult {
@@ -66,6 +69,10 @@ export function resolveApprover(input: RoutingInput): RoutingResult {
 
   for (let i = start; i < chain.length; i++) {
     const seatId = chain[i];
+    if (input.inactiveIds?.has(seatId)) {
+      skipped.push({ seatId, reason: 'not_active' });
+      continue;
+    }
     const period = away.find((p) => p.managerId === seatId && isActiveOn(p, onDate));
 
     let approverId = seatId;

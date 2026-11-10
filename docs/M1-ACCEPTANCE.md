@@ -41,3 +41,16 @@ Backend tests are in `backend/test` and `backend/src/**.test.ts`; browser tests 
 - Other modules, login and employee profiles remain demo (mock) data by design.
 - A `pg` deprecation warning ("client.query() when already executing") appears in test output; not yet traced.
 - GitHub Actions has not run on GitHub (pending), and does not yet include the browser tests.
+
+## Update after the owner's decisions (made at the start of M2)
+
+| Decision | Status |
+|---|---|
+| Owner and CEO create, edit and deactivate departments and offices | Done and tested (`backend/test/m1-structure.test.ts`, browser test) |
+| Explicit `head_employee_id` for a department head, never derived; only Owner/CEO change it; audited | Done and tested. Reporting lines stay the source of truth for hierarchy and approvals (tested) |
+| Role-permission editing stays read only; catalogue maintained centrally in the backend | Done (`backend/prisma/permission-catalogue.ts`) |
+| Empty stand-in means no delegated approver; next eligible person upward approves; stand-in active, can approve, same or higher level, not the manager or the requester; valid dates; no overlaps or conflicts | Done and tested (conflicts: a stand-in cannot be away on the same dates, a manager cannot be away while covering for someone; people who have left are passed over) |
+| Development-only identity removed once real authentication exists | Done: the header and its setting are deleted |
+| PostgreSQL "client.query() already executing" warning | Investigated. It comes from Prisma's own transaction code, which sends the sub-queries of one transaction at the same time on its single connection. `pg` queues them correctly, so results are right; it is only a notice about a future `pg` version. No change made. |
+| Redis hierarchy cache (M1-11) | **Still open**: not implemented. Redis is used for sessions only. |
+| GitHub Actions | **Still pending**: it has never run on GitHub. |

@@ -1,5 +1,7 @@
 name: CI
 
+# STATUS: this workflow has NEVER run on GitHub. It is a definition only until a run succeeds.
+
 on:
   push:
     branches: [main, cycle1-m1-m3]
@@ -9,7 +11,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
 
-    # GitHub starts a throw-away PostgreSQL for the test run (no Docker needed on your PC).
+    # GitHub starts throw-away PostgreSQL and Redis for the test run (no Docker needed on your PC).
     services:
       postgres:
         image: postgres:17
@@ -24,12 +26,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       NODE_ENV: test
-      # CI-only values for the throw-away database above. Not real secrets.
+      # CI-only values for the throw-away services above. Not real secrets.
       DATABASE_URL: postgresql://aceva_app:ci_only_password@localhost:5432/aceva_dev
       TEST_DATABASE_URL: postgresql://aceva_app:ci_only_password@localhost:5432/aceva_test
+      REDIS_URL: redis://localhost:6379
+      DATA_ENCRYPTION_KEY: Y2ktb25seS1rZXktbm90LWEtc2VjcmV0IWNpLW9ubHk=
+      ARGON2_MEMORY_KIB: '4096'
+      ARGON2_TIME_COST: '2'
 
     steps:
       - uses: actions/checkout@v4
@@ -62,3 +77,5 @@ jobs:
 
       - name: Build frontend
         run: npm run build -w aceva-digital-system-web
+
+      # The browser tests (npm run test:e2e) are not part of CI yet: they also need Mailpit and Playwright browsers.

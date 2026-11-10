@@ -37,11 +37,11 @@ export const SAME_LEVEL_RULES: Array<{ manager: string; employee: string; reason
 
 /** Department and office codes match the ids the frontend already uses (dep-eng, off-khi ...). */
 export const DEPARTMENTS = [
-  { code: 'dep-mgmt', name: 'Management' },
-  { code: 'dep-eng', name: 'Software Development' },
-  { code: 'dep-sales', name: 'Sales' },
-  { code: 'dep-fin', name: 'Finance' },
-  { code: 'dep-hr', name: 'Human Resources' },
+  { code: 'dep-mgmt', name: 'Management', head: 'ACV-0001' },
+  { code: 'dep-eng', name: 'Software Development', head: 'ACV-0004' },
+  { code: 'dep-sales', name: 'Sales', head: 'ACV-0003' },
+  { code: 'dep-fin', name: 'Finance', head: 'ACV-0003' },
+  { code: 'dep-hr', name: 'Human Resources', head: 'ACV-0003' },
 ];
 
 export const OFFICES = [
@@ -176,7 +176,7 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
 
       // Departments and offices
       for (const d of DEPARTMENTS) {
-        await tx.department.upsert({ where: { code: d.code }, update: {}, create: d });
+        await tx.department.upsert({ where: { code: d.code }, update: {}, create: { code: d.code, name: d.name } });
       }
       for (const o of OFFICES) {
         await tx.office.upsert({ where: { code: o.code }, update: {}, create: o });
@@ -218,6 +218,12 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
           }
         }
         bySlug.set(e.slug, employee.id);
+      }
+
+      // Department heads are set explicitly (only where none is set yet), never worked out from reporting lines.
+      for (const d of DEPARTMENTS) {
+        const head = await tx.employee.findUnique({ where: { empId: d.head }, select: { id: true } });
+        if (head) await tx.department.updateMany({ where: { code: d.code, headEmployeeId: null }, data: { headEmployeeId: head.id } });
       }
 
       // The demo roster uses explicit Emp-IDs up to ACV-0015; the sequence must never hand those out again.

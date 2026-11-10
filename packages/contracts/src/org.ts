@@ -62,6 +62,43 @@ export const approvalRouteQuerySchema = z.object({
 });
 export type ApprovalRouteQuery = z.infer<typeof approvalRouteQuerySchema>;
 
+/** POST /org/departments (Owner or CEO) */
+export const createDepartmentRequestSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  /** The department head, chosen explicitly. */
+  headEmpId: empIdSchema.optional(),
+  reason: reasonSchema,
+});
+export type CreateDepartmentRequest = z.infer<typeof createDepartmentRequestSchema>;
+
+/** PATCH /org/departments/:code (Owner or CEO). headEmpId null removes the head. */
+export const updateDepartmentRequestSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80).optional(),
+    headEmpId: empIdSchema.nullable().optional(),
+    reason: reasonSchema,
+  })
+  .refine((v) => v.name !== undefined || v.headEmpId !== undefined, { message: 'Nothing to change' });
+export type UpdateDepartmentRequest = z.infer<typeof updateDepartmentRequestSchema>;
+
+/** POST /org/offices (Owner or CEO) */
+export const createOfficeRequestSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  city: z.string().trim().max(80).optional(),
+  reason: reasonSchema,
+});
+export type CreateOfficeRequest = z.infer<typeof createOfficeRequestSchema>;
+
+/** PATCH /org/offices/:code (Owner or CEO) */
+export const updateOfficeRequestSchema = z
+  .object({ name: z.string().trim().min(2).max(80).optional(), city: z.string().trim().max(80).optional(), reason: reasonSchema })
+  .refine((v) => v.name !== undefined || v.city !== undefined, { message: 'Nothing to change' });
+export type UpdateOfficeRequest = z.infer<typeof updateOfficeRequestSchema>;
+
+/** POST /org/departments/:code/deactivate and /org/offices/:code/deactivate */
+export const deactivateRequestSchema = z.object({ reason: reasonSchema });
+export type DeactivateRequest = z.infer<typeof deactivateRequestSchema>;
+
 // ---------- responses ----------
 
 export interface OrgNode {
@@ -121,13 +158,13 @@ export interface ApprovalRouteStep {
   seat: string | null;
   via: ApprovalRouteVia | null;
   /** Positions that were passed over, and why. */
-  skipped: Array<{ seat: string; reason: 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' }>;
+  skipped: Array<{ seat: string; reason: 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' | 'not_active' }>;
 }
 
 export interface DepartmentView {
   id: string;
   name: string;
-  /** The most senior active person in the department (derived, not stored). */
+  /** The department head, set explicitly by the Owner or CEO (null when nobody is set). */
   headEmpId: string | null;
   officeIds: string[];
 }
@@ -147,7 +184,7 @@ export interface DepartmentsResponse {
   officeHeadcount: Record<string, number>;
 }
 
-export type OrgChangeKind = 'level' | 'reporting_line' | 'duty' | 'stand_in';
+export type OrgChangeKind = 'level' | 'reporting_line' | 'duty' | 'stand_in' | 'department' | 'office';
 
 /** One line of the "recent access changes" feed, built from the audit log. */
 export interface OrgChangeView {

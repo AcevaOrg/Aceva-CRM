@@ -228,6 +228,8 @@ model Department {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code       String    @unique
   name       String    @unique
+  /// The department head, set explicitly by the Owner or CEO (never worked out from reporting lines).
+  headEmployeeId String? @map("head_employee_id") @db.Uuid
   archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   createdBy  String?   @map("created_by") @db.Uuid
@@ -235,7 +237,9 @@ model Department {
   updatedBy  String?   @map("updated_by") @db.Uuid
 
   employees Employee[]
+  head      Employee? @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
 
+  @@index([headEmployeeId])
   @@map("departments")
 }
 
@@ -295,6 +299,7 @@ model Employee {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   department Department @relation(fields: [departmentId], references: [id])
+  headOf     Department[] @relation("DepartmentHead")
   office     Office     @relation(fields: [officeId], references: [id])
   level      Level      @relation(fields: [levelId], references: [id])
   role       Role       @relation(fields: [roleId], references: [id])

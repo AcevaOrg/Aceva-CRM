@@ -58,8 +58,11 @@ export class ApprovalsService {
       if (person && person.status !== 'left' && (await this.permissions.canApprove(id))) authorized.add(id);
     }
 
+    const inactive = new Set((await this.prisma.employee.findMany({ where: { id: { in: chain }, status: 'left' }, select: { id: true } })).map((p) => p.id));
+
     const result = resolveApprover({
       requesterId: requester.id,
+      inactiveIds: inactive,
       chain,
       away,
       onDate,

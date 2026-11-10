@@ -116,6 +116,12 @@ describe('approval routing', () => {
     expect(result.skipped[0].reason).toBe('stand_in_not_authorized');
   });
 
+  it('passes over a person who has left and uses the next eligible person upward', () => {
+    const result = resolveApprover({ ...base, inactiveIds: new Set(['head']) });
+    expect(result).toMatchObject({ approverId: 'director', seatId: 'director' });
+    expect(result.skipped).toEqual([{ seatId: 'head', reason: 'not_active' }]);
+  });
+
   it('follows the real reporting chain: CTO -> Director, both Level 3 (C2)', () => {
     const result = resolveApprover({ ...base, requesterId: 'cto', chain: ['director', 'ceo', 'owner'] });
     expect(result.approverId).toBe('director');
