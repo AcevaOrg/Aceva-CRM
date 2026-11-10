@@ -120,7 +120,15 @@ export const ROLES: Array<{
     isDefault: true,
     permissions: ['employee.directory.view', 'org.view', 'task.assign', 'task.view', 'approval.approve', 'standin.manage'],
   },
-  { key: 'employee', name: 'Employee (default)', level: 5, isDefault: true, permissions: ['employee.directory.view', 'task.view'] },
+  { key: 'employee', name: 'Employee (default)', level: 5, isDefault: true, permissions: ['employee.directory.view', 'org.view', 'task.view'] },
+];
+
+/**
+ * The only allowed same-level reporting lines (plan: the CTO reports to the Director, both Level 3).
+ * Everything else must report to a strictly higher level.
+ */
+export const SAME_LEVEL_RULES: Array<{ manager: string; employee: string; reason: string }> = [
+  { manager: 'director', employee: 'cto', reason: 'The CTO (Level 3) reports to the Director (Level 3), as documented in the company structure.' },
 ];
 
 /** Extra duties. Their permissions are kept apart from role permissions. */
@@ -294,6 +302,16 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
         await tx.rolePermission.createMany({
           data: r.permissions.map((k) => ({ roleId: role.id, permissionId: permId(k) })),
           skipDuplicates: true,
+        });
+      }
+
+      // Allowed same-level reporting lines
+      const roleIds = new Map((await tx.role.findMany()).map((r) => [r.key, r.id]));
+      for (const rule of SAME_LEVEL_RULES) {
+        await tx.sameLevelReportingRule.upsert({
+          where: { managerRoleId_employeeRoleId: { managerRoleId: roleIds.get(rule.manager)!, employeeRoleId: roleIds.get(rule.employee)! } },
+          update: {},
+          create: { managerRoleId: roleIds.get(rule.manager)!, employeeRoleId: roleIds.get(rule.employee)!, reason: rule.reason },
         });
       }
 

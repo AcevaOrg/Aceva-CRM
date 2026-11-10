@@ -17,6 +17,13 @@ describe('environment validation', () => {
     expect(() => loadEnv({ DATABASE_URL: 'mysql://u:p@localhost/db' })).toThrow(/postgresql/);
   });
 
+  it('never allows the development identity header in production', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
+    expect(loadEnv({ ...base, DEV_IDENTITY_ENABLED: 'true' }).DEV_IDENTITY_ENABLED).toBe(true);
+    expect(loadEnv({ ...base }).DEV_IDENTITY_ENABLED).toBe(false); // off by default
+    expect(() => loadEnv({ ...base, NODE_ENV: 'production', DEV_IDENTITY_ENABLED: 'true' })).toThrow(/production/);
+  });
+
   it('rejects an invalid port and an unknown NODE_ENV', () => {
     const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db' };
     expect(() => loadEnv({ ...base, PORT: '99999' })).toThrow(/PORT/);

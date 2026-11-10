@@ -14,6 +14,22 @@ export const envSchema = z.object({
     .min(1, 'DATABASE_URL is required')
     .refine((v) => /^postgres(ql)?:\/\//.test(v), 'DATABASE_URL must start with postgresql://'),
   FILE_STORAGE_ROOT: z.string().min(1).default('./.local-storage'),
+  /**
+   * DEVELOPMENT ONLY, until M2 (real login) replaces it. When "true", the API trusts an
+   * "X-Dev-Emp-Id" request header as the logged-in employee. Never allowed in production.
+   */
+  DEV_IDENTITY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+}).superRefine((env, ctx) => {
+  if (env.NODE_ENV === 'production' && env.DEV_IDENTITY_ENABLED) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['DEV_IDENTITY_ENABLED'],
+      message: 'The development identity header must never be enabled in production',
+    });
+  }
 });
 
 export type Env = z.infer<typeof envSchema>;

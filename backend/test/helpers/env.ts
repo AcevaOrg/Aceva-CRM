@@ -13,8 +13,5 @@ export function testDatabaseUrl(): string {
   if (!dbName.includes('test')) {
     throw new Error(`Refusing to run tests against "${dbName}": the test database name must contain "test".`);
   }
-  if (url === process.env.DATABASE_URL) {
-    throw new Error('TEST_DATABASE_URL must be different from DATABASE_URL.');
-  }
   return url;
 }

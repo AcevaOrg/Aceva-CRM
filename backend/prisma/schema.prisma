@@ -129,6 +129,8 @@ model Role {
   level           Level            @relation(fields: [levelId], references: [id])
   rolePermissions RolePermission[]
   employees       Employee[]
+  ruleAsManager   SameLevelReportingRule[] @relation("RuleManagerRole")
+  ruleAsEmployee  SameLevelReportingRule[] @relation("RuleEmployeeRole")
 
   @@index([levelId])
   @@map("roles")
@@ -391,7 +393,8 @@ model ReportingClosure {
 model StandIn {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   managerId   String    @map("manager_id") @db.Uuid
-  standInId   String    @map("stand_in_id") @db.Uuid
+  /// Null = the manager is away with no stand-in, so approvals go one level up.
+  standInId   String?   @map("stand_in_id") @db.Uuid
   startsOn    DateTime  @map("starts_on") @db.Date
   endsOn      DateTime  @map("ends_on") @db.Date
   reason      String?
@@ -402,11 +405,28 @@ model StandIn {
   updatedBy   String?   @map("updated_by") @db.Uuid
 
   manager Employee @relation("StandInManager", fields: [managerId], references: [id])
-  standIn Employee @relation("StandInCover", fields: [standInId], references: [id])
+  standIn Employee? @relation("StandInCover", fields: [standInId], references: [id])
 
   @@index([managerId, startsOn, endsOn])
   @@index([standInId])
   @@map("stand_ins")
+}
+
+/// Same-level reporting is allowed ONLY where listed here (plan: the CTO reports to the
+/// Director, both Level 3). Level and reporting line are separate concepts.
+model SameLevelReportingRule {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  managerRoleId  String   @map("manager_role_id") @db.Uuid
+  employeeRoleId String   @map("employee_role_id") @db.Uuid
+  reason         String
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy      String?  @map("created_by") @db.Uuid
+
+  managerRole  Role @relation("RuleManagerRole", fields: [managerRoleId], references: [id])
+  employeeRole Role @relation("RuleEmployeeRole", fields: [employeeRoleId], references: [id])
+
+  @@unique([managerRoleId, employeeRoleId])
+  @@map("same_level_reporting_rules")
 }
 
 // ---------------------------------------------------------------------------
