@@ -28,6 +28,8 @@ import type { Employee, Level } from "@/types";
 import { useRevealField, useUpdateBasic, useUpdateJob, useUpdatePay, useUpdatePersonal, useUploadDocument } from "../hooks";
 import { DOC_LABEL, hireLevels, STATUS_INFO, TYPE_LABEL } from "../logic";
 import type { DocumentKind, ProfileView } from "../types";
+import { isLive } from "@/lib/api/http";
+import { livePeopleApi } from "../live-api";
 import { LoggedMaskedValue } from "./logged-masked-value";
 import { FormActions, SectionCard } from "./section-card";
 
@@ -217,7 +219,7 @@ export function JobSection({ view }: { view: ProfileView }) {
 
 const phoneRe = /^\+?[\d\s-]{10,16}$/;
 const personalSchema = z.object({
-  cnic: z.string().trim().regex(/^\d{5}-\d{7}-\d$/, "Use the format 42101-1234567-1."),
+  cnic: z.string().trim().regex(/^(\d{5}-\d{7}-\d)?$/, "Use the format 42101-1234567-1."),
   phone: z.string().trim().regex(phoneRe, "Enter a valid phone number."),
   address: z.string().trim().min(8, "Enter the full address."),
   ecName: z.string().trim().min(2, "Enter a name."),
@@ -234,7 +236,7 @@ export function PersonalSection({ view }: { view: ProfileView }) {
   const mode = view.access.edit.personal;
   const form = useForm<z.infer<typeof personalSchema>>({
     resolver: zodResolver(personalSchema),
-    values: { cnic: p?.cnic || "00000-0000000-0", phone: p?.phone ?? "", address: p?.address ?? "", ecName: p?.emergencyContact.name ?? "", ecRelation: p?.emergencyContact.relation ?? "", ecPhone: p?.emergencyContact.phone ?? "" },
+    values: { cnic: p?.cnic?.includes("*") ? "" : p?.cnic || "00000-0000000-0", phone: p?.phone ?? "", address: p?.address ?? "", ecName: p?.emergencyContact.name ?? "", ecRelation: p?.emergencyContact.relation ?? "", ecPhone: p?.emergencyContact.phone ?? "" },
   });
   if (!p) return null;
   const fe = form.formState.errors;
@@ -254,7 +256,7 @@ export function PersonalSection({ view }: { view: ProfileView }) {
         <DetailList
           columns={2}
           items={[
-            ["CNIC", <LoggedMaskedValue key="c" value={p.cnic} label="CNIC" canReveal={view.access.revealCnic} onReveal={() => reveal.mutate({ empId: e.empId, field: "cnic" })} />],
+            ["CNIC", <LoggedMaskedValue key="c" value={p.cnic} label="CNIC" canReveal={view.access.revealCnic} onReveal={() => reveal.mutateAsync({ empId: e.empId, field: "cnic" })} />],
             ["Phone", p.phone || "—"],
             ["Home address", p.address || "—"],
             ["Emergency contact", p.emergencyContact.name ? `${p.emergencyContact.name} (${p.emergencyContact.relation}) · ${p.emergencyContact.phone}` : "—"],
@@ -266,7 +268,7 @@ export function PersonalSection({ view }: { view: ProfileView }) {
             try {
               await update.mutateAsync({
                 empId: e.empId,
-                patch: { ...(mode === "all" ? { cnic: v.cnic } : {}), phone: v.phone, address: v.address, emergencyContact: { name: v.ecName, relation: v.ecRelation, phone: v.ecPhone } },
+                patch: { ...(mode === "all" && v.cnic ? { cnic: v.cnic } : {}), phone: v.phone, address: v.address, emergencyContact: { name: v.ecName, relation: v.ecRelation, phone: v.ecPhone } },
               });
               toast.success("Personal details saved", { description: "The old values are kept in History." });
               setEditing(false);
@@ -344,7 +346,7 @@ export function PaySection({ view }: { view: ProfileView }) {
     self ? (
       <Money value={n} />
     ) : (
-      <LoggedMaskedValue value={formatMoney(n)} display="PKR ••••••" label={label} canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutate({ empId: e.empId, field: "salary" })} />
+      <LoggedMaskedValue value={formatMoney(n)} display="PKR ••••••" label={label} canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutateAsync({ empId: e.empId, field: "salary" }).then((v) => (typeof v === "string" ? formatMoney(Number(v)) : undefined))} />
     );
 
   return (
@@ -367,7 +369,7 @@ export function PaySection({ view }: { view: ProfileView }) {
               ["Allowances", pay.allowances.length ? <span key="a" className="grid gap-0.5">{pay.allowances.map((a) => <span key={a.name}>{a.name}: {amount(toNumber(a.amount), `${a.name} allowance`)}</span>)}</span> : "None"],
               ["Gross monthly", amount(total, "gross pay")],
               ["Bank", pay.bankName],
-              ["Account number", <LoggedMaskedValue key="ac" value={pay.accountNumber} label="bank account" canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutate({ empId: e.empId, field: "account" })} />],
+              ["Account number", <LoggedMaskedValue key="ac" value={pay.accountNumber} label="bank account" canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutateAsync({ empId: e.empId, field: "account" })} />],
             ]}
           />
         ) : (
@@ -433,7 +435,7 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
     <SectionCard
       title="Documents"
       seal="confidential"
-      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the Director (HR duty) and the CEO / Founder / Owner. Files open through links that expire in minutes`}
+      visibleTo={`${view.access.isSelf ? "you" : e.name.split(" ")[0]}, the Director (HR duty) and the CEO / Founder / Owner. ${isLive("m3") ? "Files open through the server, which checks permission and logs each download" : "Files open through links that expire in minutes"}`}
       viewOnly={view.access.edit.documents ? undefined : "View only. The Director (HR duty) adds documents."}
       actions={
         view.access.edit.documents && (
@@ -454,7 +456,7 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
                 ev.target.value = "";
                 if (!f) return;
                 if (f.size > 10 * 1024 * 1024) return toast.error("Files must be 10 MB or smaller.");
-                await upload.mutateAsync({ empId: e.empId, file: { kind, fileName: f.name, sizeBytes: f.size } });
+                await upload.mutateAsync({ empId: e.empId, file: { kind, fileName: f.name, sizeBytes: f.size, blob: f } });
                 toast.success(`${f.name} uploaded`, { description: `${DOC_LABEL[kind]} · ${formatBytes(f.size)}. Stored in private file storage.` });
               }}
             />
@@ -466,7 +468,13 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
         <ul className="grid gap-3 sm:grid-cols-2">
           {docs.map((d) => (
             <li key={d.id} className="grid gap-1">
-              <FileCard file={d} onOpen={() => toast("Opening a private link (demo)", { description: "Real links expire in a few minutes." })} />
+              <FileCard
+                file={d}
+                onOpen={() => {
+                  if (!isLive("m3")) return toast("Opening a private link (demo)", { description: "Real links expire in a few minutes." });
+                  livePeopleApi.downloadDocument(e.empId, d.id, d.fileName).catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't open the file."));
+                }}
+              />
               <p className="flex items-center gap-2 px-1 text-[11.5px] text-muted-foreground">
                 <Badge tone="outline">{DOC_LABEL[d.kind]}</Badge> Added {formatDate(d.uploadedAt)}
               </p>

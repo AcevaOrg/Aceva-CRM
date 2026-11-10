@@ -45,3 +45,4 @@ Backend tests are in `backend/test/m2-*.test.ts` and `backend/src/auth/primitive
 - **Screens for newly hired people** work once Module 3 (profiles) is live; until then the built-in demo roster supplies names. The
   first-login wizard already reads the name from the server.
 - **GitHub Actions** has still never run on GitHub; Redis was added to its definition but that is untested.
+| K | Lost authenticator phone: Owner/CEO reset anyone below, Director those below them, HR duty those in its scope; never self, same level or upward; reason required; audited; sessions revoked; old secret invalidated; fresh enrolment at next login | Done and tested (added with Module 3) | `m2-reset-2fa` (9 tests), `docs/API.md` |

@@ -25,31 +25,41 @@ export function LoggedMaskedValue({
   stepUp?: boolean;
   label: string;
   display?: string;
-  onReveal?: () => void;
+  /** Called when the person shows the value. Return the full value (live mode: fetched from the server and logged there). */
+  onReveal?: () => void | string | Promise<string | void>;
   className?: string;
 }) {
   const [shown, setShown] = React.useState(false);
+  const [full, setFull] = React.useState<string | null>(null);
   const stepUp = useStepUp();
 
   React.useEffect(() => {
     if (!shown) return;
-    const t = setTimeout(() => setShown(false), 30_000);
+    const t = setTimeout(() => {
+      setShown(false);
+      setFull(null);
+    }, 30_000);
     return () => clearTimeout(t);
   }, [shown]);
 
   if (!value) return <span className="text-muted-foreground">Not added yet</span>;
 
   const reveal = async () => {
-    if (shown) return setShown(false);
+    if (shown) return (setShown(false), setFull(null));
     if (needsStepUp && !(await stepUp({ action: `Show ${label}`, detail: "Shown for 30 seconds. The view is logged." }))) return;
-    onReveal?.();
+    try {
+      const result = await onReveal?.();
+      setFull(typeof result === "string" ? result : null);
+    } catch (e) {
+      return void toast.error(e instanceof Error ? e.message : "Couldn't show this value.");
+    }
     setShown(true);
     toast(`Showing ${label} for 30 s`, { description: "This view is logged." });
   };
 
   return (
     <span className={cn("inline-flex items-center gap-1.5", className)}>
-      <span className="font-mono tabular">{shown ? value : (display ?? maskTail(value))}</span>
+      <span className="font-mono tabular">{shown ? (full ?? value) : (display ?? maskTail(value))}</span>
       {canReveal && (
         <Tip content={shown ? "Hide" : `Show ${label} (logged)`}>
           <button type="button" onClick={reveal} className="rounded p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={shown ? `Hide ${label}` : `Show ${label}`}>

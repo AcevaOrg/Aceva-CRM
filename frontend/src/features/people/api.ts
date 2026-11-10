@@ -6,6 +6,7 @@ import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
 import { recordActivity, sessionsFor } from "@/features/activity/api";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
+import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { descendantsOf } from "@/lib/auth/scope";
 import { getViewer } from "@/lib/auth/viewer";
@@ -16,6 +17,7 @@ import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedDocuments, seedHistory, seedPay, seedPersonal } from "@/mocks/seed/people-profiles";
 import { roleFor, type Employee, type Level } from "@/types";
+import { livePeopleApi } from "./live-api";
 import { capacityFor, fitsDepartment, hireLevels, nextEmpId, profileAccess, TYPE_LABEL } from "./logic";
 import type {
   BasicPatch, DocumentKind, EmployeeDocument, FieldChange, JobPatch, OffboardInput, OffboardPreview, OnboardingInput, PayDetails,
@@ -60,7 +62,7 @@ function syncRole(e: Employee) {
 const deptName = (id: string) => departmentsTable().find((d) => d.id === id)?.name ?? id;
 const officeName = (id: string) => officesTable().find((o) => o.id === id)?.name ?? id;
 
-export const peopleApi = {
+const mockPeopleApi = {
   /** GET /employees (directory fields only) */
   list: () => mock(() => employeesTable()),
 
@@ -264,12 +266,15 @@ export const peopleApi = {
     }),
 
   /** POST /employees/:empId/documents (multipart) */
-  uploadDocument: (empId: string, file: { kind: DocumentKind; fileName: string; sizeBytes: number }) =>
+  uploadDocument: (empId: string, file: { kind: DocumentKind; fileName: string; sizeBytes: number; blob?: File }) =>
     mock(() => {
       const e = findEmp(empId);
       if (!accessFor(e).access.edit.documents) throw new ApiError("forbidden", "You can't add documents to this profile.", 403);
-      const doc: EmployeeDocument = { id: uid("doc"), empId, ...file, uploadedAt: new Date().toISOString(), uploadedBy: getViewer().employee.empId };
+      const doc: EmployeeDocument = { id: uid("doc"), empId, kind: file.kind, fileName: file.fileName, sizeBytes: file.sizeBytes, uploadedAt: new Date().toISOString(), uploadedBy: getViewer().employee.empId };
       documentsTable().unshift(doc);
       return doc;
     }, { delay: 700 }),
 };
+
+/** Module 3 is live when NEXT_PUBLIC_LIVE_MODULES contains m3; otherwise the in-browser mock above. */
+export const peopleApi = (isLive("m3") ? livePeopleApi : mockPeopleApi) as typeof mockPeopleApi & { reveal: (empId: string, field: "cnic" | "salary" | "account") => Promise<string | void> };

@@ -21,6 +21,7 @@ export function detectFileType(buffer: Buffer): DetectedFile | null {
 /** A file name that is safe to show and to put in a download header (no folders, no control characters). */
 export function safeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? 'file';
+  // eslint-disable-next-line no-control-regex -- control characters are exactly what is being removed
   const cleaned = base.replace(/[\u0000-\u001f"<>|:*?\\/]/g, '_').trim().slice(0, 120);
   return cleaned || 'file';
 }

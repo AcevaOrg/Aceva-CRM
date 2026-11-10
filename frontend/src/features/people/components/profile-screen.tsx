@@ -2,7 +2,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Activity, CalendarX, FileText, History, IdCard, LockOpen, Mail, MapPin, MessageSquare, MoreHorizontal, Plus, Briefcase, UserRound, Wallet } from "lucide-react";
+import { Activity, CalendarX, FileText, History, IdCard, LockOpen, Mail, MapPin, MessageSquare, MoreHorizontal, Plus, ShieldAlert, Briefcase, UserRound, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -26,7 +26,9 @@ import { formatDate } from "@/lib/dates";
 import { useProfile } from "../hooks";
 import { STATUS_INFO, TYPE_LABEL } from "../logic";
 import type { ProfileSection } from "../types";
+import { isLive } from "@/lib/api/http";
 import { OffboardDialog } from "./offboard-dialog";
+import { ResetTwoFactorDialog } from "./reset-two-factor-dialog";
 import { BasicSection, DocumentsSection, HistorySection, JobSection, PaySection, PersonalSection } from "./profile-sections";
 
 const TABS: { key: ProfileSection; label: string; icon: React.ElementType }[] = [
@@ -45,6 +47,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
   const lookup = useLookup();
   const [tab, setTab] = useUrlState<ProfileSection>("tab", "basic");
   const [offboarding, setOffboarding] = React.useState(false);
+  const [resetting, setResetting] = React.useState(false);
   const locks = useAccountLocks();
   const unlock = useUnlockAccount();
   const stepUp = useStepUp();
@@ -73,6 +76,8 @@ export function ProfileScreen({ empId }: { empId: string }) {
   // Unlocking and offboarding only go downward: a manager for people below them in the reporting line.
   const canUnlock = viewer.can("auth.unlock_account") && below && !!locked;
   const canOffboard = viewer.can("people.manage") && view.access.edit.job;
+  // Lost authenticator: Owner/CEO, Director or the HR duty, for people of lower rank. The server makes the final decision.
+  const canResetTwoFactor = isLive("m2") && !view.access.isSelf && e.status !== "left" && e.level > viewer.employee.level && (viewer.employee.level <= 2 || viewer.can("people.manage"));
   const dept = lookup.department(e.departmentId);
   const office = lookup.office(e.officeId);
 
@@ -99,7 +104,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
           </Link>
         </Button>
       )}
-      {((canOffboard && e.status !== "left") || canUnlock) && (
+      {((canOffboard && e.status !== "left") || canUnlock || canResetTwoFactor) && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="icon" variant="ghost" aria-label="More actions">
@@ -116,6 +121,11 @@ export function ProfileScreen({ empId }: { empId: string }) {
                 }}
               >
                 <LockOpen /> Unlock account
+              </DropdownMenuItem>
+            )}
+            {canResetTwoFactor && (
+              <DropdownMenuItem onSelect={() => setResetting(true)}>
+                <ShieldAlert /> Reset authenticator
               </DropdownMenuItem>
             )}
             {canOffboard && e.status !== "left" && (
@@ -157,7 +167,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
               </span>
               <span className="text-muted-foreground">
                 {ROLE_LABEL[e.role]}
-                {e.duties.map((d) => ` · ${DUTY_LABEL[d]}`).join("")} · {TYPE_LABEL[e.type]} · joined {formatDate(e.joiningDate)}
+                {e.duties.map((d) => ` · ${DUTY_LABEL[d]}`).join("")} {view.access.see.job && <> · {TYPE_LABEL[e.type]} · joined {formatDate(e.joiningDate)}</>}
               </span>
               {e.status === "on_notice" && e.lastWorkingDay && <span className="font-medium text-[oklch(0.55_0.13_70)]">Last working day {formatDate(e.lastWorkingDay)}</span>}
             </div>
@@ -188,6 +198,7 @@ export function ProfileScreen({ empId }: { empId: string }) {
       )}
 
       {offboarding && <OffboardDialog employee={e} onClose={() => setOffboarding(false)} />}
+      {resetting && <ResetTwoFactorDialog employee={e} onClose={() => setResetting(false)} />}
     </>
   );
 }

@@ -59,3 +59,10 @@ UPDATE outbox_events SET processed_at = now() WHERE id = ANY($1);
 ```
 
 A consumer must check `version` and ignore versions it does not know. Adding a consumer never needs a change to Module 2.
+
+## Module 3 status of the leaving events
+
+`employee.offboarded`, `task.transfer.requested` and `payroll.final_settlement.requested` are written to the outbox when
+an employee's last working day is processed (see `backend/src/people/offboarding.service.ts`). **No module consumes them yet**
+(Module 5 Tasks and Module 8 Payroll do not exist). Nothing moves tasks or prepares a final salary today; the events wait in
+`outbox_events` for those modules.

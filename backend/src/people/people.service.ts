@@ -202,22 +202,23 @@ export class PeopleService {
   }
 
   /** Shows a masked CNIC or bank account number to someone allowed to see that section. Logged EVERY time. */
-  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account', client: RequestInfo): Promise<{ value: string }> {
+  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account' | 'salary', client: RequestInfo): Promise<{ value: string }> {
     const target = await this.requireTarget(empId);
     const access = await this.accessFor(actor, target);
     const allowed = field === 'cnic' ? access.revealCnic : access.revealPay;
     if (!allowed) return this.deny(actor, 'reveal_not_allowed', empId, client);
-    const encrypted = field === 'cnic' ? target.personal?.cnicEncrypted : target.pay?.bankAccountEncrypted;
-    if (!encrypted) throw new NotFoundException('Nothing is stored for this field');
-    await this.audit.record({
-      actorId: actor.id,
-      action: 'employee.sensitive.revealed',
-      targetType: 'employee',
-      targetId: empId,
-      details: { field: field === 'cnic' ? 'CNIC' : 'bank account' },
-      ...client,
-    });
-    return { value: this.crypto.decrypt(encrypted) };
+    const label = { cnic: 'CNIC', account: 'bank account', salary: 'salary' }[field];
+    let value: string;
+    if (field === 'salary') {
+      if (!target.pay) throw new NotFoundException('Nothing is stored for this field');
+      value = money(target.pay.baseSalary);
+    } else {
+      const encrypted = field === 'cnic' ? target.personal?.cnicEncrypted : target.pay?.bankAccountEncrypted;
+      if (!encrypted) throw new NotFoundException('Nothing is stored for this field');
+      value = this.crypto.decrypt(encrypted);
+    }
+    await this.audit.record({ actorId: actor.id, action: 'employee.sensitive.revealed', targetType: 'employee', targetId: empId, details: { field: label }, ...client });
+    return { value };
   }
 
   // ===================================================================== changing

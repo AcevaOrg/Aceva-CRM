@@ -69,9 +69,11 @@ function handleAuthFailure(status: number, path: string, body: { code?: string; 
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, params?: Params): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json"): Promise<T> {
   const headers: Record<string, string> = {};
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+  // A multipart body sets its own Content-Type (with the boundary).
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   // Module 2: the session is an HttpOnly cookie; a change request also carries this tab's CSRF token.
   if (method !== "GET") {
     const csrf = getCsrf();
@@ -83,7 +85,7 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
       method,
       credentials: "include",
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     });
   } catch {
     throw new ApiError("network", "Can't reach the server. Check your connection and try again.", 0);
@@ -93,6 +95,7 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
     if (isLive("m2")) handleAuthFailure(res.status, path, err);
     throw toApiError(res.status, err, res.statusText);
   }
+  if (as === "blob") return (await res.blob()) as T;
   return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
@@ -102,4 +105,8 @@ export const http = {
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   delete: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),
+  /** Multipart upload (files). */
+  upload: <T>(path: string, form: FormData) => request<T>("POST", path, form),
+  /** A file download as a Blob (sent with the session cookie, so the server checks permission). */
+  blob: (path: string) => request<Blob>("GET", path, undefined, undefined, "blob"),
 };

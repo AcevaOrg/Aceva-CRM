@@ -262,6 +262,14 @@ describe('M3 revealing masked values', () => {
     expect((await reveal(FINANCE, 'account').expect(200)).body.value).toBe('PK99NEWB00112233445566');
   });
 
+  it('logs a salary reveal too, and only for people allowed to see pay', async () => {
+    const before = await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } });
+    expect((await reveal(DIRECTOR, 'salary' as 'cnic').expect(200)).body.value).toBe('320000.00');
+    await reveal(HR, 'salary' as 'cnic').expect(403);
+    await reveal(CTO, 'salary' as 'cnic').expect(403);
+    expect(await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } })).toBe(before + 1);
+  });
+
   it('says nothing exists when nothing is stored', async () => {
     await reveal(DIRECTOR, 'cnic', SALES1).expect(404);
   });

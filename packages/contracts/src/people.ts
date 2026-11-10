@@ -129,7 +129,7 @@ export const offboardRequestSchema = z.object({
 export type OffboardRequest = z.infer<typeof offboardRequestSchema>;
 
 /** POST /employees/:empId/reveal: show a masked value (logged every time) */
-export const revealRequestSchema = z.object({ field: z.enum(['cnic', 'account']) });
+export const revealRequestSchema = z.object({ field: z.enum(['cnic', 'account', 'salary']) });
 export type RevealRequest = z.infer<typeof revealRequestSchema>;
 
 /** GET /employees?q= */

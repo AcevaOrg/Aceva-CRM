@@ -8,6 +8,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/misc";
 import { useLookup } from "@/hooks/use-directory";
+import { isLive } from "@/lib/api/http";
 import { formatDate, isoDay } from "@/lib/dates";
 import type { Employee } from "@/types";
 import { useOffboard, useOffboardPreview } from "../hooks";
@@ -29,10 +30,12 @@ export function OffboardDialog({ employee, onClose }: { employee: Employee; onCl
     ? [
         { icon: KeyRound, text: "Login is disabled." },
         { icon: LogOut, text: `All sessions end${p.activeSessions ? ` (${p.activeSessions} active now)` : ""}.` },
-        { icon: ListTodo, text: p.openTasks ? `${p.openTasks} open task${p.openTasks === 1 ? "" : "s"} move to ${manager?.name ?? "the manager"}.` : "No open tasks to move." },
+        isLive("m3")
+          ? { icon: ListTodo, text: `A request to move their open tasks to ${manager?.name ?? "the manager"} is queued. The Tasks module acts on it once it is connected.` }
+          : { icon: ListTodo, text: p.openTasks ? `${p.openTasks} open task${p.openTasks === 1 ? "" : "s"} move to ${manager?.name ?? "the manager"}.` : "No open tasks to move." },
         ...(p.directReports ? [{ icon: ListTodo, text: `${p.directReports} direct report${p.directReports === 1 ? "" : "s"} need a new manager (the Director changes it in Org and access).` }] : []),
         ...(p.isSales ? [{ icon: Contact, text: "Their leads and deals move to the Director (sales manager)." }] : []),
-        { icon: Wallet, text: "Finance adds the final salary to the next payroll run; the Director approves it." },
+        { icon: Wallet, text: isLive("m3") ? "A final-salary request is queued for Payroll, which is not connected yet." : "Finance adds the final salary to the next payroll run; the Director approves it." },
         { icon: Archive, text: "The record is kept, never deleted." },
       ]
     : [];

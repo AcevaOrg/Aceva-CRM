@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { livePeopleApi } from "../live-api";
 import { ArrowLeft, ArrowRight, Check, MailCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -75,7 +76,7 @@ function Wizard() {
   /** The one person each level reports to in the fixed structure (Development → CTO; CTO, Sales and Finance → Director). */
   const bossesFor = (l: Level) => lookup.employees.filter((e) => e.status !== "left" && e.level === reportsToLevel(l));
   const [step, setStep] = React.useState(0);
-  const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean } | null>(null);
+  const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean; emailSent: boolean } | null>(null);
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -132,7 +133,7 @@ function Wizard() {
           ? { baseSalary: values.baseSalary, allowanceName: values.allowanceName || undefined, allowanceAmount: values.allowanceAmount || undefined, bankName: values.bankName ?? "", accountNumber: values.accountNumber ?? "" }
           : undefined,
       });
-      setDone({ empId: res.empId, email: values.officialEmail, name: values.name, payPending: res.payPending });
+      setDone({ empId: res.empId, email: values.officialEmail, name: values.name, payPending: res.payPending, emailSent: (res as { welcomeEmailSent?: boolean }).welcomeEmailSent !== false });
       toast.success(`${res.empId} created`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't create the employee.");
@@ -148,8 +149,20 @@ function Wizard() {
           </span>
           <p className="text-xl font-semibold tracking-tight">Emp-ID <span className="font-mono">{done.empId}</span> created</p>
           <p className="max-w-md text-[13.5px] text-muted-foreground">
-            A welcome email with a temporary password was sent to <span className="font-medium text-foreground">{done.email}</span>. {done.name.split(" ")[0]} sets a new password and accepts the tracking policy at first login.
+            {done.emailSent ? "A welcome email with a temporary password was sent to" : "The welcome email with the temporary password is meant for"} <span className="font-medium text-foreground">{done.email}</span>. {done.name.split(" ")[0]} sets a new password and accepts the tracking policy at first login.
           </p>
+          {!done.emailSent && (
+            <p className="rounded-lg bg-warning/12 px-3 py-2 text-[12.5px]">
+              The welcome email could not be sent. The employee is created.{" "}
+              <button
+                type="button"
+                className="font-medium underline"
+                onClick={() => livePeopleApi.resendWelcome(done.empId).then((r) => (r.welcomeEmailSent ? (toast.success("Welcome email sent"), setDone({ ...done, emailSent: true })) : toast.error("Still could not send it."))).catch((e) => toast.error(e instanceof Error ? e.message : "Couldn't resend."))}
+              >
+                Send it again
+              </button>
+            </p>
+          )}
           {done.payPending && <p className="rounded-lg bg-warning/12 px-3 py-2 text-[12.5px]">Pay details are still missing. The Director adds them on the profile&apos;s Pay tab.</p>}
           <div className="mt-3 flex flex-wrap justify-center gap-2">
             <Button asChild>
