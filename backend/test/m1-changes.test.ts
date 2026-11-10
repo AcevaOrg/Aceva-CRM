@@ -9,14 +9,14 @@ const OWNER = 'ACV-0001';
 const CEO = 'ACV-0002';
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
-const HR = 'ACV-0005';
-const FINANCE = 'ACV-0006';
-const SALES1 = 'ACV-0007';
-const SALES2 = 'ACV-0008';
-const DEV1 = 'ACV-0009';
-const DEV2 = 'ACV-0010';
-const DEV3 = 'ACV-0011';
-const DEV4 = 'ACV-0012';
+const HR = 'ACV-0015';
+const FINANCE = 'ACV-0010';
+const SALES1 = 'ACV-0009';
+const SALES2 = 'ACV-0012';
+const DEV1 = 'ACV-0006';
+const DEV2 = 'ACV-0007';
+const DEV3 = 'ACV-0008';
+const DEV4 = 'ACV-0011';
 const DEV5 = 'ACV-0013';
 
 let t: TestApp;
@@ -408,6 +408,17 @@ describe('M1 people who have left cannot act', () => {
     await t.as(HR).get('/api/v1/access/me').expect(401);
     await prisma.employee.update({ where: { empId: HR }, data: { status: 'active' } });
     await t.as(HR).get('/api/v1/access/me').expect(200);
+  });
+});
+
+describe('M1 recent changes feed', () => {
+  it('describes the changes made above in plain words, with who and why', async () => {
+    const feed = (await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200)).body as Array<{ kind: string; summary: string; reason: string; by: string }>;
+    expect(feed.length).toBeGreaterThan(5);
+    expect(feed.map((f) => f.kind)).toEqual(expect.arrayContaining(['level', 'reporting_line', 'duty', 'stand_in']));
+    const line = feed.find((f) => f.kind === 'reporting_line' && f.summary.includes('Nida Aslam'));
+    expect(line).toMatchObject({ by: CEO });
+    expect(line?.reason).toBeTruthy();
   });
 });
 

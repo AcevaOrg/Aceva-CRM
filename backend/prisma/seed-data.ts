@@ -161,94 +161,66 @@ export const DUTIES: Array<{
   },
 ];
 
+/** Department and office codes match the ids the frontend already uses (dep-eng, off-khi ...). */
 export const DEPARTMENTS = [
-  { code: 'MGT', name: 'Management' },
-  { code: 'DEV', name: 'Software Development' },
-  { code: 'SAL', name: 'Sales' },
-  { code: 'FIN', name: 'Finance' },
-  { code: 'HR', name: 'Human Resources' },
+  { code: 'dep-mgmt', name: 'Management' },
+  { code: 'dep-eng', name: 'Software Development' },
+  { code: 'dep-sales', name: 'Sales' },
+  { code: 'dep-fin', name: 'Finance' },
+  { code: 'dep-hr', name: 'Human Resources' },
 ];
 
 export const OFFICES = [
-  { code: 'HO', name: 'Head Office' },
-  { code: 'REMOTE', name: 'Remote' },
+  { code: 'off-dadu', name: 'Dadu HQ', city: 'Dadu' },
+  { code: 'off-khi', name: 'Karachi Studio', city: 'Karachi' },
+  { code: 'off-remote', name: 'Remote', city: 'Remote' },
 ];
 
 type DemoEmployee = {
-  /** Used only to find this person again (and to wire up "reports to"). */
+  /** The Emp-ID this demo person gets. Same numbers as the frontend demo roster. */
+  empId: string;
+  /** Used only to wire up "reports to". */
   slug: string;
   name: string;
+  /** Used to build the demo email address, for example "hamza" gives hamza@acevatech.com. */
+  email: string;
   designation: string;
   department: string;
+  office: string;
   level: number;
   role: string;
   reportsTo: string | null;
   duties?: string[];
   type?: 'full_time' | 'part_time' | 'intern';
   weeklyHours?: number;
-  office?: string;
 };
 
 /**
- * Created in this order, so a fresh database gives ACV-0001 ... ACV-0014.
- * Reporting lines follow the plan's levels: Owner > CEO > Director > (CTO, heads) > employees.
+ * The demo company, following the DEVELOPMENT PLAN's five levels:
+ *   Level 1 Owner > Level 2 CEO > Level 3 Director > Level 3 CTO (same-level line, explicitly configured),
+ *   Level 4 heads and leads (Sales, Finance, HR) report to the Director, Level 5 developers report to the CTO.
+ * Emp-IDs match the frontend's demo roster (ACV-0005 stays unused, like a person who left); the CEO is ACV-0002
+ * and the clearly labelled demo HR officer is ACV-0015.
  */
 export const DEMO_EMPLOYEES: DemoEmployee[] = [
-  { slug: 'owner', name: 'Hamza Qureshi', designation: 'Owner', department: 'MGT', level: 1, role: 'owner', reportsTo: null },
-  { slug: 'ceo', name: 'Ayesha Siddiqui', designation: 'CEO', department: 'MGT', level: 2, role: 'ceo', reportsTo: 'owner' },
-  {
-    slug: 'director',
-    name: 'Bilal Ahmed',
-    designation: 'Director',
-    department: 'MGT',
-    level: 3,
-    role: 'director',
-    reportsTo: 'ceo',
-    duties: ['hr'],
-  },
-  { slug: 'cto', name: 'Omar Farooq', designation: 'CTO', department: 'DEV', level: 3, role: 'cto', reportsTo: 'director' },
-  {
-    slug: 'hr',
-    name: 'Rabia Anwar (DEMO HR)',
-    designation: 'HR Officer',
-    department: 'HR',
-    level: 4,
-    role: 'level4_default',
-    reportsTo: 'director',
-    duties: ['hr'],
-  },
-  {
-    slug: 'finance',
-    name: 'Sana Malik',
-    designation: 'Finance Officer',
-    department: 'FIN',
-    level: 4,
-    role: 'level4_default',
-    reportsTo: 'director',
-    duties: ['finance'],
-  },
-  { slug: 'sales1', name: 'Hira Baig', designation: 'Sales Executive', department: 'SAL', level: 4, role: 'level4_default', reportsTo: 'director' },
-  { slug: 'sales2', name: 'Kamran Javed', designation: 'Sales Executive', department: 'SAL', level: 4, role: 'level4_default', reportsTo: 'director' },
-  { slug: 'dev1', name: 'Fahad Khan', designation: 'Senior Backend Developer', department: 'DEV', level: 5, role: 'employee', reportsTo: 'cto' },
-  { slug: 'dev2', name: 'Mariam Shah', designation: 'Software Developer', department: 'DEV', level: 5, role: 'employee', reportsTo: 'cto' },
-  { slug: 'dev3', name: 'Ali Raza', designation: 'Backend Developer', department: 'DEV', level: 5, role: 'employee', reportsTo: 'cto', office: 'REMOTE' },
-  { slug: 'sqa1', name: 'Danish Iqbal', designation: 'SQA Engineer', department: 'DEV', level: 5, role: 'employee', reportsTo: 'cto' },
-  {
-    slug: 'sqa2',
-    name: 'Nida Aslam',
-    designation: 'SQA Intern',
-    department: 'DEV',
-    level: 5,
-    role: 'employee',
-    reportsTo: 'cto',
-    type: 'intern',
-    weeklyHours: 20,
-  },
+  { empId: 'ACV-0001', slug: 'owner', name: 'Hamza Qureshi', email: 'hamza', designation: 'Owner and Founder', department: 'dep-mgmt', office: 'off-dadu', level: 1, role: 'owner', reportsTo: null },
+  { empId: 'ACV-0002', slug: 'ceo', name: 'Ayesha Siddiqui', email: 'ayesha', designation: 'Chief Executive Officer', department: 'dep-mgmt', office: 'off-dadu', level: 2, role: 'ceo', reportsTo: 'owner' },
+  { empId: 'ACV-0003', slug: 'director', name: 'Bilal Ahmed', email: 'bilal', designation: 'Director', department: 'dep-mgmt', office: 'off-dadu', level: 3, role: 'director', reportsTo: 'ceo', duties: ['hr'] },
+  { empId: 'ACV-0004', slug: 'cto', name: 'Omar Farooq', email: 'omar', designation: 'Chief Technology Officer', department: 'dep-eng', office: 'off-dadu', level: 3, role: 'cto', reportsTo: 'director' },
+  { empId: 'ACV-0006', slug: 'dev1', name: 'Fahad Khan', email: 'fahad', designation: 'Senior Backend Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
+  { empId: 'ACV-0007', slug: 'dev2', name: 'Mariam Shah', email: 'mariam', designation: 'Software Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
+  { empId: 'ACV-0008', slug: 'dev3', name: 'Ali Raza', email: 'ali', designation: 'Backend Developer', department: 'dep-eng', office: 'off-remote', level: 5, role: 'employee', reportsTo: 'cto' },
+  { empId: 'ACV-0009', slug: 'sales1', name: 'Hira Baig', email: 'hira', designation: 'Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0010', slug: 'finance', name: 'Sana Malik', email: 'sana', designation: 'Finance Officer', department: 'dep-fin', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['finance'] },
+  { empId: 'ACV-0011', slug: 'sqa1', name: 'Danish Iqbal', email: 'danish', designation: 'SQA Engineer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
+  { empId: 'ACV-0012', slug: 'sales2', name: 'Kamran Javed', email: 'kamran', designation: 'Sales Executive', department: 'dep-sales', office: 'off-remote', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0013', slug: 'sqa2', name: 'Nida Aslam', email: 'nida', designation: 'SQA Intern', department: 'dep-eng', office: 'off-dadu', level: 5, role: 'employee', reportsTo: 'cto', type: 'intern', weeklyHours: 20 },
+  { empId: 'ACV-0014', slug: 'sales3', name: 'Saad Mirza', email: 'saad', designation: 'Senior Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'level4_default', reportsTo: 'director' },
+  { empId: 'ACV-0015', slug: 'hr', name: 'Rabia Anwar (DEMO HR)', email: 'rabia', designation: 'HR Officer', department: 'dep-hr', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['hr'] },
 ];
 
-export function demoEmail(name: string): string {
-  const clean = name.replace(/\(.*?\)/g, '').trim().toLowerCase().replace(/[^a-z ]/g, '');
-  return `${clean.split(/\s+/).join('.')}@acevatech.com`;
+export function demoEmail(person: { email: string }): string {
+  return `${person.email}@acevatech.com`;
 }
 
 type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
@@ -343,11 +315,12 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
       // Employees (the Emp-ID is generated by the database)
       const bySlug = new Map<string, string>();
       for (const e of DEMO_EMPLOYEES) {
-        const email = demoEmail(e.name);
+        const email = demoEmail(e);
         let employee = await tx.employee.findUnique({ where: { officialEmail: email } });
         if (!employee) {
           employee = await tx.employee.create({
             data: {
+              empId: e.empId,
               fullName: e.name,
               designation: e.designation,
               departmentId: departments.get(e.department)!,
@@ -372,6 +345,9 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
         }
         bySlug.set(e.slug, employee.id);
       }
+
+      // The demo roster uses explicit Emp-IDs up to ACV-0015; the sequence must never hand those out again.
+      await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 15))`;
 
       await rebuildReportingClosure(tx);
     },

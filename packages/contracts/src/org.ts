@@ -70,6 +70,9 @@ export interface OrgNode {
   designation: string;
   level: number;
   roleKey: string;
+  /** Stable codes (for example dep-eng, off-khi) and display names. */
+  departmentId: string;
+  officeId: string;
   department: string;
   office: string;
   status: 'active' | 'on_notice' | 'left';
@@ -119,4 +122,40 @@ export interface ApprovalRouteStep {
   via: ApprovalRouteVia | null;
   /** Positions that were passed over, and why. */
   skipped: Array<{ seat: string; reason: 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' }>;
+}
+
+export interface DepartmentView {
+  id: string;
+  name: string;
+  /** The most senior active person in the department (derived, not stored). */
+  headEmpId: string | null;
+  officeIds: string[];
+}
+
+export interface OfficeView {
+  id: string;
+  name: string;
+  city: string;
+}
+
+export interface DepartmentsResponse {
+  departments: DepartmentView[];
+  offices: OfficeView[];
+  /** departmentId to active headcount */
+  headcount: Record<string, number>;
+  /** officeId to active headcount */
+  officeHeadcount: Record<string, number>;
+}
+
+export type OrgChangeKind = 'level' | 'reporting_line' | 'duty' | 'stand_in';
+
+/** One line of the "recent access changes" feed, built from the audit log. */
+export interface OrgChangeView {
+  id: string;
+  kind: OrgChangeKind;
+  summary: string;
+  reason: string;
+  /** Emp-ID of who did it. */
+  by: string | null;
+  at: string;
 }

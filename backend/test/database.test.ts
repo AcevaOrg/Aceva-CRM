@@ -58,11 +58,11 @@ describe('seed data integrity', () => {
     expect(await prisma.office.count()).toBe(OFFICES.length);
   });
 
-  it('creates the demo people with sequential Emp-IDs', async () => {
+  it('creates the demo people with the roster Emp-IDs (ACV-0005 stays unused)', async () => {
     const employees = await prisma.employee.findMany({ orderBy: { empId: 'asc' } });
     expect(employees).toHaveLength(DEMO_EMPLOYEES.length);
     expect(employees.map((e) => e.empId)).toEqual(
-      DEMO_EMPLOYEES.map((_, i) => `ACV-${String(i + 1).padStart(4, '0')}`),
+      DEMO_EMPLOYEES.map((e) => e.empId),
     );
   });
 
@@ -173,7 +173,12 @@ describe('Emp-ID rules', () => {
     expect(new Set(ids).size).toBe(15);
     ids.forEach((id) => expect(id).toMatch(/^ACV-\d{4,}$/));
     // Every new ID is after the seeded ones.
-    expect([...ids].sort()[0] > 'ACV-0013').toBe(true);
+    expect([...ids].sort()[0] > 'ACV-0015').toBe(true); // the sequence continues after the roster
+  });
+
+  it('never hands out an Emp-ID that the demo roster already uses', async () => {
+    const [row] = await prisma.$queryRaw<Array<{ last_value: bigint }>>`SELECT last_value FROM emp_id_seq`;
+    expect(Number(row.last_value)).toBeGreaterThanOrEqual(15);
   });
 
   it('is never reused even after a rolled-back creation (gaps are fine)', async () => {
@@ -231,7 +236,7 @@ describe('database constraints', () => {
     const dates = await sqlError(`
       INSERT INTO stand_ins (manager_id, stand_in_id, starts_on, ends_on)
       SELECT m.id, s.id, '2026-12-05', '2026-12-01' FROM employees m, employees s
-      WHERE m.emp_id = 'ACV-0004' AND s.emp_id = 'ACV-0005'`);
+      WHERE m.emp_id = 'ACV-0004' AND s.emp_id = 'ACV-0015'`);
     expect(dates).toMatch(/stand_ins_dates_ordered/);
   });
 

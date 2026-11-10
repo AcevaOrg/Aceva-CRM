@@ -21,12 +21,12 @@ const OWNER = 'ACV-0001';
 const CEO = 'ACV-0002';
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
-const HR = 'ACV-0005';
-const FINANCE = 'ACV-0006';
-const SALES1 = 'ACV-0007';
-const SALES2 = 'ACV-0008';
-const DEV1 = 'ACV-0009';
-const DEV2 = 'ACV-0010';
+const HR = 'ACV-0015';
+const FINANCE = 'ACV-0010';
+const SALES1 = 'ACV-0009';
+const SALES2 = 'ACV-0012';
+const DEV1 = 'ACV-0006';
+const DEV2 = 'ACV-0007';
 
 let t: TestApp;
 let prisma: PrismaClient;
@@ -105,10 +105,10 @@ describe('M1 hierarchy data scope: own data plus people below, never above or be
 
   it('a list request returns only the caller and the people below them', async () => {
     expect(await team(DEV1)).toEqual([DEV1]);
-    expect(await team(CTO)).toEqual([CTO, DEV1, DEV2, 'ACV-0011', 'ACV-0012', 'ACV-0013'].sort());
-    expect((await team(DIRECTOR)).length).toBe(11); // Director + CTO + 4 heads/leads + 5 developers
-    expect((await team(CEO)).length).toBe(12); // everyone except the Owner
-    expect((await team(OWNER)).length).toBe(13); // the whole company
+    expect(await team(CTO)).toEqual([CTO, DEV1, DEV2, 'ACV-0008', 'ACV-0011', 'ACV-0013'].sort());
+    expect((await team(DIRECTOR)).length).toBe(12); // Director + CTO + HR + Finance + 3 Sales + 5 developers
+    expect((await team(CEO)).length).toBe(13); // everyone except the Owner
+    expect((await team(OWNER)).length).toBe(14); // the whole company
   });
 
   it('reports the depth of each person below the caller', async () => {
@@ -232,6 +232,9 @@ describe('M1 server-side permission guard', () => {
   });
 });
 
+/** The CTO node under the Director. */
+const cto0 = (director: { children: Array<{ empId: string }> }) => director.children.find((c) => c.empId === CTO);
+
 describe('M1 organisation chart', () => {
   it('returns the reporting tree: Owner > CEO > Director > (CTO, heads) > employees', async () => {
     const tree = (await t.as(DEV1).get('/api/v1/org/tree').expect(200)).body;
@@ -242,6 +245,7 @@ describe('M1 organisation chart', () => {
     expect(ceo).toMatchObject({ empId: CEO, level: 2 });
     const director = ceo.children[0];
     expect(director).toMatchObject({ empId: DIRECTOR, level: 3, duties: ['hr'] });
+    expect(cto0(director)).toBeDefined();
     const cto = director.children.find((c: { empId: string }) => c.empId === CTO);
     expect(cto).toMatchObject({ level: 3, reportsTo: DIRECTOR }); // same-level reporting, explicitly configured
     expect(cto.children).toHaveLength(5);
@@ -255,7 +259,31 @@ describe('M1 organisation chart', () => {
     const flat: Array<{ department: string; office: string; children: unknown[] }> = [];
     const walk = (n: (typeof flat)[number]) => { flat.push(n); (n.children as typeof flat).forEach(walk); };
     tree.forEach(walk);
-    expect(flat).toHaveLength(13);
+    expect(flat).toHaveLength(14);
     flat.forEach((n) => { expect(n.department).toBeTruthy(); expect(n.office).toBeTruthy(); });
+  });
+});
+
+describe('M1 departments, offices and the recent changes feed', () => {
+  it('lists departments and offices with headcount, head and offices', async () => {
+    const res = (await t.as(DEV1).get('/api/v1/org/departments').expect(200)).body;
+    expect(res.departments.map((d: { id: string }) => d.id)).toEqual(['dep-eng', 'dep-fin', 'dep-hr', 'dep-mgmt', 'dep-sales']);
+    expect(res.offices.map((o: { id: string }) => o.id)).toEqual(['off-dadu', 'off-khi', 'off-remote']);
+    expect(res.headcount).toMatchObject({ 'dep-eng': 6, 'dep-sales': 3, 'dep-fin': 1, 'dep-hr': 1, 'dep-mgmt': 3 });
+    const eng = res.departments.find((d: { id: string }) => d.id === 'dep-eng');
+    expect(eng.headEmpId).toBe(CTO); // most senior person in the department
+    expect(eng.officeIds).toEqual(['off-dadu', 'off-khi', 'off-remote']);
+  });
+
+  it('gives every org tree node its department and office codes', async () => {
+    const [owner] = (await t.as(OWNER).get('/api/v1/org/tree').expect(200)).body;
+    expect(owner).toMatchObject({ departmentId: 'dep-mgmt', officeId: 'off-dadu' });
+  });
+
+  it('shows the recent changes feed only to people who may view the audit log', async () => {
+    await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200);
+    await t.as(OWNER).get('/api/v1/org/changes').expect(200);
+    await t.as(DEV1).get('/api/v1/org/changes').expect(403);
+    await t.as(CTO).get('/api/v1/org/changes').expect(403);
   });
 });

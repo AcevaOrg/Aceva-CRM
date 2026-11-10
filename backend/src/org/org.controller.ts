@@ -29,6 +29,20 @@ export class OrgController {
     return this.org.tree();
   }
 
+  @Get('departments')
+  @RequirePermission('org.view')
+  @ApiOperation({ summary: 'Departments and offices with headcount' })
+  departments() {
+    return this.org.departments();
+  }
+
+  @Get('changes')
+  @RequirePermission('audit.view')
+  @ApiOperation({ summary: 'Recent access changes (levels, reporting lines, duties, stand-ins) from the audit log' })
+  changes() {
+    return this.org.recentChanges();
+  }
+
   @Get('team')
   @Authenticated()
   @ApiOperation({ summary: 'My own record and everyone below me (scope applied in the database)' })

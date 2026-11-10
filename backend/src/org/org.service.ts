@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   AssignDutyRequest,
+  DepartmentsResponse,
+  OrgChangeView,
   ChangeLevelRequest,
   ChangeReportingLineRequest,
   EndDutyRequest,
@@ -58,8 +60,8 @@ export class OrgService {
         status: true,
         level: { select: { number: true } },
         role: { select: { key: true } },
-        department: { select: { name: true } },
-        office: { select: { name: true } },
+        department: { select: { code: true, name: true } },
+        office: { select: { code: true, name: true } },
         reportsTo: { select: { empId: true } },
         duties: { where: { endedAt: null }, select: { duty: { select: { key: true } } } },
       },
@@ -73,6 +75,8 @@ export class OrgService {
         designation: r.designation,
         level: r.level.number,
         roleKey: r.role.key,
+        departmentId: r.department.code,
+        officeId: r.office.code,
         department: r.department.name,
         office: r.office.name,
         status: r.status,
@@ -143,6 +147,97 @@ export class OrgService {
       reportsTo: r.reportsTo?.empId ?? null,
       depth: r.ancestors[0]?.depth ?? 0,
     };
+  }
+
+
+  /** Departments and offices with headcount. The head is the most senior active person (derived). */
+  async departments(): Promise<DepartmentsResponse> {
+    const [departments, offices, people] = await Promise.all([
+      this.prisma.department.findMany({ where: { archivedAt: null }, orderBy: { code: 'asc' } }),
+      this.prisma.office.findMany({ where: { archivedAt: null }, orderBy: { code: 'asc' } }),
+      this.prisma.employee.findMany({
+        where: { status: { not: 'left' } },
+        orderBy: [{ level: { number: 'asc' } }, { empId: 'asc' }],
+        select: { empId: true, department: { select: { code: true } }, office: { select: { code: true } } },
+      }),
+    ]);
+    const headcount: Record<string, number> = {};
+    const officeHeadcount: Record<string, number> = {};
+    const heads = new Map<string, string>();
+    const deptOffices = new Map<string, Set<string>>();
+    for (const p of people) {
+      headcount[p.department.code] = (headcount[p.department.code] ?? 0) + 1;
+      officeHeadcount[p.office.code] = (officeHeadcount[p.office.code] ?? 0) + 1;
+      if (!heads.has(p.department.code)) heads.set(p.department.code, p.empId);
+      (deptOffices.get(p.department.code) ?? deptOffices.set(p.department.code, new Set()).get(p.department.code)!).add(p.office.code);
+    }
+    return {
+      departments: departments.map((d) => ({
+        id: d.code,
+        name: d.name,
+        headEmpId: heads.get(d.code) ?? null,
+        officeIds: [...(deptOffices.get(d.code) ?? [])].sort(),
+      })),
+      offices: offices.map((o) => ({ id: o.code, name: o.name, city: o.city ?? '' })),
+      headcount,
+      officeHeadcount,
+    };
+  }
+
+  /** The latest access changes (levels, reporting lines, duties, stand-ins), straight from the audit log. */
+  async recentChanges(limit = 12): Promise<OrgChangeView[]> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: {
+        outcome: 'success',
+        action: { in: ['org.level.changed', 'org.reporting_line.changed', 'duty.assigned', 'duty.ended', 'standin.created', 'standin.revoked'] },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: limit,
+      select: { id: true, action: true, targetId: true, reason: true, details: true, occurredAt: true, actor: { select: { empId: true, fullName: true } } },
+    });
+
+    const empIds = new Set<string>();
+    for (const r of rows) {
+      if (r.targetId && r.targetId.startsWith('ACV-')) empIds.add(r.targetId);
+      const d = r.details as { before?: { reportsTo?: string | null }; after?: { reportsTo?: string | null }; standIn?: string | null } | null;
+      if (d?.after?.reportsTo) empIds.add(d.after.reportsTo);
+      if (d?.standIn) empIds.add(d.standIn);
+    }
+    const people = await this.prisma.employee.findMany({ where: { empId: { in: [...empIds] } }, select: { empId: true, fullName: true } });
+    const name = (empId: string | null | undefined) => people.find((p) => p.empId === empId)?.fullName ?? empId ?? 'someone';
+
+    return rows.map((r) => {
+      const d = (r.details ?? {}) as { after?: { level?: number; reportsTo?: string | null }; duty?: string; standIn?: string | null };
+      const target = name(r.targetId);
+      let kind: OrgChangeView['kind'] = 'level';
+      let summary = '';
+      switch (r.action) {
+        case 'org.level.changed':
+          kind = 'level';
+          summary = `${target} moved to Level ${d.after?.level}`;
+          break;
+        case 'org.reporting_line.changed':
+          kind = 'reporting_line';
+          summary = `${target} now reports to ${name(d.after?.reportsTo)}`;
+          break;
+        case 'duty.assigned':
+          kind = 'duty';
+          summary = `${target} was given the ${d.duty} duty`;
+          break;
+        case 'duty.ended':
+          kind = 'duty';
+          summary = `${target} no longer holds the ${d.duty} duty`;
+          break;
+        case 'standin.created':
+          kind = 'stand_in';
+          summary = d.standIn ? `${name(d.standIn)} stands in for ${r.actor?.fullName ?? 'a manager'}` : `${r.actor?.fullName ?? 'A manager'} is away with no stand-in`;
+          break;
+        default:
+          kind = 'stand_in';
+          summary = `Away period ended early for ${r.actor?.fullName ?? 'a manager'}`;
+      }
+      return { id: r.id, kind, summary, reason: r.reason ?? '', by: r.actor?.empId ?? null, at: r.occurredAt.toISOString() };
+    });
   }
 
   // ---------------------------------------------------------------- changing levels and lines
