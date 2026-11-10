@@ -8,7 +8,7 @@ import { Clock } from '../common/clock';
 import { OutboxService } from '../events/outbox.service';
 import { JobRunner } from '../jobs/job-runner.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { isDue, startOfDayPakistan } from './leaving-rules';
+import { accessEndsAt, isDue } from './leaving-rules';
 import { PeopleService } from './people.service';
 
 export const OFFBOARD_JOB = 'employee.offboard';
@@ -47,7 +47,7 @@ export class OffboardingService implements OnModuleInit {
     return target;
   }
 
-  /** Sets (or moves) the last working day. Today or earlier is processed straight away; a later date is scheduled. */
+  /** Sets (or moves) the last working day. The person keeps access through that whole day; access ends at 00:00 Pakistan time on the next day. A last working day that is already over is processed straight away, otherwise it is scheduled. */
   async offboard(actor: Actor, empId: string, dto: OffboardRequest, client: RequestInfo): Promise<OffboardResponse> {
     const target = await this.requireAdmin(actor, empId, client);
     if (target.status === 'left') throw new BadRequestException({ statusCode: 400, code: 'employee_left', message: 'This employee has already left' });
@@ -71,7 +71,7 @@ export class OffboardingService implements OnModuleInit {
         dto.reason,
       );
       await tx.employmentHistory.create({ data: { employeeId: target.id, eventType: 'notice_given', effectiveOn: new Date(`${dto.lastWorkingDay}T00:00:00.000Z`), details: { lastWorkingDay: dto.lastWorkingDay, previous }, reason: dto.reason, createdBy: actor.id } });
-      await this.jobs.schedule(OFFBOARD_JOB, `offboard:${empId}`, due ? now : startOfDayPakistan(dto.lastWorkingDay), { empId }, actor.id, tx);
+      await this.jobs.schedule(OFFBOARD_JOB, `offboard:${empId}`, due ? now : accessEndsAt(dto.lastWorkingDay), { empId }, actor.id, tx);
       await this.audit.record({ actorId: actor.id, action: previous ? 'employee.offboarding.rescheduled' : 'employee.offboarding.set', targetType: 'employee', targetId: empId, reason: dto.reason, details: { lastWorkingDay: dto.lastWorkingDay, previous }, ...client }, tx);
     });
 

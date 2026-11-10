@@ -83,6 +83,14 @@ enum AuditOutcome {
   @@map("audit_outcome")
 }
 
+enum HireRequestStatus {
+  pending
+  approved
+  rejected
+
+  @@map("hire_request_status")
+}
+
 enum JobStatus {
   pending
   running
@@ -126,7 +134,7 @@ model Role {
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy   String?  @map("updated_by") @db.Uuid
 
-  level           Level            @relation(fields: [levelId], references: [id])
+  level           Level                    @relation(fields: [levelId], references: [id])
   rolePermissions RolePermission[]
   employees       Employee[]
   ruleAsManager   SameLevelReportingRule[] @relation("RuleManagerRole")
@@ -171,16 +179,16 @@ model RolePermission {
 /// An extra duty on top of a person's role, for example Finance or HR.
 /// Duties carry their own permissions (kept separate from role permissions).
 model Duty {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key              String   @unique
-  name             String
-  description      String?
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key               String   @unique
+  name              String
+  description       String?
   /// 2FA is mandatory for anyone holding this duty (plan section 6: Finance duty).
-  requiresTwoFactor Boolean @default(false) @map("requires_two_factor")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy        String?  @map("created_by") @db.Uuid
-  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  updatedBy        String?  @map("updated_by") @db.Uuid
+  requiresTwoFactor Boolean  @default(false) @map("requires_two_factor")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy         String?  @map("created_by") @db.Uuid
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy         String?  @map("updated_by") @db.Uuid
 
   dutyPermissions DutyPermission[]
   employeeDuties  EmployeeDuty[]
@@ -225,19 +233,19 @@ model EmployeeDuty {
 }
 
 model Department {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code       String    @unique
-  name       String    @unique
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code           String    @unique
+  name           String    @unique
   /// The department head, set explicitly by the Owner or CEO (never worked out from reporting lines).
-  headEmployeeId String? @map("head_employee_id") @db.Uuid
-  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy  String?   @map("created_by") @db.Uuid
-  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  updatedBy  String?   @map("updated_by") @db.Uuid
+  headEmployeeId String?   @map("head_employee_id") @db.Uuid
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy      String?   @map("updated_by") @db.Uuid
 
   employees Employee[]
-  head      Employee? @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  head      Employee?  @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
 
   @@index([headEmployeeId])
   @@map("departments")
@@ -274,13 +282,13 @@ model Employee {
   empId String @unique @default(dbgenerated("('ACV-'::text || lpad((nextval('emp_id_seq'::regclass))::text, 4, '0'::text))")) @map("emp_id")
 
   // Basic (visible to everyone through the staff directory)
-  fullName      String         @map("full_name")
-  photoKey      String?        @map("photo_key")
+  fullName      String  @map("full_name")
+  photoKey      String? @map("photo_key")
   designation   String
-  departmentId  String         @map("department_id") @db.Uuid
-  officeId      String         @map("office_id") @db.Uuid
+  departmentId  String  @map("department_id") @db.Uuid
+  officeId      String  @map("office_id") @db.Uuid
   /// Official acevatech.com address. Null when the person has none.
-  officialEmail String?        @unique @map("official_email")
+  officialEmail String? @unique @map("official_email")
 
   // Job (visible to the employee and the levels above)
   levelId             String         @map("level_id") @db.Uuid
@@ -298,31 +306,34 @@ model Employee {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy String?  @map("updated_by") @db.Uuid
 
-  department Department @relation(fields: [departmentId], references: [id])
-  headOf     Department[] @relation("DepartmentHead")
-  office     Office     @relation(fields: [officeId], references: [id])
-  level      Level      @relation(fields: [levelId], references: [id])
-  role       Role       @relation(fields: [roleId], references: [id])
-  reportsTo  Employee?  @relation("ReportsTo", fields: [reportsToId], references: [id])
-  directReports Employee[] @relation("ReportsTo")
+  department    Department   @relation(fields: [departmentId], references: [id])
+  headOf        Department[] @relation("DepartmentHead")
+  office        Office       @relation(fields: [officeId], references: [id])
+  level         Level        @relation(fields: [levelId], references: [id])
+  role          Role         @relation(fields: [roleId], references: [id])
+  reportsTo     Employee?    @relation("ReportsTo", fields: [reportsToId], references: [id])
+  directReports Employee[]   @relation("ReportsTo")
 
-  personal          EmployeePersonal?
-  pay               EmployeePay?
-  duties            EmployeeDuty[]
-  ancestors         ReportingClosure[] @relation("ClosureDescendant")
-  descendants       ReportingClosure[] @relation("ClosureAncestor")
-  standInsAsManager StandIn[]          @relation("StandInManager")
-  standInsAsCover   StandIn[]          @relation("StandInCover")
-  credential        Credential?
-  totpSecret        TotpSecret?
-  passwordHistory   PasswordHistory[]
-  passwordResets    PasswordResetToken[]
-  sessions          Session[]
-  loginAttempts     LoginAttempt[]
-  employmentHistory EmploymentHistory[]
-  profileChanges    ProfileChange[]
-  documents         EmployeeDocument[]
-  auditEntries      AuditLog[]
+  personal            EmployeePersonal?
+  pay                 EmployeePay?
+  duties              EmployeeDuty[]
+  ancestors           ReportingClosure[]   @relation("ClosureDescendant")
+  descendants         ReportingClosure[]   @relation("ClosureAncestor")
+  standInsAsManager   StandIn[]            @relation("StandInManager")
+  standInsAsCover     StandIn[]            @relation("StandInCover")
+  credential          Credential?
+  totpSecret          TotpSecret?
+  passwordHistory     PasswordHistory[]
+  passwordResets      PasswordResetToken[]
+  sessions            Session[]
+  loginAttempts       LoginAttempt[]
+  employmentHistory   EmploymentHistory[]
+  profileChanges      ProfileChange[]
+  documents           EmployeeDocument[]
+  hireRequestsMade    HireRequest[]        @relation("HireRequester")
+  hireRequestsDecided HireRequest[]        @relation("HireDecider")
+  hireRequestOf       HireRequest?         @relation("HireResult")
+  auditEntries        AuditLog[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -396,20 +407,20 @@ model ReportingClosure {
 
 /// A manager names a stand-in for set dates; approvals go to the stand-in meanwhile.
 model StandIn {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  managerId   String    @map("manager_id") @db.Uuid
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  managerId String    @map("manager_id") @db.Uuid
   /// Null = the manager is away with no stand-in, so approvals go one level up.
-  standInId   String?   @map("stand_in_id") @db.Uuid
-  startsOn    DateTime  @map("starts_on") @db.Date
-  endsOn      DateTime  @map("ends_on") @db.Date
-  reason      String?
-  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy   String?   @map("created_by") @db.Uuid
-  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  updatedBy   String?   @map("updated_by") @db.Uuid
+  standInId String?   @map("stand_in_id") @db.Uuid
+  startsOn  DateTime  @map("starts_on") @db.Date
+  endsOn    DateTime  @map("ends_on") @db.Date
+  reason    String?
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?   @map("updated_by") @db.Uuid
 
-  manager Employee @relation("StandInManager", fields: [managerId], references: [id])
+  manager Employee  @relation("StandInManager", fields: [managerId], references: [id])
   standIn Employee? @relation("StandInCover", fields: [standInId], references: [id])
 
   @@index([managerId, startsOn, endsOn])
@@ -440,21 +451,21 @@ model SameLevelReportingRule {
 
 /// Login credentials. Argon2id hash only. Nobody can read the password.
 model Credential {
-  employeeId         String    @id @map("employee_id") @db.Uuid
-  passwordHash       String    @map("password_hash")
+  employeeId          String    @id @map("employee_id") @db.Uuid
+  passwordHash        String    @map("password_hash")
   /// True for a temporary password: the person must choose a new one at next login.
-  mustChangePassword Boolean   @default(true) @map("must_change_password")
-  passwordChangedAt  DateTime? @map("password_changed_at") @db.Timestamptz(3)
-  failedAttempts     Int       @default(0) @map("failed_attempts")
-  lockedAt           DateTime? @map("locked_at") @db.Timestamptz(3)
+  mustChangePassword  Boolean   @default(true) @map("must_change_password")
+  passwordChangedAt   DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lockedAt            DateTime? @map("locked_at") @db.Timestamptz(3)
   /// Set when the last working day is processed. A disabled login can never sign in.
-  loginDisabledAt    DateTime? @map("login_disabled_at") @db.Timestamptz(3)
+  loginDisabledAt     DateTime? @map("login_disabled_at") @db.Timestamptz(3)
   /// Set when two-step login was reset (lost phone): a fresh authenticator MUST be set up at the next login.
-  mustEnrollTwoFactor Boolean  @default(false) @map("must_enroll_two_factor")
-  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy          String?   @map("created_by") @db.Uuid
-  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  updatedBy          String?   @map("updated_by") @db.Uuid
+  mustEnrollTwoFactor Boolean   @default(false) @map("must_enroll_two_factor")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy           String?   @map("created_by") @db.Uuid
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy           String?   @map("updated_by") @db.Uuid
 
   employee Employee @relation(fields: [employeeId], references: [id])
 
@@ -543,15 +554,15 @@ model Session {
 
 /// Every login attempt, successful or not. Insert-only. Also drives the per-IP rate limit.
 model LoginAttempt {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// What was typed in the Emp-ID box (may not match a real employee).
-  empIdAttempted   String   @map("emp_id_attempted")
-  employeeId       String?  @map("employee_id") @db.Uuid
-  ip               String
-  userAgent        String?  @map("user_agent")
-  success          Boolean
-  failureReason    String?  @map("failure_reason")
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  empIdAttempted String   @map("emp_id_attempted")
+  employeeId     String?  @map("employee_id") @db.Uuid
+  ip             String
+  userAgent      String?  @map("user_agent")
+  success        Boolean
+  failureReason  String?  @map("failure_reason")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
   employee Employee? @relation(fields: [employeeId], references: [id])
 
@@ -566,14 +577,14 @@ model LoginAttempt {
 
 /// Job milestones: joined, level changed, moved department, on notice, left. Insert-only.
 model EmploymentHistory {
-  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employeeId    String              @map("employee_id") @db.Uuid
-  eventType     EmploymentEventType @map("event_type")
-  effectiveOn   DateTime            @map("effective_on") @db.Date
-  details       Json?
-  reason        String?
-  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy     String?             @map("created_by") @db.Uuid
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String              @map("employee_id") @db.Uuid
+  eventType   EmploymentEventType @map("event_type")
+  effectiveOn DateTime            @map("effective_on") @db.Date
+  details     Json?
+  reason      String?
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?             @map("created_by") @db.Uuid
 
   employee Employee @relation(fields: [employeeId], references: [id])
 
@@ -695,4 +706,38 @@ model ScheduledJob {
 
   @@index([status, runAt])
   @@map("scheduled_jobs")
+}
+
+/// Director or HR start a hire; only the Owner or CEO authorize the level and reporting line (decision M3-3).
+/// Nothing exists as an employee (no Emp-ID, no login) until it is approved. Personal and pay details wait here encrypted.
+model HireRequest {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status              HireRequestStatus @default(pending)
+  name                String
+  designation         String
+  departmentCode      String            @map("department_code")
+  officeCode          String            @map("office_code")
+  officialEmail       String            @map("official_email")
+  joiningDate         DateTime          @map("joining_date") @db.Date
+  employmentType      EmploymentType    @map("employment_type")
+  weeklyCapacityHours Int?              @map("weekly_capacity_hours")
+  proposedLevel       Int               @map("proposed_level")
+  proposedReportsTo   String            @map("proposed_reports_to")
+  /// Encrypted JSON: personal and pay details entered by the requester.
+  sensitiveEncrypted  String?           @map("sensitive_encrypted")
+  requestedBy         String            @map("requested_by") @db.Uuid
+  requestedAt         DateTime          @default(now()) @map("requested_at") @db.Timestamptz(3)
+  decidedBy           String?           @map("decided_by") @db.Uuid
+  decidedAt           DateTime?         @map("decided_at") @db.Timestamptz(3)
+  decisionReason      String?           @map("decision_reason")
+  employeeId          String?           @unique @map("employee_id") @db.Uuid
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  requester Employee  @relation("HireRequester", fields: [requestedBy], references: [id])
+  decider   Employee? @relation("HireDecider", fields: [decidedBy], references: [id])
+  employee  Employee? @relation("HireResult", fields: [employeeId], references: [id])
+
+  @@index([status, requestedAt])
+  @@map("hire_requests")
 }

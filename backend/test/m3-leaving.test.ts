@@ -3,7 +3,7 @@ import { outboxEventSchema } from '@aceva/contracts';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { JobRunner } from '../src/jobs/job-runner.service';
 import { OffboardingService } from '../src/people/offboarding.service';
-import { isDue, pakistanToday, startOfDayPakistan } from '../src/people/leaving-rules';
+import { accessEndsAt, isDue, pakistanToday } from '../src/people/leaving-rules';
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { createTestApp, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
@@ -39,17 +39,18 @@ const offboard = (who: string, target: string, lastWorkingDay: string, reason = 
   t.as(who).post(`/api/v1/employees/${target}/offboard`).send({ lastWorkingDay, reason });
 
 describe('M3 Pakistan-time rules', () => {
-  it('works out the day in Pakistan (UTC+5) and when a leaving date is due', () => {
+  it('works out the day in Pakistan (UTC+5); access ends at 00:00 Pakistan time on the day AFTER the last working day', () => {
     expect(pakistanToday(new Date('2026-12-01T19:30:00Z'))).toBe('2026-12-02');
     expect(pakistanToday(new Date('2026-12-01T18:59:00Z'))).toBe('2026-12-01');
-    expect(startOfDayPakistan('2026-12-02').toISOString()).toBe('2026-12-01T19:00:00.000Z');
-    expect(isDue('2026-12-02', new Date('2026-12-01T19:00:00Z'))).toBe(true);
-    expect(isDue('2026-12-02', new Date('2026-12-01T18:59:00Z'))).toBe(false);
+    expect(accessEndsAt('2026-12-02').toISOString()).toBe('2026-12-02T19:00:00.000Z'); // = 00:00 on 3 Dec in Pakistan
+    // through the whole last working day (2 Dec) the person is still active
+    expect(isDue('2026-12-02', new Date('2026-12-02T18:59:00Z'))).toBe(false); // 23:59 on 2 Dec in Pakistan
+    expect(isDue('2026-12-02', new Date('2026-12-02T19:00:00Z'))).toBe(true); // 00:00 on 3 Dec in Pakistan
     expect(isDue('2026-11-01', new Date('2026-12-01T00:00:00Z'))).toBe(true);
   });
 });
 
-describe('M3 leaving: processed immediately when the day is today or past', () => {
+describe('M3 leaving: processed immediately when the last working day is already over', () => {
   it('only HR or the Director (above or over the person) can set a last working day', async () => {
     for (const who of [DEV1, CTO, FINANCE, CEO, OWNER]) await offboard(who, DEV2, isoDay(0)).expect(403);
     await offboard(HR, DIRECTOR, isoDay(0)).expect(403); // upward
@@ -67,7 +68,7 @@ describe('M3 leaving: processed immediately when the day is today or past', () =
     const mine = t.as(DEV2);
     await mine.get('/api/v1/auth/me').expect(200);
 
-    const res = await offboard(HR, DEV2, isoDay(0)).expect(200);
+    const res = await offboard(HR, DEV2, isoDay(-1)).expect(200);
     expect(res.body).toMatchObject({ empId: DEV2, processed: 'now' });
 
     await mine.get('/api/v1/auth/me').expect(401); // every session ended
@@ -87,7 +88,7 @@ describe('M3 leaving: processed immediately when the day is today or past', () =
     expect(events.map((e) => e.type).sort()).toEqual(['employee.offboarded', 'payroll.final_settlement.requested', 'task.transfer.requested']);
     for (const e of events) expect(outboxEventSchema.safeParse({ id: e.id, type: e.type, version: e.version, occurredAt: e.occurredAt.toISOString(), actor: e.actor, payload: e.payload }).success).toBe(true);
     expect(events.find((e) => e.type === 'task.transfer.requested')!.payload).toEqual({ fromEmpId: DEV2, toEmpId: CTO, reason: 'employee_left' });
-    expect(events.find((e) => e.type === 'payroll.final_settlement.requested')!.payload).toMatchObject({ empId: DEV2, lastWorkingDay: isoDay(0) });
+    expect(events.find((e) => e.type === 'payroll.final_settlement.requested')!.payload).toMatchObject({ empId: DEV2, lastWorkingDay: isoDay(-1) });
   });
 
   it('audits the leaving and shows the person as left in the directory, but keeps their profile readable', async () => {
@@ -106,14 +107,28 @@ describe('M3 leaving: processed immediately when the day is today or past', () =
     expect(await prisma.employmentHistory.count({ where: { employee: { empId: DEV2 }, eventType: 'left' } })).toBe(1);
   });
 
-  it('lists the people who now need a new manager, and never moves them by itself', async () => {
-    // the CTO's team report to a manager who leaves: use a Level 4 manager with a report
-    const manager = await prisma.employee.findFirstOrThrow({ where: { level: { number: 4 }, status: 'active', NOT: { reportsToId: null } } });
-    const report = await prisma.employee.findFirst({ where: { reportsToId: manager.id, status: 'active' } });
-    if (!report) return; // no such manager in the demo roster: covered by the response shape check below
-    const res = await offboard(DIRECTOR, manager.empId, isoDay(0)).expect(200);
-    expect(res.body.directReportsNeedingManager).toContain(report.empId);
-    expect((await prisma.employee.findUniqueOrThrow({ where: { id: report.id } })).reportsToId).toBe(manager.id);
+  it('never moves the leaver\'s reports by itself: they are listed until the Owner or CEO assign a new manager', async () => {
+    // a new Level 5 hire reports to Finance (Level 4), who then leaves
+    const hire = await t.as(OWNER).post('/api/v1/employees').send({ name: 'Orphan Report', designation: 'Analyst', departmentId: 'dep-fin', officeId: 'off-khi', officialEmail: 'orphan.report@acevatech.com', level: 5, reportsToEmpId: FINANCE, joiningDate: '2026-11-01', type: 'full_time' }).expect(201);
+    const orphan = hire.body.empId as string;
+    const res = await offboard(DIRECTOR, FINANCE, isoDay(-1)).expect(200);
+    expect(res.body.directReportsNeedingManager).toContain(orphan);
+    const finance = await prisma.employee.findUniqueOrThrow({ where: { empId: FINANCE } });
+    expect((await prisma.employee.findUniqueOrThrow({ where: { empId: orphan } })).reportsToId).toBe(finance.id); // unchanged
+
+    // the unresolved reports are shown to Owner, CEO, Director and HR; nobody else
+    for (const who of [OWNER, CEO, DIRECTOR, HR]) {
+      const list = (await t.as(who).get('/api/v1/employees/unresolved-reports').expect(200)).body as Array<{ empId: string; leftManager: { empId: string } }>;
+      expect(list.find((r) => r.empId === orphan)!.leftManager.empId).toBe(FINANCE);
+    }
+    await t.as(DEV1).get('/api/v1/employees/unresolved-reports').expect(403);
+
+    // only the Owner or CEO can reassign (Director and HR cannot)
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'Director may not change lines' }).expect(403);
+    await t.as(HR).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'HR may not change lines' }).expect(403);
+    await t.as(CEO).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'Finance lead left; reassigned' }).expect(200);
+    const after = (await t.as(CEO).get('/api/v1/employees/unresolved-reports').expect(200)).body as Array<{ empId: string }>;
+    expect(after.some((r) => r.empId === orphan)).toBe(false);
   });
 });
 
@@ -126,14 +141,19 @@ describe('M3 leaving: scheduled for a future day', () => {
     expect(employee.status).toBe('on_notice');
     const job = await prisma.scheduledJob.findUniqueOrThrow({ where: { dedupeKey: `offboard:${SALES1}` } });
     expect(job).toMatchObject({ type: 'employee.offboard', status: 'pending' });
-    expect(job.runAt.toISOString()).toBe(startOfDayPakistan(day).toISOString());
+    expect(job.runAt.toISOString()).toBe(accessEndsAt(day).toISOString());
     await t.as(SALES1).get('/api/v1/auth/me').expect(200); // still works on notice
 
     const runner = t.app.get(JobRunner);
     expect(await runner.tick()).toBe(0); // not due yet
     expect((await prisma.employee.findUniqueOrThrow({ where: { empId: SALES1 } })).status).toBe('on_notice');
 
+    // through the whole last working day the person keeps access: still on notice on that day, even late in the evening
     t.clock.advance(3 * 86_400_000 + 3600_000);
+    expect(await runner.tick()).toBe(0);
+    expect((await prisma.employee.findUniqueOrThrow({ where: { empId: SALES1 } })).status).toBe('on_notice');
+    // access ends at 00:00 Pakistan time on the next day
+    t.clock.advance(86_400_000);
     expect(await runner.tick()).toBe(1);
     expect((await prisma.employee.findUniqueOrThrow({ where: { empId: SALES1 } })).status).toBe('left');
     expect((await prisma.scheduledJob.findUniqueOrThrow({ where: { dedupeKey: `offboard:${SALES1}` } })).status).toBe('succeeded');
@@ -144,12 +164,16 @@ describe('M3 leaving: scheduled for a future day', () => {
 
   it('can be moved to another day or cancelled before it happens', async () => {
     const candidate = DEV1;
+    const today = await offboard(HR, candidate, isoDay(0)).expect(200); // the last working day is today: still working, ends tomorrow
+    expect(today.body.processed).toBe('scheduled');
+    expect(await t.app.get(JobRunner).tick()).toBe(0);
+    expect((await prisma.employee.findUniqueOrThrow({ where: { empId: candidate } })).status).toBe('on_notice');
     await offboard(HR, candidate, isoDay(5)).expect(200);
     await offboard(HR, candidate, isoDay(9), 'Notice period extended').expect(200);
     const job = await prisma.scheduledJob.findUniqueOrThrow({ where: { dedupeKey: `offboard:${candidate}` } });
-    expect(job.runAt.toISOString()).toBe(startOfDayPakistan(isoDay(9)).toISOString());
+    expect(job.runAt.toISOString()).toBe(accessEndsAt(isoDay(9)).toISOString());
     expect(await prisma.scheduledJob.count({ where: { dedupeKey: { startsWith: `offboard:${candidate}` } } })).toBe(1);
-    expect(await prisma.auditLog.count({ where: { action: 'employee.offboarding.rescheduled', targetId: candidate } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: 'employee.offboarding.rescheduled', targetId: candidate } })).toBe(2);
 
     await t.as(HR).delete(`/api/v1/employees/${candidate}/offboard`).send({ reason: 'Decided to stay' }).expect(200);
     const employee = await prisma.employee.findUniqueOrThrow({ where: { empId: candidate } });

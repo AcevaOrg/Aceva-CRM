@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  approveHireRequestSchema,
   createEmployeeRequestSchema,
+  rejectHireRequestSchema,
   directoryQuerySchema,
   offboardRequestSchema,
   reasonSchema,
@@ -27,7 +29,38 @@ class UpdatePayDto extends createZodDto(updatePayRequestSchema) {}
 class RevealDto extends createZodDto(revealRequestSchema) {}
 class OffboardDto extends createZodDto(offboardRequestSchema) {}
 class CancelOffboardDto extends createZodDto(z.object({ reason: reasonSchema })) {}
+class ApproveHireDto extends createZodDto(approveHireRequestSchema) {}
+class RejectHireDto extends createZodDto(rejectHireRequestSchema) {}
 class CreateEmployeeDto extends createZodDto(createEmployeeRequestSchema) {}
+
+@ApiTags('hire-requests')
+@Controller('hire-requests')
+export class HireRequestsController {
+  constructor(private readonly joining: JoiningService) {}
+
+  @Get()
+  @Authenticated()
+  @ApiOperation({ summary: 'Hire requests (Owner, CEO, Director, HR). ?status=pending|approved|rejected' })
+  list(@CurrentActor() actor: Actor, @Query('status') status?: string) {
+    return this.joining.list(actor, status);
+  }
+
+  @Post(':id/approve')
+  @RequirePermission('org.manage')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Owner or CEO authorize the level and reporting line (they may correct them); the employee is created now' })
+  approve(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: ApproveHireDto, @ClientInfo() client: RequestInfo) {
+    return this.joining.approve(actor, id, body, client);
+  }
+
+  @Post(':id/reject')
+  @RequirePermission('org.manage')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Owner or CEO reject a hire request' })
+  reject(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: RejectHireDto, @ClientInfo() client: RequestInfo) {
+    return this.joining.reject(actor, id, body.reason, client);
+  }
+}
 
 @ApiTags('employees')
 @Controller('employees')
@@ -45,9 +78,16 @@ export class PeopleController {
     return this.people.directory(query.q);
   }
 
+  @Get('unresolved-reports')
+  @Authenticated()
+  @ApiOperation({ summary: 'People who still report to someone who left (the Owner or CEO assign a new manager)' })
+  unresolvedReports(@CurrentActor() actor: Actor) {
+    return this.people.unresolvedReports(actor);
+  }
+
   @Post()
-  @RequirePermission('people.manage')
-  @ApiOperation({ summary: 'Joining workflow: create the profile (Director or HR). The Emp-ID is generated and a welcome email with a temporary password is sent.' })
+  @Authenticated()
+  @ApiOperation({ summary: 'Joining workflow. Director/HR start a hire (Level 4-5) that waits for the Owner or CEO; Owner/CEO create at once. On creation the Emp-ID is generated and a welcome email with a temporary password is sent.' })
   create(@CurrentActor() actor: Actor, @Body() body: CreateEmployeeDto, @ClientInfo() client: RequestInfo) {
     return this.joining.create(actor, body, client);
   }

@@ -5,6 +5,7 @@ import type {
   FieldChangeView,
   ProfileAccessView,
   ProfileResponse,
+  UnresolvedReport,
   UpdateBasicRequest,
   UpdateJobRequest,
   UpdatePayRequest,
@@ -121,6 +122,26 @@ export class PeopleService {
     }));
   }
 
+  /**
+   * People who still report to someone who has left. Nothing moves them automatically: the Owner or CEO give each a
+   * new manager (the Module 1 reporting-line change). Visible to Owner, CEO, Director and HR.
+   */
+  async unresolvedReports(actor: Actor): Promise<UnresolvedReport[]> {
+    const access = await this.permissions.getEffectiveAccess(actor.id);
+    if (!access.permissions.has('org.manage') && !access.permissions.has('people.manage')) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
+    const rows = await this.prisma.employee.findMany({
+      where: { status: { not: 'left' }, reportsTo: { status: 'left' } },
+      orderBy: { empId: 'asc' },
+      select: { empId: true, fullName: true, level: { select: { number: true } }, reportsTo: { select: { empId: true, fullName: true, lastWorkingDay: true } } },
+    });
+    return rows.map((r) => ({
+      empId: r.empId,
+      name: r.fullName,
+      level: r.level.number,
+      leftManager: { empId: r.reportsTo!.empId, name: r.reportsTo!.fullName, lastWorkingDay: r.reportsTo!.lastWorkingDay ? day(r.reportsTo!.lastWorkingDay) : null },
+    }));
+  }
+
   /** One profile: only the sections the caller may see. */
   async profile(actor: Actor, empId: string): Promise<ProfileResponse> {
     const target = await this.requireTarget(empId);
@@ -151,8 +172,8 @@ export class PeopleService {
     if (access.see.pay) {
       const p = target.pay;
       response.pay = {
-        baseSalary: money(p?.baseSalary),
-        allowances: money(p?.allowances),
+        // Salary amounts are never in the profile: only the logged reveal returns them.
+        salaryOnFile: !!p && Number(p.baseSalary) > 0,
         currency: 'PKR',
         bankName: p?.bankName ?? null,
         accountMasked: p?.bankAccountLast4 ? maskTail(`${'0'.repeat(8)}${p.bankAccountLast4}`) : null,
@@ -185,6 +206,8 @@ export class PeopleService {
     const empIdOf = new Map(people.map((p) => [p.id, p.empId]));
     const reveal = (value: string | null, row: { isSensitive: boolean; field: string }): string => {
       if (!value) return '—';
+      // Salary amounts stay hidden in the history too: they are only ever shown by the logged reveal.
+      if (row.field === LABEL.salary || row.field === LABEL.allowances) return '••••••';
       const plain = row.isSensitive ? this.crypto.decrypt(value) : value;
       // CNIC and bank account numbers are never shown in full in history.
       return row.field === LABEL.cnic || row.field === LABEL.account ? maskId(plain) : plain;
@@ -202,7 +225,7 @@ export class PeopleService {
   }
 
   /** Shows a masked CNIC or bank account number to someone allowed to see that section. Logged EVERY time. */
-  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account' | 'salary', client: RequestInfo): Promise<{ value: string }> {
+  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account' | 'salary', client: RequestInfo): Promise<{ value: string; allowances?: string }> {
     const target = await this.requireTarget(empId);
     const access = await this.accessFor(actor, target);
     const allowed = field === 'cnic' ? access.revealCnic : access.revealPay;
@@ -218,7 +241,7 @@ export class PeopleService {
       value = this.crypto.decrypt(encrypted);
     }
     await this.audit.record({ actorId: actor.id, action: 'employee.sensitive.revealed', targetType: 'employee', targetId: empId, details: { field: label }, ...client });
-    return { value };
+    return field === 'salary' ? { value, allowances: money(target.pay!.allowances) } : { value };
   }
 
   // ===================================================================== changing

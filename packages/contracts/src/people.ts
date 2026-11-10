@@ -132,6 +132,22 @@ export type OffboardRequest = z.infer<typeof offboardRequestSchema>;
 export const revealRequestSchema = z.object({ field: z.enum(['cnic', 'account', 'salary']) });
 export type RevealRequest = z.infer<typeof revealRequestSchema>;
 
+/** POST /hire-requests/:id/approve: the Owner or CEO authorize the level and reporting line (they may correct the proposal). */
+export const approveHireRequestSchema = z
+  .object({ level: z.number().int().min(3).max(5).optional(), reportsToEmpId: empIdSchema.optional() })
+  .strict();
+export type ApproveHireRequest = z.infer<typeof approveHireRequestSchema>;
+
+/** POST /hire-requests/:id/reject */
+export const rejectHireRequestSchema = z.object({ reason: optionalText(500).min(5, 'Please give a reason (at least 5 characters)') }).strict();
+export type RejectHireRequest = z.infer<typeof rejectHireRequestSchema>;
+
+/** The reveal answer. For salary, `allowances` is the allowances total. */
+export interface RevealResponse {
+  value: string;
+  allowances?: string;
+}
+
 /** GET /employees?q= */
 export const directoryQuerySchema = z.object({ q: z.string().trim().max(80).optional() });
 export type DirectoryQuery = z.infer<typeof directoryQuerySchema>;
@@ -167,9 +183,10 @@ export interface PersonalView {
   emergencyContact: { name: string; relation: string; phone: string } | null;
 }
 
+/** Salary amounts are NOT in the profile: they come only from the logged reveal (POST /employees/:empId/reveal). */
 export interface PayView {
-  baseSalary: string;
-  allowances: string;
+  /** True when a salary is on file. */
+  salaryOnFile: boolean;
   currency: 'PKR';
   bankName: string | null;
   accountMasked: string | null;
@@ -218,12 +235,53 @@ export interface ProfileResponse {
   access: ProfileAccessView;
 }
 
-export interface CreateEmployeeResponse {
+/**
+ * Owner or CEO create the employee at once ("created"). Director or HR only START a hire: it waits as a request
+ * until the Owner or CEO authorize the level and reporting line ("pending_approval"); no Emp-ID or login exists before that.
+ */
+export type CreateEmployeeResponse =
+  | {
+      status: 'created';
+      empId: string;
+      /** false when the welcome email could not be sent (use "resend welcome"). */
+      welcomeEmailSent: boolean;
+      /** True when no pay was entered (the Director sets it). */
+      payPending: boolean;
+    }
+  | { status: 'pending_approval'; requestId: string; payPending: boolean };
+
+export interface HireRequestView {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  name: string;
+  designation: string;
+  departmentId: string;
+  officeId: string;
+  officialEmail: string;
+  joiningDate: string;
+  type: 'full_time' | 'part_time' | 'intern';
+  proposedLevel: number;
+  proposedReportsTo: string;
+  requestedBy: string;
+  requestedAt: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionReason: string | null;
+  /** Set once approved. */
+  empId: string | null;
+}
+
+/** Someone who still reports to a person who has left: the Owner or CEO must give them a new manager. */
+export interface UnresolvedReport {
   empId: string;
-  /** false when the welcome email could not be sent (use "resend welcome"). */
+  name: string;
+  level: number;
+  leftManager: { empId: string; name: string; lastWorkingDay: string | null };
+}
+
+export interface ApproveHireResponse {
+  empId: string;
   welcomeEmailSent: boolean;
-  /** True when no pay was entered (the Director sets it). */
-  payPending: boolean;
 }
 
 export interface OffboardResponse {

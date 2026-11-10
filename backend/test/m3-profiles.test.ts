@@ -111,7 +111,8 @@ describe('M3 who sees which section (plan section 7)', () => {
     expect(p.pay.accountMasked).toMatch(/^\*+3344$/);
     expect(JSON.stringify(p)).not.toContain('42101-1234567-1');
     expect(JSON.stringify(p)).not.toContain('PK36ALFH55019987123344');
-    expect(p.pay).toMatchObject({ baseSalary: '300000.00', allowances: '8000.00', currency: 'PKR', bankName: 'Bank Alfalah' });
+    expect(p.pay).toEqual({ salaryOnFile: true, currency: 'PKR', bankName: 'Bank Alfalah', accountMasked: expect.stringMatching(/^\*+3344$/) });
+    expect(JSON.stringify(p)).not.toMatch(/300000|8000/); // salary amounts are never sent before a logged reveal
     expect(p.personal).toMatchObject({ phone: '+92 300 1234567', homeAddress: 'House 12, Block B, Dadu', emergencyContact: { name: 'Imran Khan', relation: 'Father' } });
   });
 });
@@ -132,7 +133,7 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
     await me.patch(`/api/v1/employees/${DEV1}/job`).send({ type: 'part_time', reason: 'I would like fewer hours' }).expect(403);
     await me.patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 999999, reason: 'I deserve it' }).expect(403);
     await me.patch(`/api/v1/employees/${DEV1}/job`).send({ level: 4, reason: 'promote myself please' }).expect(403);
-    expect((await profile(DIRECTOR)).pay.baseSalary).toBe('300000.00');
+    expect((await t.as(DIRECTOR).post(`/api/v1/employees/${DEV1}/reveal`).send({ field: 'salary' }).expect(200)).body.value).toBe('300000.00');
   });
 
   it('nobody changes someone else\'s personal details unless HR or the Director', async () => {
@@ -155,7 +156,7 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
     await t.as(CEO).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'CEO may not change pay' }).expect(403);
     await t.as(FINANCE).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'Finance may not change pay' }).expect(403);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DIRECTOR}/pay`).send({ baseSalary: 999999, reason: 'Raise for myself' }).expect(403);
-    expect((await profile(DIRECTOR)).pay.baseSalary).toBe('320000.00');
+    expect((await t.as(DIRECTOR).post(`/api/v1/employees/${DEV1}/reveal`).send({ field: 'salary' }).expect(200)).body.value).toBe('320000.00');
     expect(await denied('pay_edit_not_allowed')).toBeGreaterThanOrEqual(5);
   });
 
@@ -199,7 +200,9 @@ describe('M3 every change keeps the old value (who, when, old, new)', () => {
     expect(find('Office', 'Remote')).toMatchObject({ oldValue: 'Karachi Studio', changedBy: DIRECTOR, reason: 'Moved to remote work' });
     expect(find('Type', 'Part-time')).toMatchObject({ oldValue: 'Full-time', changedBy: HR, reason: 'Reduced hours agreed', section: 'job' });
     expect(find('Phone', '+92 333 9998887')).toMatchObject({ oldValue: '+92 300 1234567', changedBy: DEV1, section: 'personal' });
-    expect(find('Base salary', '320000.00')).toMatchObject({ oldValue: '300000.00', changedBy: DIRECTOR, reason: 'Annual review', section: 'pay' });
+    // salary amounts are hidden in the history too; the old and new values are kept (encrypted) in the table
+    expect(history.find((h) => h.field === 'Base salary' && h.reason === 'Annual review')).toMatchObject({ oldValue: '••••••', newValue: '••••••', changedBy: DIRECTOR, section: 'pay' });
+    expect(JSON.stringify(history)).not.toMatch(/300000|320000/);
     expect(find('Reports to', FINANCE)).toBeUndefined(); // reporting-line history is written by Module 1 (checked below)
     expect(history.every((h) => !Number.isNaN(Date.parse(h.changedAt)))).toBe(true);
   });
@@ -264,7 +267,7 @@ describe('M3 revealing masked values', () => {
 
   it('logs a salary reveal too, and only for people allowed to see pay', async () => {
     const before = await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } });
-    expect((await reveal(DIRECTOR, 'salary' as 'cnic').expect(200)).body.value).toBe('320000.00');
+    expect((await reveal(DIRECTOR, 'salary' as 'cnic').expect(200)).body).toEqual({ value: '320000.00', allowances: '8000.00' });
     await reveal(HR, 'salary' as 'cnic').expect(403);
     await reveal(CTO, 'salary' as 'cnic').expect(403);
     expect(await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } })).toBe(before + 1);

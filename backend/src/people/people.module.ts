@@ -9,13 +9,13 @@ import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
 import { JoiningService } from './joining.service';
 import { OffboardingService } from './offboarding.service';
-import { PeopleController } from './people.controller';
+import { HireRequestsController, PeopleController } from './people.controller';
 import { PeopleService } from './people.service';
 
 /** Module 3: employee profiles, joining and leaving. */
 @Module({
   imports: [OrgModule],
-  controllers: [PeopleController, DocumentsController],
+  controllers: [PeopleController, HireRequestsController, DocumentsController],
   providers: [
     PeopleService,
     JoiningService,

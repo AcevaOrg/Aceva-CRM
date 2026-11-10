@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { CreateEmployeeRequest, CreateEmployeeResponse } from '@aceva/contracts';
+import type { ApproveHireRequest, ApproveHireResponse, CreateEmployeeRequest, CreateEmployeeResponse, HireRequestView } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
@@ -10,19 +10,23 @@ import { AuthService } from '../auth/auth.service';
 import { CryptoService } from '../auth/crypto.service';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env';
+import { Prisma } from '../generated/prisma/client';
 import { Mailer } from '../mail/mailer';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Levels the Director or HR may hire into. Level 3 and above are placed by the Owner or CEO (Module 1). */
-const HIRE_LEVELS = new Set([4, 5]);
+/** Levels the Director or HR may START a hire at. The Owner or CEO authorize the level and reporting line. */
+const REQUEST_LEVELS = new Set([4, 5]);
+
+type Sensitive = Pick<CreateEmployeeRequest, 'personal' | 'pay'>;
+const day = (d: Date): string => d.toISOString().slice(0, 10);
 
 /**
- * The joining workflow (plan section 7):
- *  1. Director or HR fills in the employee profile
- *  2. the system generates the Emp-ID (database sequence, never reused)
- *  3. the system creates the login (Module 2) with a temporary password
- *  4. a welcome message with the temporary password goes to the official email
- *  5. the employee must change the temporary password at first login (Module 2 enforces it)
+ * The joining workflow (plan section 7, with decision M3-3):
+ *  1. Director or HR fill in the profile. This only STARTS the hire (a request at Level 4 or 5).
+ *  2. The Owner or CEO authorize the level and reporting line (and may correct them). Owner/CEO can also hire directly.
+ *  3. On approval the system generates the Emp-ID, creates the login (Module 2) with a temporary password and emails it.
+ *  4. The employee must change the temporary password at first login (Module 2 enforces it).
+ * No Emp-ID, login or employee record exists before step 2.
  */
 @Injectable()
 export class JoiningService {
@@ -39,45 +43,156 @@ export class JoiningService {
     @Inject(ENV) private readonly env: Env,
   ) {}
 
+  // ===================================================================== start a hire / hire directly
+
   async create(actor: Actor, dto: CreateEmployeeRequest, client: RequestInfo): Promise<CreateEmployeeResponse> {
-    if (!HIRE_LEVELS.has(dto.level)) {
-      throw new BadRequestException({ statusCode: 400, code: 'level_not_allowed', message: 'New people join at Level 4 or 5. The Owner or CEO places anyone higher.' });
-    }
     const access = await this.permissions.getEffectiveAccess(actor.id);
+    const canAuthorize = access.permissions.has('org.manage'); // Owner or CEO
+    if (!canAuthorize && !access.permissions.has('people.manage')) {
+      await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: null, outcome: 'denied', reason: 'hire_not_allowed', ...client });
+      throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
+    }
+    if (!canAuthorize && !REQUEST_LEVELS.has(dto.level)) {
+      throw new BadRequestException({ statusCode: 400, code: 'level_not_allowed', message: 'You can start a hire at Level 4 or 5. The Owner or CEO place anyone higher.' });
+    }
     if (dto.pay && !access.permissions.has('people.manage_pay')) {
       await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: null, outcome: 'denied', reason: 'pay_edit_not_allowed', ...client });
       throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'Only the Director enters pay information' });
     }
 
+    if (canAuthorize) {
+      const made = await this.materialize(actor, dto, actor.id, null, client);
+      return { status: 'created', ...made };
+    }
+
+    // Director or HR: validate now (so mistakes show immediately), then wait for the Owner or CEO.
+    const request = await this.prisma.$transaction(async (tx) => {
+      await this.validate(tx, dto);
+      if (await tx.hireRequest.findFirst({ where: { officialEmail: dto.officialEmail, status: 'pending' } })) {
+        throw new ConflictException({ statusCode: 409, code: 'email_taken', message: 'A hire with that official email is already waiting for approval' });
+      }
+      const row = await tx.hireRequest.create({
+        data: {
+          name: dto.name,
+          designation: dto.designation,
+          departmentCode: dto.departmentId,
+          officeCode: dto.officeId,
+          officialEmail: dto.officialEmail,
+          joiningDate: new Date(`${dto.joiningDate}T00:00:00.000Z`),
+          employmentType: dto.type,
+          weeklyCapacityHours: dto.weeklyCapacityHours ?? null,
+          proposedLevel: dto.level,
+          proposedReportsTo: dto.reportsToEmpId,
+          sensitiveEncrypted: dto.personal || dto.pay ? this.crypto.encrypt(JSON.stringify({ personal: dto.personal, pay: dto.pay } satisfies Sensitive)) : null,
+          requestedBy: actor.id,
+        },
+      });
+      await this.audit.record({ actorId: actor.id, action: 'hire.requested', targetType: 'hire_request', targetId: row.id, details: { level: dto.level, reportsTo: dto.reportsToEmpId, department: dto.departmentId }, ...client }, tx);
+      return row;
+    });
+    return { status: 'pending_approval', requestId: request.id, payPending: !dto.pay };
+  }
+
+  // ===================================================================== authorize
+
+  async list(actor: Actor, status?: string): Promise<HireRequestView[]> {
+    const access = await this.permissions.getEffectiveAccess(actor.id);
+    if (!access.permissions.has('org.manage') && !access.permissions.has('people.manage')) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
+    const rows = await this.prisma.hireRequest.findMany({
+      where: status && ['pending', 'approved', 'rejected'].includes(status) ? { status: status as 'pending' } : {},
+      orderBy: { requestedAt: 'desc' },
+      take: 100,
+      include: { requester: { select: { empId: true } }, decider: { select: { empId: true } }, employee: { select: { empId: true } } },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      name: r.name,
+      designation: r.designation,
+      departmentId: r.departmentCode,
+      officeId: r.officeCode,
+      officialEmail: r.officialEmail,
+      joiningDate: day(r.joiningDate),
+      type: r.employmentType,
+      proposedLevel: r.proposedLevel,
+      proposedReportsTo: r.proposedReportsTo,
+      requestedBy: r.requester.empId,
+      requestedAt: r.requestedAt.toISOString(),
+      decidedBy: r.decider?.empId ?? null,
+      decidedAt: r.decidedAt?.toISOString() ?? null,
+      decisionReason: r.decisionReason,
+      empId: r.employee?.empId ?? null,
+    }));
+  }
+
+  /** The Owner or CEO authorize the level and reporting line; only now does the employee come into existence. */
+  async approve(actor: Actor, requestId: string, body: ApproveHireRequest, client: RequestInfo): Promise<ApproveHireResponse> {
+    const row = await this.prisma.hireRequest.findUnique({ where: { id: requestId } });
+    if (!row) throw new NotFoundException('Hire request not found');
+    if (row.status !== 'pending') throw new ConflictException({ statusCode: 409, code: 'already_decided', message: `This request was already ${row.status}` });
+    const extra: Sensitive = row.sensitiveEncrypted ? (JSON.parse(this.crypto.decrypt(row.sensitiveEncrypted)) as Sensitive) : {};
+    const dto: CreateEmployeeRequest = {
+      name: row.name,
+      designation: row.designation,
+      departmentId: row.departmentCode,
+      officeId: row.officeCode,
+      officialEmail: row.officialEmail,
+      level: body.level ?? row.proposedLevel,
+      reportsToEmpId: body.reportsToEmpId ?? row.proposedReportsTo,
+      joiningDate: day(row.joiningDate),
+      type: row.employmentType,
+      ...(row.weeklyCapacityHours !== null ? { weeklyCapacityHours: row.weeklyCapacityHours } : {}),
+      ...extra,
+    };
+    const made = await this.materialize(actor, dto, row.requestedBy, row.id, client, { corrected: dto.level !== row.proposedLevel || dto.reportsToEmpId !== row.proposedReportsTo });
+    return { empId: made.empId, welcomeEmailSent: made.welcomeEmailSent };
+  }
+
+  async reject(actor: Actor, requestId: string, reason: string, client: RequestInfo): Promise<{ ok: true }> {
+    const { count } = await this.prisma.hireRequest.updateMany({ where: { id: requestId, status: 'pending' }, data: { status: 'rejected', decidedBy: actor.id, decidedAt: new Date(), decisionReason: reason } });
+    if (count === 0) {
+      if (!(await this.prisma.hireRequest.findUnique({ where: { id: requestId }, select: { id: true } }))) throw new NotFoundException('Hire request not found');
+      throw new ConflictException({ statusCode: 409, code: 'already_decided', message: 'This request was already decided' });
+    }
+    await this.audit.record({ actorId: actor.id, action: 'hire.rejected', targetType: 'hire_request', targetId: requestId, reason, ...client });
+    return { ok: true };
+  }
+
+  // ===================================================================== creating the employee
+
+  /** Checks department, office, manager and the reporting rules (the same rules as Module 1). Returns what the insert needs. */
+  private async validate(tx: Prisma.TransactionClient, dto: CreateEmployeeRequest) {
+    const [department, office, manager, level, rules] = await Promise.all([
+      tx.department.findFirst({ where: { code: dto.departmentId, archivedAt: null } }),
+      tx.office.findFirst({ where: { code: dto.officeId, archivedAt: null } }),
+      tx.employee.findUnique({ where: { empId: dto.reportsToEmpId }, select: { id: true, empId: true, status: true, roleId: true, level: { select: { number: true } } } }),
+      tx.level.findUnique({ where: { number: dto.level }, select: { id: true } }),
+      tx.sameLevelReportingRule.findMany({ select: { managerRoleId: true, employeeRoleId: true } }),
+    ]);
+    if (!department) throw new BadRequestException({ statusCode: 400, code: 'unknown_department', message: 'That department does not exist or is deactivated' });
+    if (!office) throw new BadRequestException({ statusCode: 400, code: 'unknown_office', message: 'That office does not exist or is deactivated' });
+    if (!manager) throw new NotFoundException(`Employee ${dto.reportsToEmpId} not found`);
+    if (!level) throw new BadRequestException('Unknown level');
+
+    // The role follows the level (and the Sales department's own Level 4 role).
+    const roleKey = dto.level === 5 ? 'employee' : dto.level === 3 ? 'level3_default' : department.code === 'dep-sales' ? 'sales' : 'level4_default';
+    const role = await tx.role.findUniqueOrThrow({ where: { key: roleKey }, select: { id: true } });
+    const problems = checkLevelRules(
+      { id: 'new', empId: 'new', levelNumber: dto.level, roleId: role.id, status: 'active' },
+      { id: manager.id, empId: manager.empId, levelNumber: manager.level.number, roleId: manager.roleId, status: manager.status },
+      rules,
+    );
+    if (problems.length) throw new BadRequestException({ statusCode: 400, message: 'This reporting line is not allowed', violations: problems });
+    return { department, office, manager, level, role };
+  }
+
+  private async materialize(actor: Actor, dto: CreateEmployeeRequest, requestedBy: string, requestId: string | null, client: RequestInfo, meta: { corrected?: boolean } = {}) {
     const created = await this.prisma.$transaction(async (tx) => {
       await this.hierarchy.lock(tx);
-      const [department, office, manager, level, rules] = await Promise.all([
-        tx.department.findFirst({ where: { code: dto.departmentId, archivedAt: null } }),
-        tx.office.findFirst({ where: { code: dto.officeId, archivedAt: null } }),
-        tx.employee.findUnique({ where: { empId: dto.reportsToEmpId }, select: { id: true, empId: true, status: true, roleId: true, level: { select: { number: true } } } }),
-        tx.level.findUnique({ where: { number: dto.level }, select: { id: true } }),
-        tx.sameLevelReportingRule.findMany({ select: { managerRoleId: true, employeeRoleId: true } }),
-      ]);
-      if (!department) throw new BadRequestException({ statusCode: 400, code: 'unknown_department', message: 'That department does not exist or is deactivated' });
-      if (!office) throw new BadRequestException({ statusCode: 400, code: 'unknown_office', message: 'That office does not exist or is deactivated' });
-      if (!manager) throw new NotFoundException(`Employee ${dto.reportsToEmpId} not found`);
-      if (!level) throw new BadRequestException('Unknown level');
-
-      // The role follows the level (and the Sales department's own Level 4 role).
-      const roleKey = dto.level === 5 ? 'employee' : department.code === 'dep-sales' ? 'sales' : 'level4_default';
-      const role = await tx.role.findUniqueOrThrow({ where: { key: roleKey }, select: { id: true } });
-
-      // Same reporting rules as Module 1: a higher level, or the one configured same-level line.
-      const problems = checkLevelRules(
-        { id: 'new', empId: 'new', levelNumber: dto.level, roleId: role.id, status: 'active' },
-        { id: manager.id, empId: manager.empId, levelNumber: manager.level.number, roleId: manager.roleId, status: manager.status },
-        rules,
-      );
-      if (problems.length) throw new BadRequestException({ statusCode: 400, message: 'This reporting line is not allowed', violations: problems });
+      const { department, office, manager, level, role } = await this.validate(tx, dto);
       if (await tx.employee.findFirst({ where: { officialEmail: dto.officialEmail } })) {
         throw new ConflictException({ statusCode: 409, code: 'email_taken', message: 'That official email is already used' });
       }
-
       const employee = await tx.employee.create({
         data: {
           // empId is generated by the database sequence: sequential, unique even for simultaneous hires, never reused
@@ -131,16 +246,32 @@ export class JoiningService {
       await tx.employmentHistory.create({
         data: { employeeId: employee.id, eventType: 'joined', effectiveOn: new Date(`${dto.joiningDate}T00:00:00.000Z`), details: { designation: dto.designation, department: department.name, reportsTo: manager.empId }, createdBy: actor.id },
       });
+      if (requestId) {
+        const { count } = await tx.hireRequest.updateMany({ where: { id: requestId, status: 'pending' }, data: { status: 'approved', decidedBy: actor.id, decidedAt: new Date(), employeeId: employee.id } });
+        if (count === 0) throw new ConflictException({ statusCode: 409, code: 'already_decided', message: 'This request was already decided' });
+      }
 
       // The login (Module 2): a random temporary password, shown to nobody, sent by email.
       const temporary = await this.auth.provisionCredential(employee.id, actor.id, undefined, tx);
-      await this.audit.record({ actorId: actor.id, action: 'employee.created', targetType: 'employee', targetId: employee.empId, details: { level: dto.level, department: department.code, reportsTo: manager.empId }, ...client }, tx);
+      await this.audit.record(
+        {
+          actorId: actor.id,
+          action: requestId ? 'hire.approved' : 'employee.created',
+          targetType: 'employee',
+          targetId: employee.empId,
+          details: { level: dto.level, department: department.code, reportsTo: manager.empId, requestId, requestedBy, correctedByAuthorizer: !!meta.corrected },
+          ...client,
+        },
+        tx,
+      );
       return { employee, temporary };
     });
 
     const welcomeEmailSent = await this.sendWelcome(created.employee, created.temporary, actor, client);
     return { empId: created.employee.empId, welcomeEmailSent, payPending: !dto.pay };
   }
+
+  // ===================================================================== welcome email
 
   /** The welcome email did not arrive: issue a new temporary password and send it again (only before first login). */
   async resendWelcome(actor: Actor, empId: string, client: RequestInfo): Promise<{ welcomeEmailSent: boolean }> {
@@ -168,7 +299,6 @@ export class JoiningService {
       });
       return true;
     } catch (error) {
-      // The mailer already logged the failure (without the message body).
       this.logger.warn(`Welcome email for ${employee.empId} was not sent: ${(error as Error).message}`);
       await this.audit.record({ actorId: actor.id, action: 'employee.welcome_email_failed', targetType: 'employee', targetId: employee.empId, outcome: 'denied', reason: 'mail_failed', ...client });
       return false;
