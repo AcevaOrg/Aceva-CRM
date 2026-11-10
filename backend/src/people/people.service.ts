@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   DirectoryEntry,
+  DocumentView,
   FieldChangeView,
   ProfileAccessView,
   ProfileResponse,
@@ -158,8 +159,16 @@ export class PeopleService {
       };
     }
     if (access.see.history) response.history = await this.history(target, access);
-    // documents are added by DocumentsService (it owns the storage rules)
+    if (access.see.documents) response.documents = await this.documentList(target.id);
     return response;
+  }
+
+  /** Document records (never the files). */
+  async documentList(employeeId: string): Promise<DocumentView[]> {
+    const rows = await this.prisma.employeeDocument.findMany({ where: { employeeId, archivedAt: null }, orderBy: { createdAt: 'desc' } });
+    const people = await this.prisma.employee.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.createdBy).filter((v): v is string => !!v))] } }, select: { id: true, empId: true } });
+    const empIdOf = new Map(people.map((x) => [x.id, x.empId]));
+    return rows.map((r) => ({ id: r.id, kind: r.type, title: r.title, fileName: r.originalFilename, mimeType: r.mimeType, sizeBytes: r.sizeBytes, uploadedAt: r.createdAt.toISOString(), uploadedBy: r.createdBy ? (empIdOf.get(r.createdBy) ?? null) : null }));
   }
 
   /** Field-by-field history the caller may see. Sensitive values were stored encrypted. */

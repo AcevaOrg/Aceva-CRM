@@ -1,4 +1,7 @@
 import { INestApplication, Type } from '@nestjs/common';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Test } from '@nestjs/testing';
 import { generateSync } from 'otplib';
 import request from 'supertest';
@@ -25,6 +28,8 @@ export interface TestApp {
   app: INestApplication;
   clock: FakeClock;
   mailer: MemoryMailer;
+  /** The private folder where this test run keeps uploaded files. */
+  storageRoot: string;
   /** A request made "as" a demo person with a real session. Call signInAll() first. */
   as: (empId: string | null) => Client;
   /** Logs every demo person in for real (password, and the authenticator code where 2FA is required). */
@@ -65,6 +70,7 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
   process.env.DATABASE_URL = testDatabaseUrl();
   process.env.NODE_ENV = 'test';
   process.env.REDIS_KEY_PREFIX = 'aceva:test:'; // tests never touch real session data
+  process.env.FILE_STORAGE_ROOT = mkdtempSync(join(tmpdir(), 'aceva-private-'));
   process.env.TRUST_PROXY = '1'; // tests choose the client address with X-Forwarded-For
 
   const clock = new FakeClock();
@@ -146,6 +152,7 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
     app,
     clock,
     mailer,
+    storageRoot: process.env.FILE_STORAGE_ROOT!,
     signIn,
     rawLogin,
     freshIp,
