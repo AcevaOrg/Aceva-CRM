@@ -11,6 +11,6 @@ import { StructureService } from './structure.service';
 @Module({
   controllers: [OrgController, StandInsController, ApprovalsController],
   providers: [OrgService, StructureService, StandInsService, ApprovalsService],
-  exports: [ApprovalsService],
+  exports: [ApprovalsService, OrgService],
 })
 export class OrgModule {}

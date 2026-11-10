@@ -9,10 +9,11 @@ import { CommonModule } from './common/common.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { OrgModule } from './org/org.module';
+import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), AccessModule, AuthModule, HealthModule, OrgModule],
+  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), AccessModule, AuthModule, HealthModule, OrgModule, PeopleModule],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })
 export class AppModule {}
