@@ -449,6 +449,8 @@ model Credential {
   lockedAt           DateTime? @map("locked_at") @db.Timestamptz(3)
   /// Set when the last working day is processed. A disabled login can never sign in.
   loginDisabledAt    DateTime? @map("login_disabled_at") @db.Timestamptz(3)
+  /// Set when two-step login was reset (lost phone): a fresh authenticator MUST be set up at the next login.
+  mustEnrollTwoFactor Boolean  @default(false) @map("must_enroll_two_factor")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   createdBy          String?   @map("created_by") @db.Uuid
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)

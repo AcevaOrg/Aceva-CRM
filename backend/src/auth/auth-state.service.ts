@@ -31,7 +31,7 @@ export class AuthStateService {
       select: {
         status: true,
         level: { select: { number: true } },
-        credential: { select: { mustChangePassword: true, loginDisabledAt: true, lockedAt: true } },
+        credential: { select: { mustChangePassword: true, loginDisabledAt: true, lockedAt: true, mustEnrollTwoFactor: true } },
         totpSecret: { select: { confirmedAt: true } },
         duties: { where: { endedAt: null }, select: { duty: { select: { key: true, requiresTwoFactor: true } } } },
       },
@@ -44,7 +44,7 @@ export class AuthStateService {
       locked: !!e.credential?.lockedAt,
       mustChangePassword: e.credential?.mustChangePassword ?? false,
       // Plan section 6: mandatory for levels 1 to 3 and for anyone with Finance duty; optional for others.
-      twoFactorRequired: e.level.number <= 3 || dutyNeeds2fa,
+      twoFactorRequired: e.level.number <= 3 || dutyNeeds2fa || !!e.credential?.mustEnrollTwoFactor,
       twoFactorEnabled: enabled,
       hasFinanceDuty: e.duties.some((d) => d.duty.key === 'finance'),
     };

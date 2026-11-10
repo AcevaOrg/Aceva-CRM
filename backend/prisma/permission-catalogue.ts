@@ -6,6 +6,8 @@
  *   approval.approve   may approve requests of people below, and may be a stand-in
  *   duty.assign        may give or end extra duties such as Finance or HR (Director)
  *   auth.set_temporary_password  Director and HR set a temporary password when someone has no official email
+ *   auth.reset_two_factor        reset a lost authenticator (Owner, CEO, Director, HR duty), with limits
+ * (Finance duty also sees pay information: plan section 7)
  * Roles belong to levels (plan section 5). Finance and HR are DUTIES, not roles. Duty permissions are kept
  * separate from role permissions. To add a permission for a future module, add a row to this catalogue
  * (and to the roles or duties that should have it); no authorization code changes.
@@ -26,7 +28,7 @@ export const PERMISSION_KEYS: string[] = [
   'subscriptions.manage', 'comms.use', 'comms.admin', 'announcements.publish', 'sales.own',
   'sales.team', 'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve',
   'sales.export', 'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
-  'auth.set_temporary_password',
+  'auth.set_temporary_password', 'auth.reset_two_factor',
 ];
 
 export interface RoleSeed {
@@ -54,6 +56,7 @@ const OWNER: string[] = [
   'settings.view', 'backup.view', 'billing.view', 'subscriptions.view', 'sales.own', 'sales.team',
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
   'org.manage',
+  'auth.reset_two_factor',
 ];
 
 const CEO: string[] = [
@@ -67,6 +70,7 @@ const CEO: string[] = [
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
   'org.manage', 'standin.manage', 'auth.unlock_account', 'session.force_logout', 'leave.approve',
   'attendance.approve_correction', 'approval.approve',
+  'auth.reset_two_factor',
 ];
 
 const LEVEL3_DEFAULT: string[] = [
@@ -94,6 +98,7 @@ const DIRECTOR: string[] = [
   'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.export',
   'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
   'auth.set_temporary_password',
+  'auth.reset_two_factor',
 ];
 
 const CTO: string[] = [
@@ -126,11 +131,13 @@ const DUTY_FINANCE: string[] = [
   'finance.view', 'finance.entry_create', 'finance.close', 'payroll.view', 'payroll.prepare',
   'statements.view', 'sheet.view', 'sheet.import', 'insights.view', 'billing.view', 'billing.manage',
   'subscriptions.view', 'sales.commission_view',
+  'people.view_pay',
 ];
 
 const DUTY_HR: string[] = [
   'people.view_job', 'people.view_personal', 'people.manage', 'auth.unlock_account',
   'auth.set_temporary_password',
+  'auth.reset_two_factor',
 ];
 
 const DUTY_SALES_MANAGER: string[] = [

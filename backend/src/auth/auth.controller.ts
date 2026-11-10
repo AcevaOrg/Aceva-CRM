@@ -5,6 +5,7 @@ import {
   adminActionRequestSchema,
   changePasswordRequestSchema,
   disableTwoFactorRequestSchema,
+  resetTwoFactorRequestSchema,
   forgotPasswordRequestSchema,
   loginRequestSchema,
   resetPasswordRequestSchema,
@@ -27,6 +28,7 @@ class ChangePasswordDto extends createZodDto(changePasswordRequestSchema) {}
 class ForgotDto extends createZodDto(forgotPasswordRequestSchema) {}
 class ResetDto extends createZodDto(resetPasswordRequestSchema) {}
 class AdminActionDto extends createZodDto(adminActionRequestSchema) {}
+class ResetTwoFactorDto extends createZodDto(resetTwoFactorRequestSchema) {}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -196,6 +198,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Log someone below me out on every device, at once' })
   forceLogout(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: AdminActionDto, @ClientInfo() client: RequestInfo) {
     return this.auth.forceLogout(actor, empId, body.reason, client);
+  }
+
+  @Post('employees/:empId/reset-2fa')
+  @RequirePermission('auth.reset_two_factor')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Lost authenticator phone: reset two-step login for someone of lower rank (reason required)' })
+  resetTwoFactor(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: ResetTwoFactorDto, @ClientInfo() client: RequestInfo) {
+    return this.auth.resetTwoFactor(actor, empId, body.reason, client);
   }
 
   @Post('employees/:empId/temporary-password')

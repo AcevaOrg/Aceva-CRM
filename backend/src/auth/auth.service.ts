@@ -245,6 +245,7 @@ export class AuthService {
       throw new BadRequestException({ statusCode: 400, code: 'invalid_code', message: 'That code is not right. Try the current code from your app.' });
     }
     if (!row.confirmedAt) {
+      await this.prisma.credential.updateMany({ where: { employeeId: actor.id }, data: { mustEnrollTwoFactor: false } });
       await this.audit.record({ actorId: actor.id, action: 'auth.2fa.enabled', targetType: 'employee', targetId: actor.empId, ...client });
     }
     await this.sessions.markTwoFactorVerified(sessionId);
@@ -466,6 +467,40 @@ export class AuthService {
     await this.sessions.endAllFor(target.id, 'password_changed');
     await this.audit.record({ actorId: actor.id, action: 'auth.password.temporary_set', targetType: 'employee', targetId: target.empId, reason: reason ?? null, ...client });
     return { temporaryPassword: temporary };
+  }
+
+  /**
+   * Lost authenticator phone. Owner and CEO may reset anyone of lower rank; the Director anyone below them in the
+   * reporting chain; HR duty people of lower rank. Never oneself, never the same level, never upward.
+   * The old secret is destroyed, every session ends, and a fresh authenticator must be set up at the next login.
+   */
+  async resetTwoFactor(actor: Actor, targetEmpId: string, reason: string, client: RequestInfo): Promise<{ ended: number }> {
+    const target = await this.prisma.employee.findUnique({ where: { empId: targetEmpId }, select: { id: true, empId: true, status: true, level: { select: { number: true } } } });
+    if (!target) throw new NotFoundException('Employee not found');
+    const access = await this.permissions.getEffectiveAccess(actor.id);
+    const lowerRank = target.level.number > actor.levelNumber; // strictly lower: never self, same level or upward
+    const byOwnerOrCeo = actor.levelNumber <= 2;
+    const byDirector = actor.roleKey === 'director' && (await this.scope.canAccess(actor.id, target.id, 'below'));
+    const byHr = access.duties.includes('hr');
+    const allowed = target.id !== actor.id && lowerRank && (byOwnerOrCeo || byDirector || byHr);
+    if (!allowed) await this.denyAdmin(actor, 'auth.reset_two_factor', target.empId, client);
+    if (target.status === 'left') throw new BadRequestException({ statusCode: 400, code: 'employee_left', message: 'This employee has left the company' });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.totpSecret.deleteMany({ where: { employeeId: target.id } }); // the old authenticator secret is destroyed
+      await tx.credential.updateMany({ where: { employeeId: target.id }, data: { mustEnrollTwoFactor: true, updatedBy: actor.id } });
+    });
+    const ended = await this.sessions.endAllFor(target.id, 'forced');
+    await this.audit.record({
+      actorId: actor.id,
+      action: 'auth.2fa.reset',
+      targetType: 'employee',
+      targetId: target.empId,
+      reason,
+      details: { ended, rule: byOwnerOrCeo ? 'owner_or_ceo' : byDirector ? 'director' : 'hr_duty' },
+      ...client,
+    });
+    return { ended };
   }
 
   /** Called when an employee's last working day is processed (Module 3): no more logins, all sessions end. */

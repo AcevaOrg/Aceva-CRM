@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { empIdSchema } from './events';
+import { reasonSchema } from './org';
 
 // ---------- requests ----------
 
@@ -55,6 +56,10 @@ export type ResetPasswordRequest = z.infer<typeof resetPasswordRequestSchema>;
 /** POST /auth/employees/:empId/unlock, /force-logout, /temporary-password */
 export const adminActionRequestSchema = z.object({ reason: z.string().trim().max(500).optional() });
 export type AdminActionRequest = z.infer<typeof adminActionRequestSchema>;
+
+/** POST /auth/employees/:empId/reset-2fa: a reason is required and recorded */
+export const resetTwoFactorRequestSchema = z.object({ reason: reasonSchema });
+export type ResetTwoFactorRequest = z.infer<typeof resetTwoFactorRequestSchema>;
 
 // ---------- responses ----------
 
