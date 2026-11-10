@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { createStandInRequestSchema, revokeStandInRequestSchema } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, RequestInfo, RequirePermission } from '../access/decorators';
@@ -10,7 +10,6 @@ class CreateStandInDto extends createZodDto(createStandInRequestSchema) {}
 class RevokeStandInDto extends createZodDto(revokeStandInRequestSchema) {}
 
 @ApiTags('stand-ins')
-@ApiHeader({ name: 'X-Dev-Emp-Id', required: false, description: 'DEVELOPMENT ONLY: who is calling, until M2 login exists' })
 @Controller('stand-ins')
 export class StandInsController {
   constructor(private readonly standIns: StandInsService) {}

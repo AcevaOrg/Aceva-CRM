@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   assignDutyRequestSchema,
   changeLevelRequestSchema,
@@ -17,7 +17,6 @@ class AssignDutyDto extends createZodDto(assignDutyRequestSchema) {}
 class EndDutyDto extends createZodDto(endDutyRequestSchema) {}
 
 @ApiTags('org')
-@ApiHeader({ name: 'X-Dev-Emp-Id', required: false, description: 'DEVELOPMENT ONLY: who is calling, until M2 login exists' })
 @Controller('org')
 export class OrgController {
   constructor(private readonly org: OrgService) {}

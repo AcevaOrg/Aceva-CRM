@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { AccessMe } from '@aceva/contracts';
 import type { Actor } from './access.types';
 import { Authenticated, CurrentActor, RequirePermission } from './decorators';
@@ -7,7 +7,6 @@ import { PermissionService } from './permission.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('access')
-@ApiHeader({ name: 'X-Dev-Emp-Id', required: false, description: 'DEVELOPMENT ONLY: who is calling, until M2 login exists' })
 @Controller('access')
 export class AccessController {
   constructor(

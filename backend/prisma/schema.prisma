@@ -462,6 +462,8 @@ model TotpSecret {
   keyId           String    @default("v1") @map("key_id")
   /// Null until the person proves they can generate a valid code.
   confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz(3)
+  /// The last 30-second time step that was accepted, so one code cannot be used twice.
+  lastUsedStep    BigInt?   @map("last_used_step")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   createdBy       String?   @map("created_by") @db.Uuid
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -509,6 +511,8 @@ model Session {
   tokenHash           String    @unique @map("token_hash")
   rememberMe          Boolean   @default(false) @map("remember_me")
   twoFactorVerifiedAt DateTime? @map("two_factor_verified_at") @db.Timestamptz(3)
+  /// SHA-256 of the CSRF token the browser must send in the X-CSRF-Token header on every change request.
+  csrfTokenHash       String?   @map("csrf_token_hash")
   ip                  String?
   userAgent           String?   @map("user_agent")
   device              String?

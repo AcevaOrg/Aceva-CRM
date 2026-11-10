@@ -19,5 +19,7 @@ declare module 'express-serve-static-core' {
   interface Request {
     actor?: Actor;
     scopeTarget?: ScopeTarget;
+    /** The id of the session behind this request (null/undefined only for requests without a session). */
+    sessionId?: string | null;
   }
 }

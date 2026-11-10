@@ -4,7 +4,11 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Client } from 'pg';
 import { PrismaClient } from '../../src/generated/prisma/client';
 import { seedDatabase } from '../../prisma/seed-data';
+import { seedDevPasswords } from '../../prisma/seed-dev-passwords';
 import { testDatabaseUrl } from './env';
+
+/** The one password every demo person has in the test database. */
+export const TEST_PASSWORD = 'Demo-Passw0rd-2026';
 
 /**
  * Empties the aceva_test database, re-applies every migration and re-seeds it.
@@ -29,6 +33,7 @@ export async function resetTestDatabase(): Promise<void> {
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
   try {
     await seedDatabase(prisma);
+    await seedDevPasswords(prisma, TEST_PASSWORD); // demo people can log in with one known test password
   } finally {
     await prisma.$disconnect();
   }

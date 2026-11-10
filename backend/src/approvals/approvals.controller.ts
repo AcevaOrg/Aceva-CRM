@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { approvalRouteQuerySchema } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { Authenticated, CurrentActor, Scope } from '../access/decorators';
@@ -9,7 +9,6 @@ import { ApprovalsService } from './approvals.service';
 class RouteQueryDto extends createZodDto(approvalRouteQuerySchema) {}
 
 @ApiTags('approvals')
-@ApiHeader({ name: 'X-Dev-Emp-Id', required: false, description: 'DEVELOPMENT ONLY: who is calling, until M2 login exists' })
 @Controller()
 export class ApprovalsController {
   constructor(private readonly approvals: ApprovalsService) {}

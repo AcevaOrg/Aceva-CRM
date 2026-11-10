@@ -24,6 +24,7 @@ let prisma: PrismaClient;
 
 beforeAll(async () => {
   t = await createTestApp();
+  await t.signInAll();
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -228,7 +229,9 @@ describe('M1 additional duties (Director)', () => {
   it('lets the Director give Finance duty, and permissions and 2FA follow', async () => {
     const res = await t.as(DIRECTOR).post(`/api/v1/org/employees/${DEV2}/duties`).send({ dutyKey: 'finance', reason: 'Covering for the finance team' }).expect(201);
     expect(res.body).toEqual({ empId: DEV2, duty: 'finance' });
-    const me = (await t.as(DEV2).get('/api/v1/access/me').expect(200)).body;
+    // 2FA is now mandatory for them: everything but finishing the login is refused until they set it up
+    expect((await t.as(DEV2).get('/api/v1/org/team').expect(403)).body).toMatchObject({ code: 'auth_incomplete', stage: '2fa_setup_required' });
+    const me = (await t.as(DEV2).get('/api/v1/auth/me').expect(200)).body;
     expect(me.duties).toEqual(['finance']);
     expect(me.permissions).toEqual(expect.arrayContaining(['finance.entry_create', 'payroll.prepare']));
     expect(me.twoFactorRequired).toBe(true);
@@ -402,11 +405,12 @@ describe('M1 fixed business rules', () => {
 });
 
 describe('M1 people who have left cannot act', () => {
-  it('rejects an identity whose employee has left', async () => {
+  it('rejects a session whose employee has left, and the ended session never comes back', async () => {
     await prisma.employee.update({ where: { empId: HR }, data: { status: 'left' } });
     await t.as(HR).get('/api/v1/access/me').expect(401);
     await prisma.employee.update({ where: { empId: HR }, data: { status: 'active' } });
-    await t.as(HR).get('/api/v1/access/me').expect(200);
+    await t.as(HR).get('/api/v1/access/me').expect(401); // the session was ended when they left; it is not revived
+    await (await t.signIn(HR)).get('/api/v1/access/me').expect(200); // a fresh login works
   });
 });
 

@@ -5,6 +5,7 @@
  * server and the screens speak the same permission names, plus two keys that Module 1 adds itself:
  *   approval.approve   may approve requests of people below, and may be a stand-in
  *   duty.assign        may give or end extra duties such as Finance or HR (Director)
+ *   auth.set_temporary_password  Director and HR set a temporary password when someone has no official email
  * Roles belong to levels (plan section 5). Finance and HR are DUTIES, not roles. Duty permissions are kept
  * separate from role permissions. To add a permission for a future module, add a row to this catalogue
  * (and to the roles or duties that should have it); no authorization code changes.
@@ -25,6 +26,7 @@ export const PERMISSION_KEYS: string[] = [
   'subscriptions.manage', 'comms.use', 'comms.admin', 'announcements.publish', 'sales.own',
   'sales.team', 'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve',
   'sales.export', 'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
+  'auth.set_temporary_password',
 ];
 
 export interface RoleSeed {
@@ -91,6 +93,7 @@ const DIRECTOR: string[] = [
   'billing.view', 'subscriptions.view', 'subscriptions.manage', 'sales.own', 'sales.team',
   'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.export',
   'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
+  'auth.set_temporary_password',
 ];
 
 const CTO: string[] = [
@@ -127,6 +130,7 @@ const DUTY_FINANCE: string[] = [
 
 const DUTY_HR: string[] = [
   'people.view_job', 'people.view_personal', 'people.manage', 'auth.unlock_account',
+  'auth.set_temporary_password',
 ];
 
 const DUTY_SALES_MANAGER: string[] = [

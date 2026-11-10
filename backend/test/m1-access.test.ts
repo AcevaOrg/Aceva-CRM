@@ -33,6 +33,7 @@ let prisma: PrismaClient;
 
 beforeAll(async () => {
   t = await createTestApp({ extraControllers: [UnprotectedController] });
+  await t.signInAll();
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -169,19 +170,12 @@ describe('M1 server-side permission guard', () => {
     expect(await deniedCount(null, 'unauthenticated')).toBeGreaterThan(before);
   });
 
-  it('rejects an identity that is not a real employee', async () => {
-    await t.as('ACV-9999').get('/api/v1/org/tree').expect(401);
+  it('rejects a forged session cookie', async () => {
+    await t.anonymous().get('/api/v1/org/tree').set('Cookie', 'aceva_session=forged-token-value').expect(401);
   });
 
-  it('ignores the development identity header entirely when it is switched off', async () => {
-    const off = await createTestApp({ devIdentity: false });
-    try {
-      await off.as(OWNER).get('/api/v1/org/tree').expect(401);
-      await off.as(null).get('/api/v1/health').expect(200); // public route still works
-    } finally {
-      await off.close();
-      process.env.DEV_IDENTITY_ENABLED = 'true';
-    }
+  it('the old development identity header no longer identifies anybody', async () => {
+    await t.anonymous().get('/api/v1/org/tree').set('X-Dev-Emp-Id', OWNER).expect(401);
   });
 
   it('rejects a missing permission (403), logs it, and names the permission', async () => {

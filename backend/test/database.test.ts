@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { DEMO_EMPLOYEES, DEPARTMENTS, DUTIES, LEVELS, OFFICES, PERMISSIONS, ROLES, seedDatabase } from '../prisma/seed-data';
 import { createTestPrisma, inRolledBackTransaction } from './helpers/prisma';
+import { TEST_PASSWORD } from './helpers/reset-db';
 
 let prisma: PrismaClient;
 beforeAll(() => {
@@ -96,9 +97,15 @@ describe('seed data integrity', () => {
     expect((await holders('finance')).length).toBe(1);
   });
 
-  it('seeds no passwords or credentials', async () => {
-    expect(await prisma.credential.count()).toBe(0);
-    expect(await prisma.passwordHistory.count()).toBe(0);
+  it('keeps passwords only as Argon2id hashes (the demo logins come from a separate dev-only script)', async () => {
+    const credentials = await prisma.credential.findMany({ select: { passwordHash: true } });
+    expect(credentials).toHaveLength(DEMO_EMPLOYEES.length);
+    credentials.forEach((c) => {
+      expect(c.passwordHash.startsWith('$argon2id$')).toBe(true);
+      expect(c.passwordHash).not.toContain(TEST_PASSWORD);
+    });
+    const history = await prisma.passwordHistory.findMany({ select: { passwordHash: true } });
+    history.forEach((h) => expect(h.passwordHash.startsWith('$argon2id$')).toBe(true));
   });
 
   it('is safe to run twice (no duplicates)', async () => {
@@ -309,14 +316,15 @@ describe('insert-only history tables', () => {
 
 describe('outbox and scheduled jobs', () => {
   it('stores an outbox event in the same transaction as a change', async () => {
+    const before = await prisma.outboxEvent.count();
     const count = await inRolledBackTransaction(prisma, async (tx) => {
       await tx.outboxEvent.create({
         data: { type: 'employee.offboarded', version: 1, actor: 'system', payload: { empId: 'ACV-0013' } },
       });
       return tx.outboxEvent.count();
     });
-    expect(count).toBe(1);
-    expect(await prisma.outboxEvent.count()).toBe(0); // rolled back
+    expect(count).toBe(before + 1);
+    expect(await prisma.outboxEvent.count()).toBe(before); // rolled back
   });
 
   it('prevents duplicate scheduled jobs through dedupe_key', async () => {

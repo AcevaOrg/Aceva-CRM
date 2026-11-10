@@ -1,7 +1,5 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { DevHeaderIdentityProvider } from '../identity/dev-header-identity.provider';
-import { IdentityProvider } from '../identity/identity.provider';
 import { AccessController } from './access.controller';
 import { AccessGuard } from './access.guard';
 import { AuditService } from './audit.service';
@@ -22,11 +20,9 @@ import { ScopeService } from './scope.service';
     ScopeService,
     HierarchyService,
     { provide: HierarchyCache, useClass: PostgresHierarchyCache },
-    // M2 replaces this with the session-cookie provider.
-    { provide: IdentityProvider, useClass: DevHeaderIdentityProvider },
     // Every route is protected by default.
     { provide: APP_GUARD, useClass: AccessGuard },
   ],
-  exports: [AuditService, PermissionService, ScopeService, HierarchyService, HierarchyCache, IdentityProvider],
+  exports: [AuditService, PermissionService, ScopeService, HierarchyService, HierarchyCache],
 })
 export class AccessModule {}
