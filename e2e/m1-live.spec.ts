@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const API = 'http://localhost:4000/api/v1';
+const API = 'http://localhost:4100/api/v1';
 
 /** Opens the app already "signed in" as a person (login itself is Module 2; the mock sign-in is used until then). */
 async function openAs(page: Page, empId: string, path: string) {
@@ -54,7 +54,7 @@ test('the CEO moves a person under another manager and it is saved on the server
   expect((await callApi(page, 'ACV-0004').get('/org/team/ACV-0011')).status()).toBe(403);
 });
 
-test('the server refuses an invalid move and the screen shows why', async ({ page }) => {
+test('the server refuses an invalid reporting line even when the screen is bypassed', async ({ page }) => {
   await openAs(page, 'ACV-0002', '/org');
   // Bypass the screen's own filter: ask the server directly to put a Level 4 head under a Level 5 employee.
   const res = await callApi(page, 'ACV-0002').patch('/org/employees/ACV-0009/reporting-line', { reportsToEmpId: 'ACV-0006', reason: 'invalid on purpose' });
