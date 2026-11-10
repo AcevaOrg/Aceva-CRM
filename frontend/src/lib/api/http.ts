@@ -7,6 +7,7 @@
  */
 import type { ApiErrorBody } from "@/types";
 import { useSession } from "@/lib/auth/session";
+import { getCsrf } from "./csrf";
 import { ApiError } from "./mock";
 
 export const API_MODE = (process.env.NEXT_PUBLIC_API_MODE ?? "mock") as "mock" | "live";
@@ -15,8 +16,6 @@ const LIVE_MODULES = (process.env.NEXT_PUBLIC_LIVE_MODULES ?? "")
   .split(",")
   .map((m) => m.trim().toLowerCase())
   .filter(Boolean);
-/** DEVELOPMENT ONLY until M2 (real login): send "X-Dev-Emp-Id" so the server knows who is calling. Not security. */
-const DEV_IDENTITY = process.env.NEXT_PUBLIC_DEV_IDENTITY === "true";
 
 /** Is this module talking to the real API (true) or the in-browser mock data (false)? */
 export const isLive = (module: string) => API_MODE === "live" || LIVE_MODULES.includes(module.toLowerCase());
@@ -50,12 +49,33 @@ export function toApiError(status: number, body: unknown, fallback: string): Api
   return new ApiError(b.code ?? CODE_BY_STATUS[status] ?? "http_error", message, status, details);
 }
 
+/** Calls that are allowed to fail with 401 without it meaning "your session ended". */
+const AUTH_ENTRY_PATHS = new Set(["/auth/login", "/auth/logout", "/auth/password/forgot", "/auth/password/reset", "/auth/me"]);
+
+/**
+ * Module 2: when the server says the session is gone (401) or the login is unfinished (403 auth_incomplete), send
+ * the person to the right screen. The session store is cleared so no stale screen stays open.
+ */
+function handleAuthFailure(status: number, path: string, body: { code?: string; stage?: string }) {
+  if (typeof window === "undefined") return;
+  const here = window.location.pathname;
+  const onAuthScreen = here.startsWith("/login") || here.startsWith("/first-login") || here.startsWith("/forgot-password") || here.startsWith("/reset-password");
+  if (status === 401 && !AUTH_ENTRY_PATHS.has(path) && !onAuthScreen) {
+    useSession.getState().signOutLocal();
+    window.location.assign("/login?expired=1");
+  } else if (status === 403 && body.code === "auth_incomplete" && !onAuthScreen) {
+    const next = body.stage === "password_change_required" ? "/first-login" : body.stage === "2fa_required" ? "/login/verify" : "/login/setup";
+    window.location.assign(next);
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown, params?: Params): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (DEV_IDENTITY) {
-    const empId = useSession.getState().empId;
-    if (empId) headers["X-Dev-Emp-Id"] = empId;
+  // Module 2: the session is an HttpOnly cookie; a change request also carries this tab's CSRF token.
+  if (method !== "GET") {
+    const csrf = getCsrf();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
   }
   let res: Response;
   try {
@@ -69,7 +89,8 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
     throw new ApiError("network", "Can't reach the server. Check your connection and try again.", 0);
   }
   if (!res.ok) {
-    const err = (await res.json().catch(() => ({ code: "http_error", message: res.statusText }))) as ApiErrorBody;
+    const err = (await res.json().catch(() => ({ code: "http_error", message: res.statusText }))) as ApiErrorBody & { stage?: string };
+    if (isLive("m2")) handleAuthFailure(res.status, path, err);
     throw toApiError(res.status, err, res.statusText);
   }
   return (res.status === 204 ? undefined : await res.json()) as T;

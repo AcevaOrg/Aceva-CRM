@@ -28,6 +28,9 @@ import { formatDate, formatDateTime, formatRelative, formatTime } from "@/lib/da
 import { useChangePassword, useEndSession, useLoginHistory, useMySessions, useSetTwoFactor, useTwoFactorStatus } from "../hooks";
 import type { LoginHistoryItem, LogoutReason } from "../types";
 import { PasswordFields } from "./password-fields";
+import { DisableTwoFactorDialog, EnableTwoFactorDialog } from "./two-factor-dialogs";
+import { useQueryClient } from "@tanstack/react-query";
+import { isLive } from "@/lib/api/http";
 
 type Tab = "overview" | "security" | "devices" | "history";
 
@@ -116,7 +119,7 @@ function Overview() {
             <ul className="grid gap-2 text-[13px]">
               <li className="flex gap-2"><Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Signed out after 30 minutes without activity (10 minutes on finance screens).</li>
               <li className="flex gap-2"><Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> Signed out after 12 hours in any case.</li>
-              <li className="flex gap-2"><KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> 5 wrong passwords lock the account until your manager or the Director unlocks it.</li>
+              <li className="flex gap-2"><KeyRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" /> 5 wrong passwords lock the account until a manager above you, or HR, unlocks it.</li>
             </ul>
           </CardContent>
         </Card>
@@ -133,6 +136,8 @@ function Security() {
   const [current, setCurrent] = React.useState("");
   const [next, setNext] = React.useState<string | null>(null);
   const [formKey, setFormKey] = React.useState(0);
+  const [dialog, setDialog] = React.useState<null | "enable" | "disable">(null);
+  const qc = useQueryClient();
   const onValid = React.useCallback((v: string | null) => setNext(v), []);
   if (!viewer) return null;
 
@@ -152,7 +157,12 @@ function Security() {
             onSubmit={async (e) => {
               e.preventDefault();
               if (!next || !current) return;
-              await change.mutateAsync(next);
+              try {
+                await change.mutateAsync({ newPassword: next, currentPassword: current });
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Couldn't change the password.");
+                return;
+              }
               toast.success("Password changed", { description: "You were signed out on your other devices." });
               setCurrent("");
               setFormKey((k) => k + 1);
@@ -198,6 +208,11 @@ function Security() {
                       checked={s.enabled}
                       disabled={s.required || setTwoFactor.isPending}
                       onCheckedChange={async (v) => {
+                        if (isLive("m2")) {
+                          // The real server needs the authenticator set-up (on) or the password and a code (off).
+                          setDialog(v ? "enable" : "disable");
+                          return;
+                        }
                         await setTwoFactor.mutateAsync(v);
                         toast.success(v ? "Two-step login turned on" : "Two-step login turned off", { description: "Security events are logged." });
                       }}
@@ -205,13 +220,15 @@ function Security() {
                     />
                   </div>
                   {s.required && <Badge tone="info" className="w-fit"><ShieldCheck /> Locked on by company policy</Badge>}
-                  <p className="text-[12.5px] text-muted-foreground">Lost your phone? Ask the Director (HR duty) to reset two-step login. They will check your identity first.</p>
+                  <p className="text-[12.5px] text-muted-foreground">Lost your phone? Ask the Director or HR for help. They will check your identity first.</p>
                 </div>
               )}
             </QueryState>
           </CardContent>
         </Card>
       </div>
+      {dialog === "enable" && <EnableTwoFactorDialog onClose={() => setDialog(null)} onDone={() => qc.invalidateQueries({ queryKey: ["auth"] })} />}
+      {dialog === "disable" && <DisableTwoFactorDialog onClose={() => setDialog(null)} onDone={() => qc.invalidateQueries({ queryKey: ["auth"] })} />}
     </div>
   );
 }

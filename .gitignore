@@ -29,3 +29,4 @@ Thumbs.db
 backend/src/generated/
 test-results/
 playwright-report/
+e2e/.auth/

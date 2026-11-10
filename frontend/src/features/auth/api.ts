@@ -2,12 +2,19 @@
  * Module 2 service functions. Mock today; JSDoc names the real endpoint (spec §7.3).
  * Mock rules: any non-empty password works for a known Emp-ID; 5 wrong tries lock the account.
  */
+import type { MeResponse, TwoFactorSetupResponse } from "@aceva/contracts";
+import { setCsrf } from "@/lib/api/csrf";
+import { http, isLive } from "@/lib/api/http";
 import { mock } from "@/lib/api/mock";
+import type { ServerStage } from "@/lib/auth/session";
 import { getViewer, requires2fa } from "@/lib/auth/viewer";
 import { table } from "@/mocks/db";
 import { EMPLOYEES } from "@/mocks/seed/people";
 import { daysFromNow, minutesAgo } from "@/mocks/time";
 import type { LoginHistoryItem, LoginRequest, LoginResult, SessionInfo } from "./types";
+
+/** Module 2 talks to the real server when it is switched to live (NEXT_PUBLIC_LIVE_MODULES=m1,m2). */
+const live = () => isLive("m2");
 
 const attempts = () => table<{ empId: string; failed: number }>("auth.attempts", () => []);
 
@@ -41,8 +48,13 @@ const historyTable = () =>
 
 export const authApi = {
   /** POST /auth/login */
-  login: ({ empId, password }: LoginRequest) =>
-    mock<LoginResult>(() => {
+  login: async ({ empId, password, rememberMe }: LoginRequest & { rememberMe?: boolean }): Promise<LoginResult> => {
+    if (live()) {
+      const res = await http.post<LoginResult>("/auth/login", { empId, password, rememberMe });
+      if (res.csrfToken) setCsrf(res.csrfToken);
+      return res;
+    }
+    return mock<LoginResult>(() => {
       const emp = EMPLOYEES.find((e) => e.empId === empId);
       const list = attempts();
       let rec = list.find((a) => a.empId === empId);
@@ -54,43 +66,77 @@ export const authApi = {
       }
       rec.failed = 0;
       return { status: requires2fa(emp) ? "2fa_required" : "ok" };
-    }, { delay: 500 }),
+    }, { delay: 500 });
+  },
+
+  /** GET /auth/me: who is logged in, how far the login has got, and the CSRF token. Live only. */
+  me: async (): Promise<MeResponse> => {
+    const res = await http.get<MeResponse>("/auth/me");
+    setCsrf(res.csrfToken);
+    return res;
+  },
 
   /** POST /auth/2fa/verify */
-  verify2fa: (code: string) => mock(() => ({ ok: /^\d{6}$/.test(code) }), { delay: 400 }),
+  verify2fa: async (code: string): Promise<{ ok: boolean; stage?: ServerStage }> => {
+    if (live()) {
+      const res = await http.post<{ stage: ServerStage }>("/auth/2fa/verify", { code });
+      return { ok: true, stage: res.stage };
+    }
+    return mock(() => ({ ok: /^\d{6}$/.test(code) }), { delay: 400 });
+  },
 
   /** POST /auth/password/forgot */
-  forgotPassword: (empId: string) => mock(() => ({ sent: EMPLOYEES.some((e) => e.empId === empId) }), { delay: 500 }),
+  forgotPassword: async (empId: string) =>
+    live() ? http.post<{ sent: boolean }>("/auth/password/forgot", { empId }) : mock(() => ({ sent: EMPLOYEES.some((e) => e.empId === empId) }), { delay: 500 }),
+
+  /** POST /auth/password/reset { token, newPassword }: the one-time link from the email */
+  resetPassword: async (token: string, newPassword: string) =>
+    live() ? http.post<{ ok: boolean }>("/auth/password/reset", { token, newPassword }) : mock(() => ({ ok: newPassword.length >= 10 }), { delay: 400 }),
 
   /** POST /auth/password/change */
-  changePassword: (newPassword: string) => mock(() => ({ ok: newPassword.length >= 10 }), { delay: 400 }),
+  changePassword: async (newPassword: string, currentPassword?: string): Promise<{ ok: boolean; stage?: ServerStage }> => {
+    if (live()) {
+      const res = await http.post<{ ok: boolean; stage: ServerStage; csrfToken: string }>("/auth/password/change", { newPassword, currentPassword });
+      setCsrf(res.csrfToken); // the server started a fresh session for this device
+      return { ok: res.ok, stage: res.stage };
+    }
+    return mock(() => ({ ok: newPassword.length >= 10 }), { delay: 400 });
+  },
 
   /** POST /auth/policy/accept */
   acceptPolicy: (version: string) => mock(() => ({ ok: true, version })),
 
   /** POST /auth/2fa/setup */
-  setup2fa: () => mock(() => ({ secret: "JBSW Y3DP EHPK 3PXP", otpauthUrl: "otpauth://totp/Aceva" })),
+  setup2fa: async (): Promise<TwoFactorSetupResponse> =>
+    live() ? http.post<TwoFactorSetupResponse>("/auth/2fa/setup", {}) : mock(() => ({ secret: "JBSWY3DPEHPK3PXP", otpauthUrl: "otpauth://totp/Aceva" })),
+
+  /** POST /auth/2fa/disable { password, code } (only where two-step login is optional). Live only. */
+  disable2fa: (password: string, code: string) => http.post<{ ok: boolean }>("/auth/2fa/disable", { password, code }),
 
   /** GET /auth/sessions */
-  sessions: () => mock(() => sessionsTable().filter((s) => s.empId === getViewer().employee.empId)),
+  sessions: (): Promise<SessionInfo[]> =>
+    live() ? http.get<SessionInfo[]>("/auth/sessions") : mock(() => sessionsTable().filter((s) => s.empId === getViewer().employee.empId)),
 
   /** DELETE /auth/sessions/:id  ·  DELETE /auth/sessions (all others) */
-  endSession: (id?: string) =>
-    mock(() => {
+  endSession: (id?: string): Promise<unknown> => {
+    if (live()) return id ? http.delete(`/auth/sessions/${id}`) : http.delete("/auth/sessions");
+    return mock(() => {
       const me = getViewer().employee.empId;
       const list = sessionsTable();
       for (let i = list.length - 1; i >= 0; i--) {
         const s = list[i];
         if (s.empId === me && !s.current && (!id || s.id === id)) list.splice(i, 1);
       }
-    }),
+    });
+  },
 
   /** GET /auth/login-history */
-  loginHistory: () => mock(() => historyTable().filter((h) => h.empId === getViewer().employee.empId)),
+  loginHistory: (): Promise<LoginHistoryItem[]> =>
+    live() ? http.get<LoginHistoryItem[]>("/auth/login-history") : mock(() => historyTable().filter((h) => h.empId === getViewer().employee.empId)),
 
   /** GET /auth/2fa — required for the CEO / Founder / Owner, Director, CTO and Finance (finance duty); optional for Sales and Development */
-  twoFactorStatus: () =>
-    mock<TwoFactorStatus>(() => {
+  twoFactorStatus: (): Promise<TwoFactorStatus> =>
+    live() ? http.get<TwoFactorStatus>("/auth/2fa") : mock<TwoFactorStatus>(() => {
       const me = getViewer().employee;
       const required = requires2fa(me);
       const rec = twoFactorTable().find((t) => t.empId === me.empId);

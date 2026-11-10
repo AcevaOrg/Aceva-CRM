@@ -1,5 +1,6 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { authApi } from "./api";
 
@@ -41,10 +42,10 @@ export function useEndSession() {
 export function useChangePassword() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (pw: string) => {
-      await authApi.changePassword(pw);
-      // A password change ends the session on every other device (plan §6).
-      await authApi.endSession();
+    mutationFn: async ({ newPassword, currentPassword }: { newPassword: string; currentPassword?: string }) => {
+      await authApi.changePassword(newPassword, currentPassword);
+      // A password change ends the session on every other device (plan §6). The real server does this itself.
+      if (!isLive("m2")) await authApi.endSession();
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth"] }),
   });

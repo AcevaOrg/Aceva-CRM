@@ -7,9 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/misc";
-import { API_MODE } from "@/lib/api/http";
+import { API_MODE, isLive } from "@/lib/api/http";
 import { DUTY_LABEL, ROLE_LABEL } from "@/lib/auth/permissions";
-import { useSession } from "@/lib/auth/session";
+import { useSession, type ServerStage } from "@/lib/auth/session";
 import { requires2fa } from "@/lib/auth/viewer";
 import { normalizeEmpId } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ import { AuthHeading } from "./auth-frame";
 export function LoginForm() {
   const router = useRouter();
   const beginSignIn = useSession((s) => s.beginSignIn);
+  const applyServerStage = useSession((s) => s.applyServerStage);
   const [digits, setDigits] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [show, setShow] = React.useState(false);
@@ -39,10 +40,15 @@ export function LoginForm() {
     setError(null);
     try {
       const res = await authApi.login({ empId: id, password: pw });
-      if (res.status === "invalid") setError({ title: "Emp-ID or password is wrong.", body: `${res.attemptsLeft} ${res.attemptsLeft === 1 ? "try" : "tries"} left before the account locks.` });
-      else if (res.status === "locked") setError({ title: "Account locked after 5 wrong passwords.", body: "Ask your manager or the Director to unlock it.", locked: true });
+      if (res.status === "invalid")
+        setError({ title: "Emp-ID or password is wrong.", body: res.attemptsLeft !== undefined ? `${res.attemptsLeft} ${res.attemptsLeft === 1 ? "try" : "tries"} left before the account locks.` : "After 5 wrong passwords the account locks." });
+      else if (res.status === "locked") setError({ title: "Account locked after 5 wrong passwords.", body: "Ask a manager above you, or HR, to unlock it.", locked: true });
       else if (res.status === "rate_limited") setError({ title: "Too many attempts from this network.", body: `Try again in ${Math.ceil((res.retryAfterSec ?? 600) / 60)} minutes.` });
-      else {
+      else if (isLive("m2")) {
+        // The real server decides what is still to do: password change, authenticator code, or nothing.
+        const stage = applyServerStage(id, res.status as ServerStage);
+        router.push(stage === "needs_2fa" ? "/login/verify" : stage === "needs_2fa_setup" ? "/login/setup" : stage === "needs_first_login" ? "/first-login" : "/");
+      } else {
         const emp = EMPLOYEES.find((e) => e.empId === id)!;
         const stage = beginSignIn(id, { needs2fa: requires2fa(emp) });
         router.push(stage === "needs_2fa" ? "/login/verify" : stage === "needs_first_login" ? "/first-login" : "/");
@@ -124,7 +130,7 @@ export function LoginForm() {
         </Link>
       </form>
 
-      {API_MODE === "mock" && <DemoAccounts onPick={(id) => submit(id, "demo-password")} busy={busy} />}
+      {API_MODE === "mock" && !isLive("m2") && <DemoAccounts onPick={(id) => submit(id, "demo-password")} busy={busy} />}
     </>
   );
 }

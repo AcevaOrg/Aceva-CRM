@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
 
 /**
@@ -6,8 +6,8 @@ import { defineConfig } from '@playwright/test';
  * They start the REAL backend against the aceva_test database (rebuilt and seeded first) and the real
  * Next.js frontend with Module 1 switched to "live". Run from the repository root:  npm run test:e2e
  *
- * Until M2 (real login) exists, the browser identifies itself to the API with the development-only
- * X-Dev-Emp-Id header (NEXT_PUBLIC_DEV_IDENTITY / DEV_IDENTITY_ENABLED). That is not security.
+  * People log in through the real login screen (Emp-ID, password, authenticator code) and the API sees their
+ * session cookie. Requires PostgreSQL and Redis to be running.
  */
 if (existsSync('backend/.env')) process.loadEnvFile('backend/.env');
 const testDb = process.env.TEST_DATABASE_URL;
@@ -16,6 +16,12 @@ if (!testDb || !new URL(testDb).pathname.includes('test')) {
 }
 
 export const API = 'http://localhost:4100/api/v1';
+
+// Saved logins and authenticator secrets belong to ONE run (the database is rebuilt for every run).
+if (!process.env.PW_E2E_RUN) {
+  process.env.PW_E2E_RUN = String(Date.now());
+  rmSync('e2e/.auth', { recursive: true, force: true });
+}
 
 export default defineConfig({
   testDir: '.',
@@ -39,7 +45,8 @@ export default defineConfig({
         PORT: '4100',
         DATABASE_URL: testDb,
         CORS_ORIGIN: 'http://localhost:3100',
-        DEV_IDENTITY_ENABLED: 'true',
+        REDIS_KEY_PREFIX: 'aceva:e2e:',
+        TRUST_PROXY: '0',
       },
     },
     {
@@ -51,8 +58,7 @@ export default defineConfig({
       env: {
         NODE_ENV: 'production', // Playwright sets NODE_ENV=test, which breaks next build
         NEXT_PUBLIC_API_MODE: 'mock',
-        NEXT_PUBLIC_LIVE_MODULES: 'm1',
-        NEXT_PUBLIC_DEV_IDENTITY: 'true',
+        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2',
         NEXT_PUBLIC_API_URL: API,
       },
     },

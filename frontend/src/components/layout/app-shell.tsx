@@ -13,7 +13,8 @@ import { useHotkeys } from "@/hooks/use-hotkeys";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useSessionTimers } from "@/hooks/use-session-timers";
 import { useDirectory } from "@/hooks/use-directory";
-import { API_MODE } from "@/lib/api/http";
+import { API_MODE, isLive } from "@/lib/api/http";
+import { authApi } from "@/features/auth/api";
 import { useSession } from "@/lib/auth/session";
 import { useUi } from "@/lib/ui-store";
 import { EMPLOYEES } from "@/mocks/seed/people";
@@ -96,13 +97,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (!hydrated) return;
     // Mock mode only: ?as=ACV-0007 opens the page as that persona (demos, screenshots).
-    const as = API_MODE === "mock" ? new URLSearchParams(window.location.search).get("as") : null;
+    const as = API_MODE === "mock" && !isLive("m2") ? new URLSearchParams(window.location.search).get("as") : null;
     if (as && EMPLOYEES.some((e) => e.empId === as)) {
       if (useSession.getState().empId !== as) viewAs(as);
       return;
     }
     if (stage !== "signed_in") router.replace("/login");
   }, [hydrated, stage, router, viewAs]);
+
+  // Live login: ask the server who this really is (the cookie, not this screen's memory, is the truth).
+  const applyServerStage = useSession((s) => s.applyServerStage);
+  const signOutLocal = useSession((s) => s.signOutLocal);
+  React.useEffect(() => {
+    if (!hydrated || !isLive("m2") || stage !== "signed_in") return;
+    authApi
+      .me()
+      .then((me) => {
+        if (me.stage !== "ok") {
+          applyServerStage(me.empId, me.stage);
+          router.replace(me.stage === "password_change_required" ? "/first-login" : me.stage === "2fa_required" ? "/login/verify" : "/login/setup");
+        } else if (useSession.getState().empId !== me.empId) {
+          applyServerStage(me.empId, "ok");
+        }
+      })
+      .catch(() => {
+        signOutLocal();
+        router.replace("/login?expired=1");
+      });
+  }, [hydrated, stage, router, applyServerStage, signOutLocal]);
 
   useHotkeys({
     "mod+k": () => setPalette(true),

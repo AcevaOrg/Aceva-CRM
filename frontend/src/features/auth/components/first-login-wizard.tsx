@@ -5,6 +5,7 @@ import { Check, CircleCheck, CircleX, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/controls";
 import { OtpInput } from "@/components/shared/otp-input";
+import { isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { requires2fa } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,8 @@ import { authApi } from "../api";
 import { POLICY_VERSION, TRACKING_NEVER as NEVER, TRACKING_RECORDED as RECORDED } from "../policy";
 import { AuthHeading } from "./auth-frame";
 import { PasswordFields } from "./password-fields";
+import { TwoFactorSetupPanel } from "./two-factor-setup";
+import { toast } from "sonner";
 
 export { POLICY_VERSION };
 
@@ -21,8 +24,14 @@ export function FirstLoginWizard() {
   const empId = useSession((s) => s.empId);
   const stage = useSession((s) => s.stage);
   const completeFirstLogin = useSession((s) => s.completeFirstLogin);
-  const emp = EMPLOYEES.find((e) => e.empId === empId);
-  const needs2fa = emp ? requires2fa(emp) : false;
+  // Live: who this is comes from the server (new hires are not in the built-in demo roster).
+  const [liveMe, setLiveMe] = React.useState<{ empId: string; name: string; twoFactorRequired: boolean } | null>(null);
+  React.useEffect(() => {
+    if (isLive("m2")) authApi.me().then(setLiveMe).catch(() => undefined);
+  }, []);
+  const mockEmp = EMPLOYEES.find((e) => e.empId === empId);
+  const emp = isLive("m2") ? (liveMe ? { empId: liveMe.empId, name: liveMe.name } : undefined) : mockEmp;
+  const needs2fa = isLive("m2") ? !!liveMe?.twoFactorRequired : mockEmp ? requires2fa(mockEmp) : false;
   const steps = ["Password", "Tracking policy", ...(needs2fa ? ["Two-step login"] : [])];
   const [step, setStep] = React.useState(0);
   const [pw, setPw] = React.useState<string | null>(null);
@@ -40,9 +49,15 @@ export function FirstLoginWizard() {
 
   const next = async () => {
     setBusy(true);
-    if (step === 0 && pw) await authApi.changePassword(pw);
-    if (step === 1) await authApi.acceptPolicy(POLICY_VERSION);
-    if (step === 2) await authApi.setup2fa();
+    try {
+      if (step === 0 && pw) await authApi.changePassword(pw);
+      if (step === 1) await authApi.acceptPolicy(POLICY_VERSION);
+      if (step === 2 && !isLive("m2")) await authApi.setup2fa();
+    } catch (err) {
+      setBusy(false);
+      toast.error(err instanceof Error ? err.message : "Couldn't save this step.");
+      return;
+    }
     setBusy(false);
     if (step < steps.length - 1) setStep(step + 1);
     else {
@@ -51,6 +66,7 @@ export function FirstLoginWizard() {
     }
   };
 
+  const liveTwoFactorStep = isLive("m2") && step === 2;
   const canNext = step === 0 ? !!pw : step === 1 ? accepted : code.replace(/\s/g, "").length === 6;
 
   return (
@@ -93,7 +109,21 @@ export function FirstLoginWizard() {
         </>
       )}
 
-      {step === 2 && (
+      {liveTwoFactorStep && (
+        <>
+          <AuthHeading title="Turn on two-step login" description="Required for your level or finance duty. Scan the code with Google or Microsoft Authenticator." />
+          <TwoFactorSetupPanel
+            submitLabel="Finish and open Aceva"
+            onVerified={() => {
+              completeFirstLogin();
+              router.push("/");
+            }}
+            onFatal={() => router.replace("/login")}
+          />
+        </>
+      )}
+
+      {step === 2 && !liveTwoFactorStep && (
         <>
           <AuthHeading title="Turn on two-step login" description="Required for your level or finance duty. Scan the code with Google or Microsoft Authenticator." />
           <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
@@ -110,9 +140,11 @@ export function FirstLoginWizard() {
         </>
       )}
 
-      <Button size="lg" className="mt-7 w-full" disabled={!canNext} loading={busy} onClick={next}>
-        {step < steps.length - 1 ? "Continue" : "Finish and open Aceva"}
-      </Button>
+      {!liveTwoFactorStep && (
+        <Button size="lg" className="mt-7 w-full" disabled={!canNext} loading={busy} onClick={next}>
+          {step < steps.length - 1 ? "Continue" : "Finish and open Aceva"}
+        </Button>
+      )}
     </>
   );
 }
