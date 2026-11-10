@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   createEmployeeRequestSchema,
   directoryQuerySchema,
+  offboardRequestSchema,
+  reasonSchema,
   revealRequestSchema,
   updateBasicRequestSchema,
   updateJobRequestSchema,
@@ -12,7 +14,9 @@ import {
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, RequestInfo, RequirePermission } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
+import { z } from 'zod';
 import { JoiningService } from './joining.service';
+import { OffboardingService } from './offboarding.service';
 import { PeopleService } from './people.service';
 
 class DirectoryQueryDto extends createZodDto(directoryQuerySchema) {}
@@ -21,6 +25,8 @@ class UpdateJobDto extends createZodDto(updateJobRequestSchema) {}
 class UpdatePersonalDto extends createZodDto(updatePersonalRequestSchema) {}
 class UpdatePayDto extends createZodDto(updatePayRequestSchema) {}
 class RevealDto extends createZodDto(revealRequestSchema) {}
+class OffboardDto extends createZodDto(offboardRequestSchema) {}
+class CancelOffboardDto extends createZodDto(z.object({ reason: reasonSchema })) {}
 class CreateEmployeeDto extends createZodDto(createEmployeeRequestSchema) {}
 
 @ApiTags('employees')
@@ -29,6 +35,7 @@ export class PeopleController {
   constructor(
     private readonly people: PeopleService,
     private readonly joining: JoiningService,
+    private readonly offboarding: OffboardingService,
   ) {}
 
   @Get()
@@ -51,6 +58,21 @@ export class PeopleController {
   @ApiOperation({ summary: 'Send the welcome email again with a new temporary password (only before the first login)' })
   resendWelcome(@CurrentActor() actor: Actor, @Param('empId') empId: string, @ClientInfo() client: RequestInfo) {
     return this.joining.resendWelcome(actor, empId, client);
+  }
+
+  @Post(':empId/offboard')
+  @Authenticated()
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Leaving workflow: set (or move) the last working day (HR or Director). Today or earlier is processed now.' })
+  offboard(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: OffboardDto, @ClientInfo() client: RequestInfo) {
+    return this.offboarding.offboard(actor, empId, body, client);
+  }
+
+  @Delete(':empId/offboard')
+  @Authenticated()
+  @ApiOperation({ summary: 'Cancel a leaving date that has not been processed yet' })
+  cancelOffboard(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: CancelOffboardDto, @ClientInfo() client: RequestInfo) {
+    return this.offboarding.cancel(actor, empId, body.reason, client);
   }
 
   @Get(':empId')
