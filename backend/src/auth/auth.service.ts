@@ -357,6 +357,23 @@ export class AuthService {
     return temporary;
   }
 
+  /**
+   * A new temporary password for someone who has not yet finished their first login (used to resend the welcome
+   * email). Refused once the person has chosen their own password.
+   */
+  async issueWelcomePassword(employeeId: string, actorId: string): Promise<string> {
+    const credential = await this.prisma.credential.findUnique({ where: { employeeId }, select: { mustChangePassword: true } });
+    if (!credential) throw new NotFoundException('No login for this employee');
+    if (!credential.mustChangePassword) {
+      throw new ConflictException({ statusCode: 409, code: 'already_activated', message: 'This person has already chosen their own password' });
+    }
+    const temporary = this.passwords.generateTemporaryPassword();
+    const hash = await this.passwords.hash(temporary);
+    await this.prisma.$transaction((tx) => this.writeCredential(tx, employeeId, hash, this.clock.now(), { mustChange: true, actorId }));
+    await this.sessions.endAllFor(employeeId, 'password_changed');
+    return temporary;
+  }
+
   /** Sends a one-time reset link to the official acevatech.com address. Always answers the same way. */
   async forgotPassword(dto: ForgotPasswordRequest, client: RequestInfo): Promise<void> {
     const now = this.clock.now();

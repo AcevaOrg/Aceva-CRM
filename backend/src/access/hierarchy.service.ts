@@ -85,6 +85,15 @@ export class HierarchyService {
     await this.cache.invalidate();
   }
 
+  /** Adds a brand-new person (nobody reports to them yet) under a manager. Call inside the hierarchy lock. */
+  async addLeaf(tx: Prisma.TransactionClient, employeeId: string, managerId: string): Promise<void> {
+    await tx.$executeRaw`
+      INSERT INTO reporting_closure (ancestor_id, descendant_id, depth)
+      SELECT ancestor_id, ${employeeId}::uuid, depth + 1 FROM reporting_closure WHERE descendant_id = ${managerId}::uuid
+      UNION ALL SELECT ${employeeId}::uuid, ${employeeId}::uuid, 0`;
+    await this.cache.invalidate();
+  }
+
   /** Ids of everyone below the person (used for loop prevention and task direction). */
   downline(tx: Prisma.TransactionClient, employeeId: string): Promise<string[]> {
     return this.cache.getDownlineIds(employeeId, tx);

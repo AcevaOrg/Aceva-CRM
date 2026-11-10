@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  createEmployeeRequestSchema,
   directoryQuerySchema,
   revealRequestSchema,
   updateBasicRequestSchema,
@@ -11,6 +12,7 @@ import {
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, RequestInfo, RequirePermission } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
+import { JoiningService } from './joining.service';
 import { PeopleService } from './people.service';
 
 class DirectoryQueryDto extends createZodDto(directoryQuerySchema) {}
@@ -19,17 +21,36 @@ class UpdateJobDto extends createZodDto(updateJobRequestSchema) {}
 class UpdatePersonalDto extends createZodDto(updatePersonalRequestSchema) {}
 class UpdatePayDto extends createZodDto(updatePayRequestSchema) {}
 class RevealDto extends createZodDto(revealRequestSchema) {}
+class CreateEmployeeDto extends createZodDto(createEmployeeRequestSchema) {}
 
 @ApiTags('employees')
 @Controller('employees')
 export class PeopleController {
-  constructor(private readonly people: PeopleService) {}
+  constructor(
+    private readonly people: PeopleService,
+    private readonly joining: JoiningService,
+  ) {}
 
   @Get()
   @RequirePermission('people.view_directory')
   @ApiOperation({ summary: 'The staff directory: basic information about everyone still with the company' })
   directory(@Query() query: DirectoryQueryDto) {
     return this.people.directory(query.q);
+  }
+
+  @Post()
+  @RequirePermission('people.manage')
+  @ApiOperation({ summary: 'Joining workflow: create the profile (Director or HR). The Emp-ID is generated and a welcome email with a temporary password is sent.' })
+  create(@CurrentActor() actor: Actor, @Body() body: CreateEmployeeDto, @ClientInfo() client: RequestInfo) {
+    return this.joining.create(actor, body, client);
+  }
+
+  @Post(':empId/resend-welcome')
+  @RequirePermission('people.manage')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Send the welcome email again with a new temporary password (only before the first login)' })
+  resendWelcome(@CurrentActor() actor: Actor, @Param('empId') empId: string, @ClientInfo() client: RequestInfo) {
+    return this.joining.resendWelcome(actor, empId, client);
   }
 
   @Get(':empId')

@@ -22,8 +22,11 @@ export class FakeClock extends Clock {
 /** Collects emails instead of sending them. */
 export class MemoryMailer extends Mailer {
   readonly sent: MailMessage[] = [];
+  /** Set to true to make the next sends fail (like an unreachable mail server). */
+  failing = false;
 
   async send(message: MailMessage): Promise<void> {
+    if (this.failing) throw new Error('Mail server unreachable');
     this.sent.push(message);
   }
 
