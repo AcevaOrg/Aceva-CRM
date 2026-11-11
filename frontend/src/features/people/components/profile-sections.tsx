@@ -28,7 +28,8 @@ import type { Employee, Level } from "@/types";
 import { useRevealField, useUpdateBasic, useUpdateJob, useUpdatePay, useUpdatePersonal, useUploadDocument } from "../hooks";
 import { DOC_LABEL, hireLevels, STATUS_INFO, TYPE_LABEL } from "../logic";
 import type { DocumentKind, ProfileView } from "../types";
-import { isLive } from "@/lib/api/http";
+import { useQueryClient } from "@tanstack/react-query";
+import { http, isLive } from "@/lib/api/http";
 import { livePeopleApi } from "../live-api";
 import { LoggedMaskedValue } from "./logged-masked-value";
 import { FormActions, SectionCard } from "./section-card";
@@ -48,6 +49,76 @@ const basicSchema = z.object({
   officialEmail: z.string().trim().email("Enter a valid email.").refine((v) => v.endsWith("@acevatech.com"), "Use an @acevatech.com address."),
 });
 
+/** The profile photo (live): the employee, or the Director/HR for people below them, can change it. JPEG or PNG, 2 MB. */
+function PhotoControl({ view }: { view: ProfileView }) {
+  const empId = view.employee.empId;
+  const qc = useQueryClient();
+  const [src, setSrc] = React.useState<string | null>(null);
+  const [version, setVersion] = React.useState(0);
+  const [busy, setBusy] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const canChange = view.access.isSelf || view.access.edit.basic;
+
+  React.useEffect(() => {
+    if (!view.hasPhoto && version === 0) return;
+    let url: string | null = null;
+    let cancelled = false;
+    http.blob(`/employees/${empId}/photo`).then((b) => {
+      if (cancelled) return;
+      url = URL.createObjectURL(b);
+      setSrc(url);
+    }).catch(() => setSrc(null));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [empId, view.hasPhoto, version]);
+
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a private image fetched with the session, shown from a local blob
+        <img src={src} alt="Profile photo" data-testid="profile-photo" className="size-16 rounded-full object-cover" />
+      ) : (
+        <span className="grid size-16 place-content-center rounded-full bg-muted text-[12px] text-muted-foreground" data-testid="no-photo">No photo</span>
+      )}
+      {canChange && (
+        <>
+          <Button size="sm" variant="outline" loading={busy} onClick={() => inputRef.current?.click()}>
+            Change photo
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg"
+            className="sr-only"
+            data-testid="photo-input"
+            onChange={async (ev) => {
+              const f = ev.target.files?.[0];
+              ev.target.value = "";
+              if (!f) return;
+              if (f.size > 2 * 1024 * 1024) return void toast.error("The photo must be 2 MB or smaller.");
+              setBusy(true);
+              try {
+                const form = new FormData();
+                form.set("file", f, f.name);
+                await http.upload(`/employees/${empId}/photo`, form);
+                setVersion((v) => v + 1);
+                qc.invalidateQueries({ queryKey: ["people"] });
+                toast.success("Photo updated");
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Couldn't upload the photo.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 export function BasicSection({ view }: { view: ProfileView }) {
   const e = view.employee;
   const lookup = useLookup();
@@ -57,6 +128,7 @@ export function BasicSection({ view }: { view: ProfileView }) {
 
   return (
     <SectionCard title="Basic" seal="internal" visibleTo="everyone in the company (staff directory)" canEdit={view.access.edit.basic} viewOnly={HR_EDITS} editing={editing} onEdit={() => setEditing(true)}>
+      {isLive("m3") && <PhotoControl view={view} />}
       {!editing ? (
         <DetailList
           columns={2}
@@ -326,11 +398,14 @@ export function PaySection({ view }: { view: ProfileView }) {
   const askReason = useReason();
   const [editing, setEditing] = React.useState(false);
   const self = view.access.isSelf;
+  const live = isLive("m3");
+  // Live: salary amounts are not in the profile. They arrive only through the logged reveal (also to prefill this form).
+  const [revealed, setRevealed] = React.useState<{ value: string; allowances: string } | null>(null);
   const form = useForm<z.infer<typeof paySchema>>({
     resolver: zodResolver(paySchema),
     values: {
-      baseSalary: pay ? toNumber(pay.baseSalary) : 0,
-      allowances: pay?.allowances.map((a) => ({ name: a.name, amount: toNumber(a.amount) })) ?? [],
+      baseSalary: live ? Number(revealed?.value ?? 0) : pay ? toNumber(pay.baseSalary) : 0,
+      allowances: live ? (Number(revealed?.allowances ?? 0) > 0 ? [{ name: "Allowances", amount: Number(revealed!.allowances) }] : []) : (pay?.allowances.map((a) => ({ name: a.name, amount: toNumber(a.amount) })) ?? []),
       bankName: pay?.bankName ?? "",
       accountNumber: pay?.accountNumber ?? "",
     },
@@ -338,13 +413,34 @@ export function PaySection({ view }: { view: ProfileView }) {
   const allowances = form.watch("allowances");
 
   const startEdit = async () => {
-    if (await stepUp({ action: `Edit pay for ${e.name}`, detail: "Pay changes are highly confidential and logged." })) setEditing(true);
+    if (!(await stepUp({ action: `Edit pay for ${e.name}`, detail: "Pay changes are highly confidential and logged." }))) return;
+    if (live && pay?.salaryOnFile) {
+      try {
+        setRevealed(await livePeopleApi.revealSalary(e.empId)); // logged on the server
+      } catch (err) {
+        return void toast.error(err instanceof Error ? err.message : "Couldn't load the salary.");
+      }
+    }
+    setEditing(true);
   };
 
   const total = pay ? toNumber(pay.baseSalary) + pay.allowances.reduce((s, a) => s + toNumber(a.amount), 0) : 0;
-  const amount = (n: number, label: string) =>
-    self ? (
+  const amount = (n: number, label: string, part: "base" | "allowances" | "gross" = "base") =>
+    self && !live ? (
       <Money value={n} />
+    ) : live ? (
+      // Live: nothing is in the page until the person shows it; each showing is logged on the server.
+      <LoggedMaskedValue
+        value="hidden"
+        display="PKR ••••••"
+        label={label}
+        canReveal={view.access.revealPay}
+        stepUp
+        onReveal={async () => {
+          const r = await livePeopleApi.revealSalary(e.empId);
+          return formatMoney(part === "base" ? Number(r.value) : part === "allowances" ? Number(r.allowances) : Number(r.value) + Number(r.allowances));
+        }}
+      />
     ) : (
       <LoggedMaskedValue value={formatMoney(n)} display="PKR ••••••" label={label} canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutateAsync({ empId: e.empId, field: "salary" }).then((v) => (typeof v === "string" ? formatMoney(Number(v)) : undefined))} />
     );
@@ -366,8 +462,8 @@ export function PaySection({ view }: { view: ProfileView }) {
             columns={2}
             items={[
               ["Base salary (monthly)", amount(toNumber(pay.baseSalary), "base salary")],
-              ["Allowances", pay.allowances.length ? <span key="a" className="grid gap-0.5">{pay.allowances.map((a) => <span key={a.name}>{a.name}: {amount(toNumber(a.amount), `${a.name} allowance`)}</span>)}</span> : "None"],
-              ["Gross monthly", amount(total, "gross pay")],
+              ["Allowances", pay.allowances.length ? <span key="a" className="grid gap-0.5">{pay.allowances.map((a) => <span key={a.name}>{a.name}: {amount(toNumber(a.amount), `${a.name} allowance`, "allowances")}</span>)}</span> : "None"],
+              ["Gross monthly", amount(total, "gross pay", "gross")],
               ["Bank", pay.bankName],
               ["Account number", <LoggedMaskedValue key="ac" value={pay.accountNumber} label="bank account" canReveal={view.access.revealPay} stepUp onReveal={() => reveal.mutateAsync({ empId: e.empId, field: "account" })} />],
             ]}
@@ -456,8 +552,12 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
                 ev.target.value = "";
                 if (!f) return;
                 if (f.size > 10 * 1024 * 1024) return toast.error("Files must be 10 MB or smaller.");
-                await upload.mutateAsync({ empId: e.empId, file: { kind, fileName: f.name, sizeBytes: f.size, blob: f } });
-                toast.success(`${f.name} uploaded`, { description: `${DOC_LABEL[kind]} · ${formatBytes(f.size)}. Stored in private file storage.` });
+                try {
+                  await upload.mutateAsync({ empId: e.empId, file: { kind, fileName: f.name, sizeBytes: f.size, blob: f } });
+                  toast.success(`${f.name} uploaded`, { description: `${DOC_LABEL[kind]} · ${formatBytes(f.size)}. Stored in private file storage.` });
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Couldn't upload the file.");
+                }
               }}
             />
           </div>

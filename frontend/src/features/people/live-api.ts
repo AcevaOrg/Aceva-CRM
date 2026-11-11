@@ -4,7 +4,7 @@
  * functions only translate between the API and the shapes the screens use.
  */
 import type {
-  CreateEmployeeResponse, DocumentView, FieldChangeView, OffboardResponse, PayView, PersonalView, ProfileResponse,
+  CreateEmployeeResponse, DocumentView, RevealResponse, FieldChangeView, OffboardResponse, PayView, PersonalView, ProfileResponse,
 } from "@aceva/contracts";
 import { http } from "@/lib/api/http";
 import { directoryApi } from "@/lib/directory";
@@ -32,9 +32,9 @@ function mapPersonal(p: PersonalView): PersonalDetails {
 }
 
 function mapPay(p: PayView): PayDetails {
-  // The server keeps one allowances total; the screen shows it as a single line.
-  const allowances = Number(p.allowances) > 0 ? [{ name: "Allowances", amount: money(Number(p.allowances)) }] : [];
-  return { baseSalary: money(Number(p.baseSalary)), allowances, bankName: p.bankName ?? "", accountNumber: p.accountMasked ?? "" };
+  // Salary amounts are NOT in the profile (placeholders only); they come from the logged reveal. The server keeps one
+  // allowances total, so the screen shows it as a single line.
+  return { salaryOnFile: p.salaryOnFile, baseSalary: money(0), allowances: p.salaryOnFile ? [{ name: "Allowances", amount: money(0) }] : [], bankName: p.bankName ?? "", accountNumber: p.accountMasked ?? "" };
 }
 
 const mapDocument = (empId: string) => (d: DocumentView): EmployeeDocument => ({
@@ -88,6 +88,7 @@ export const livePeopleApi = {
       pay: res.pay ? mapPay(res.pay) : undefined,
       documents: res.documents?.map(mapDocument(empId)),
       history: res.history?.map(mapChange(empId)),
+      hasPhoto: res.basic.hasPhoto,
     };
   },
 
@@ -117,7 +118,13 @@ export const livePeopleApi = {
   },
 
   /** POST /employees/:empId/reveal: the full value, logged on the server every time */
-  reveal: async (empId: string, field: "cnic" | "salary" | "account") => (await http.post<{ value: string }>(`/employees/${empId}/reveal`, { field })).value,
+  reveal: async (empId: string, field: "cnic" | "salary" | "account") => (await http.post<RevealResponse>(`/employees/${empId}/reveal`, { field })).value,
+
+  /** The salary (base and allowances total): permission-checked and audited on the server each time. */
+  revealSalary: async (empId: string) => {
+    const r = await http.post<RevealResponse>(`/employees/${empId}/reveal`, { field: "salary" });
+    return { value: r.value, allowances: r.allowances ?? "0.00" };
+  },
 
   create: async (input: OnboardingInput) => {
     const res = await http.post<CreateEmployeeResponse>("/employees", {
@@ -132,7 +139,9 @@ export const livePeopleApi = {
       type: input.type,
       ...(input.pay ? { pay: { baseSalary: input.pay.baseSalary, allowances: input.pay.allowanceAmount ?? 0, bankName: input.pay.bankName, accountNumber: input.pay.accountNumber } } : {}),
     });
-    return { empId: res.empId, payPending: res.payPending, welcomeEmailSent: res.welcomeEmailSent };
+    return res.status === "created"
+      ? { status: "created" as const, empId: res.empId, payPending: res.payPending, welcomeEmailSent: res.welcomeEmailSent }
+      : { status: "pending_approval" as const, empId: "", requestId: res.requestId, payPending: res.payPending, welcomeEmailSent: true };
   },
 
   resendWelcome: async (empId: string) => http.post<{ welcomeEmailSent: boolean }>(`/employees/${empId}/resend-welcome`, {}),
@@ -172,7 +181,9 @@ export const livePeopleApi = {
     const a = document.createElement("a");
     a.href = href;
     a.download = fileName;
+    document.body.appendChild(a); // some browsers only honour the click when the link is in the page
     a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(href), 10_000);
   },
 };

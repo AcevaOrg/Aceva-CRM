@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Kbd } from "@/components/ui/misc";
 import { DialogsHost } from "@/components/shared/dialogs";
 import { useHotkeys } from "@/hooks/use-hotkeys";
+import { ApiError } from "@/lib/api/mock";
 import { useHydrated } from "@/hooks/use-hydrated";
 import { useSessionTimers } from "@/hooks/use-session-timers";
 import { useDirectory } from "@/hooks/use-directory";
@@ -113,6 +114,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     authApi
       .me()
       .then((me) => {
+        useSession.getState().setLiveMe({ empId: me.empId, name: me.name, level: me.level, roleKey: me.roleKey, duties: me.duties });
         if (me.stage !== "ok") {
           applyServerStage(me.empId, me.stage);
           router.replace(me.stage === "password_change_required" ? "/first-login" : me.stage === "2fa_required" ? "/login/verify" : "/login/setup");
@@ -120,7 +122,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           applyServerStage(me.empId, "ok");
         }
       })
-      .catch(() => {
+      .catch((error) => {
+        // Only a real "not signed in" answer ends the login on this screen. A network problem or a request cut off because the
+        // page was left or reloaded must NOT sign anyone out (that used to log people out on a fast navigation).
+        if (!(error instanceof ApiError) || error.status !== 401) return;
         signOutLocal();
         router.replace("/login?expired=1");
       });

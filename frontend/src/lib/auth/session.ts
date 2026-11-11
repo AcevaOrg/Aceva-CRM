@@ -25,8 +25,19 @@ interface DayCheck {
   out?: string;
 }
 
+/** Live mode: who the server says is signed in (no tokens). Lets people hired after the demo roster use the app. */
+export interface LiveMe {
+  empId: string;
+  name: string;
+  level: number;
+  roleKey: string;
+  duties: string[];
+}
+
 interface SessionState {
   empId: string | null;
+  liveMe: LiveMe | null;
+  setLiveMe: (me: LiveMe | null) => void;
   stage: SessionStage;
   signedInAt: string | null;
   policyAccepted: Record<string, boolean>;
@@ -52,6 +63,8 @@ export const useSession = create<SessionState>()(
   persist(
     (set, get) => ({
       empId: null,
+      liveMe: null,
+      setLiveMe: (me) => set({ liveMe: me }),
       stage: "signed_out",
       signedInAt: null,
       policyAccepted: {},
@@ -82,7 +95,7 @@ export const useSession = create<SessionState>()(
       },
       signOutLocal: () => {
         setCsrf(null);
-        set({ empId: null, stage: "signed_out", signedInAt: null });
+        set({ empId: null, liveMe: null, stage: "signed_out", signedInAt: null });
       },
       signOut: () => {
         // Live mode: end the session on the server first (every logout is recorded there).

@@ -1,73 +1,87 @@
 # Module 3 acceptance checklist (plan section 7)
 
+**Status: ready for your review. NOT accepted.** Acceptance is yours to give; the open items are listed at the end.
+
 Statuses: **Done and tested** = a test I ran passes. **Partial** = built, with a stated gap. **Open** = not done.
-Backend tests are in `backend/test/m3-*.test.ts` and `backend/test/m2-reset-2fa.test.ts`; browser tests are in
-`e2e/m3-live.spec.ts`. They need PostgreSQL and Redis; the browser tests also need Mailpit.
+Backend tests: `backend/test/m3-*.test.ts` and `backend/test/m2-reset-2fa.test.ts`. Browser tests (real Chromium, real
+backend, PostgreSQL, Redis, Mailpit): `e2e/m3-live.spec.ts`.
 
-## Profiles (plan: five sections, who sees what)
+Last verified results: `npm test` 3 times in a row, each 297 backend + 6 contract tests passing; browser suite 26 tests
+(M1 8, M2 8, M3 10). Typechecks clean, frontend lint 0 errors, frontend production build succeeds.
+
+## Your decisions of this round
+
+| # | Decision | Status | Verified by |
+|---|---|---|---|
+| D1 | Access ends at 00:00 Pakistan time on the day AFTER the last working day; the employee keeps access through the final working day | Done and tested | `m3-leaving` (rules test at 23:59 / 00:00 PKT; a person whose last day is today is still on notice and can still sign in; the job runs only after the clock passes midnight), e2e |
+| D2 | Only Owner and CEO change level and reporting line; Director/HR edit permitted job fields only within their hierarchy scope; joining and the API enforce the same | Done and tested | `m3-profiles` (job form refused for level/line by Director and HR), `m3-joining`, `m3-leaving` |
+| D3 | Director/HR may INITIATE hires for Levels 4 and 5; only Owner or CEO authorize level and reporting line | Done and tested. A Director/HR hire is a request: no employee, Emp-ID, login or email exists until the Owner/CEO approve (they may correct the proposal; the reporting rules still apply). Owner/CEO may also hire directly | `m3-joining` (19 tests), e2e (wizard as Director, approval as CEO) |
+| D4 | Salary amounts are not sent to the frontend before an authorized user reveals them; permission-checked, audited reveal | Done and tested. The profile has only `salaryOnFile`; the history shows `••••••`; `POST /employees/:id/reveal {field:'salary'}` returns the amounts and is audited each time (Director, CEO, Owner, finance duty, and the person themself) | `m3-profiles`, `m3-joining`, e2e (amount not in the page HTML before the reveal; the reveal is in the audit log) |
+| D5 | Reporting lines are not changed when someone leaves; unresolved direct reports are shown; Owner/CEO reassign | Done and tested. `GET /employees/unresolved-reports` and a panel on the People screen (Owner, CEO, Director, HR); only Owner/CEO can reassign (Director and HR get 403) | `m3-leaving`, e2e (panel, 403 for the Director, reassignment by the CEO clears it) |
+| D6 | Browser-test the joining wizard, profile editing, document upload/download, photo and the 2FA reset dialog in real Chromium | Done and tested, see the list below | `e2e/m3-live.spec.ts` |
+| D7 | Investigate the intermittent test-loading failures | Investigated, see the last section | |
+
+## Profiles, changes, joining, leaving (plan section 7)
 
 | # | Requirement | Status | Verified by |
 |---|---|---|---|
-| P1 | Basic (name, photo, Emp-ID, designation, department, office, official email) visible to everyone | Done and tested (photo upload and view through the API; **no photo upload screen yet**) | `m3-profiles`, `m3-documents` |
-| P2 | Job (level, reports to, joining date, type, status) visible to the employee and the levels above | Done and tested (also visible to Director/HR) | `m3-profiles` (matrix by role), e2e |
-| P3 | Personal (CNIC, phone, address, emergency contact) visible to the employee, HR, Director and above | Done and tested | `m3-profiles`, e2e |
-| P4 | Pay visible to the employee (own only), Director, CEO, Owner, finance duty person | Done and tested | `m3-profiles` (HR, CTO, peers never see it) |
-| P5 | Documents (CV, contract, CNIC copy, certificates) in private storage; visible to the employee, HR, Director and above | Done and tested (local private folder; AWS S3/R2 plug in behind `FileStorage` later and are **not tested**) | `m3-documents` |
-| P6 | CNIC and bank account encrypted at rest, masked in screens, revealing is logged | Done and tested | `m3-profiles` (reveal audited, value never logged; ciphertext in tables) |
+| P1 | Basic visible to everyone | Done and tested (photo upload and view also in the browser) | `m3-profiles`, `m3-documents`, e2e |
+| P2 | Job visible to the employee and the levels above (and Director/HR) | Done and tested | `m3-profiles`, e2e |
+| P3 | Personal visible to the employee, HR, Director and above | Done and tested | `m3-profiles`, e2e |
+| P4 | Pay visible to the employee (own only), Director, CEO, Owner, finance duty; never HR, CTO or peers | Done and tested (amounts only through the reveal, see D4) | `m3-profiles`, e2e |
+| P5 | Documents in private storage; employee, HR, Director and above | Done and tested against a local private folder. AWS S3/R2 plug in behind `FileStorage` and are **not tested** | `m3-documents`, e2e (upload, wrong-file refusal, download, same bytes) |
+| P6 | CNIC and bank account encrypted, masked, reveal logged | Done and tested | `m3-profiles` |
+| C1 | The employee updates only phone, address, emergency contact | Done and tested on the server and in the browser | `m3-profiles`, e2e |
+| C2 | Director/HR change job fields (strictly lower rank only, never themselves) | Done and tested (browser: the Director edits a designation) | `m3-profiles`, e2e |
+| C3 | Only the Director changes pay | Done and tested (API). The pay **edit form is not browser-tested** | `m3-profiles` |
+| C4 | Every change keeps old and new values, who and when | Done and tested (history screen in the browser) | `m3-profiles`, e2e |
+| J1 | Emp-ID generated by the system, sequential, never reused | Done and tested (5 simultaneous approvals) | `m3-joining` |
+| J2 | Welcome email with a temporary password to the official email; changed at first login | Done and tested end to end, including the real Mailpit email and the first-login screen. If the mail server fails the employee is still created and the welcome email can be sent again | `m3-joining`, e2e |
+| L1 | HR/Director set the last working day (move and cancel) | Done and tested. **No screen for cancelling** a date (API only) | `m3-leaving`, e2e |
+| L2 | On the day: login disabled, sessions ended, record kept; duties and stand-ins end; a department head is cleared | Done and tested | `m3-leaving` |
+| L3 | Scheduled job with retries and failure handling (decision D4 of the earlier round) | Done and tested: one run even with two workers, backoff, `failed` after 5 attempts with the error kept, recovery of a crashed worker's job | `m3-leaving` |
+| L4 | Transfer open tasks to the manager | **Open by design**: only the event `task.transfer.requested` is written. Module 5 does not exist | `m3-leaving` |
+| L5 | Send the final salary to payroll | **Open by design**: only `payroll.final_settlement.requested` is written. Module 8 does not exist | `m3-leaving` |
+| K | Lost authenticator reset (Owner/CEO, Director, HR duty; never self/same level/upward; reason; audit; sessions revoked; fresh enrolment) | Done and tested, including the dialog in the browser | `m2-reset-2fa` (9), e2e |
 
-## Changes
+## What the browser tests cover (`e2e/m3-live.spec.ts`)
 
-| # | Requirement | Status | Verified by |
-|---|---|---|---|
-| C1 | The employee updates phone, address, emergency contact only | Done and tested on the server (sent directly, not only through forms) | `m3-profiles` |
-| C2 | Director or HR change job fields | Done and tested. Rule I applied: only for people of strictly lower rank or below them in the line, never themselves. **Level and reporting line stay Owner/CEO only** (Module 1 rule), even from the job form | `m3-profiles` |
-| C3 | Only the Director changes pay | Done and tested (HR, CEO, Finance and the Director's own pay refused) | `m3-profiles` |
-| C4 | Every change keeps the old value (who, when, old, new, reason) | Done and tested; sensitive old/new values are stored encrypted and shown masked | `m3-profiles`, e2e (history screen) |
-| C5 | Rules enforced on the server | Done and tested | `m3-profiles` (every refusal), e2e (forbidden direct calls) |
+1. Director fills the joining wizard and sends it for approval (no employee, no email yet).
+2. Director sees the waiting request but has no Approve button (API: 403); the CEO approves in the screen; the Emp-ID is created and the Mailpit email arrives.
+3. The new employee signs in with the temporary password and must choose their own (first-login wizard).
+4. The employee edits their own phone, address and emergency contact in the form; the old value is in History.
+5. The employee uploads a CV (server refuses a non-PDF disguised as PDF, with a visible message), downloads it back (same bytes), sets a photo; a colleague sees the photo and only the Basic tab.
+6. The Director sees the pay tab with no salary amount in the page, reveals it (logged), HR has no Pay tab.
+7. The Director edits a designation in the form; the history shows old and new.
+8. The Director resets the authenticator in the dialog (reason required); the person is signed out and must enrol again; a colleague gets 403.
+9. HR sets today as the last working day in the dialog: the person is still on notice and can sign in; the Director sets yesterday for Finance: the report is listed (not moved), the Director cannot reassign, the CEO can.
+10. A last working day of today is still on notice.
 
-## Joining
+## Known gaps and honest limits
 
-| # | Requirement | Status | Verified by |
-|---|---|---|---|
-| J1 | Director/HR fills the profile; the system generates the Emp-ID | Done and tested (database sequence; 6 simultaneous hires; never reused). Rule I applied: Director/HR hire at Levels 4-5 only | `m3-joining` |
-| J2 | Welcome email with a temporary password to the official email | Done and tested (Mailpit in the browser test). If the mail fails the employee is still created, the failure is audited and a resend is available | `m3-joining`, e2e |
-| J3 | Must change the password at first login (Module 2) | Done and tested end to end | `m3-joining`, e2e |
-| J4 | Pay only if the Director enters it; other hires get `payPending` | Done and tested | `m3-joining` |
+1. **Not browser-tested:** the pay edit form, the job edit form, reassigning a manager through the Job form (the panel links
+   there, the change itself is tested through the API), archiving a document, cancelling a last working day (no screen).
+2. **Confirm-again dialog (step-up) is a demonstration.** Any password and any 6 digits are accepted by the screen; the
+   server does not verify them. This predates M3 (it was part of the mock UI). The server-side rules (who may reveal, edit) do not depend on it.
+3. Owner and CEO can hire directly through the API, but the **wizard screen only opens for people with the Director/HR
+   permission**; Owner/CEO approve requests in the People screen instead.
+4. The 2FA reset button appears only for Owner/CEO, the Director and HR duty, for people of lower rank; the server makes the final decision.
+5. In live mode the People list shows joining date and type from the old demo roster when the person is in it, otherwise neutral
+   defaults; each profile shows the real values to those allowed to see the Job section. "Who is online" dots are empty in live mode.
+6. The server stores one allowances total; the screen shows it as one line. The document kind "Other" is refused live.
+7. Files are stored in a private folder on this computer and streamed through the API (no expiring links yet).
+8. Still outstanding from before: the Redis hierarchy cache (M1-11) is not implemented; GitHub Actions has never run.
 
-## Leaving
+## Intermittent failures (D7): what I found
 
-| # | Requirement | Status | Verified by |
-|---|---|---|---|
-| L1 | HR/Director set the last working day | Done and tested (also move and cancel) | `m3-leaving` |
-| L2 | On that date: disable login, end all sessions | Done and tested (immediate and scheduled, with a movable clock) | `m3-leaving`, e2e |
-| L3 | Never delete the record | Done and tested | `m3-leaving` |
-| L4 | Scheduled job with retries and failure handling (decision D4) | Done and tested: PostgreSQL job table, one run when several servers tick, backoff, `failed` after 5 attempts with the error kept, stale-lock recovery | `m3-leaving` |
-| L5 | Transfer open tasks to the manager | **Open (by design)**: only the versioned event `task.transfer.requested` is written to the outbox. Module 5 does not exist, so nothing moves tasks | `m3-leaving` (event written and valid) |
-| L6 | Send final salary to payroll | **Open (by design)**: only `payroll.final_settlement.requested` is written. Module 8 does not exist | `m3-leaving` |
-| L7 | Also done on the day | Duties and stand-in cover end; a head of department is cleared; the leaver is removed from the directory | `m3-leaving` |
-
-## Lost authenticator (2FA reset)
-
-Done and tested, see `docs/M2-ACCEPTANCE.md` row K and `m2-reset-2fa`.
-
-## Known gaps and decisions for you
-
-1. **Timing of "on that date".** The job runs at 00:00 Pakistan time at the START of the last working day, so access ends
-   when that day begins. If you want access to end at the END of the last working day, it is a one-line change. Please decide.
-2. **Direct reports of a leaver** are not moved automatically (the plan does not say who they report to). The response and
-   the audit entry list them; the Owner or CEO moves them with the Module 1 screens. One test of this is skipped when the
-   demo roster has no suitable manager, so the listing itself is only lightly tested.
-3. **Browser coverage.** Browser-tested: first login with the emailed temporary password, who sees which tabs, history
-   old/new values, leaving through the dialog. **Not browser-tested**: the joining wizard (the hire is created through the
-   API in the test), the edit forms, document upload/download buttons, the 2FA reset dialog, the photo. They typecheck and
-   their API is tested, but I have not clicked through them.
-4. **Not built in the screens:** photo upload, archive document, cancel leaving date, "Other" document kind (rejected live),
-   live "who is online" dots (empty in live mode).
-5. **Salary:** the amount is sent to anyone allowed to see Pay; the "show" button logs a reveal but does not withhold it.
-6. **Allowances:** the server keeps one allowances total; the screen shows it as one line.
-7. **Live directory defaults:** in live mode the list shows joining date/type from the old mock roster when the person
-   is in it, otherwise neutral defaults; the profile always shows the real values to people allowed to see the Job section.
-8. **Files** are stored in a private folder on this computer (`FILE_STORAGE_ROOT`). They are streamed through the API (no
-   public URL, no expiring links yet).
-9. Still outstanding from before: Redis hierarchy cache (M1-11), GitHub Actions never run, the one-off M2 browser login
-   failure, the one-off `npm test` run where three files failed to load (not reproduced).
+* **Browser: "login redirects back to /login" (M1/M2 specs, seen about 1 run in 5, and 3 times in one full run).**
+  Root cause found and fixed. At page load the app asks the server who is signed in. If the page was left or reloaded while
+  that request was still running, the cancelled request was treated as "not signed in" and the app cleared the login on
+  that screen; the next page then showed the login form. This was also a real user-facing bug (a fast reload could log you
+  out on screen). Now only a real 401 clears the login. I reproduced it in a loop before the fix. After the fix, the full
+  browser suite passed without that failure.
+* **Backend: three files failing to load in one `npm test` run.** I could **not reproduce** it: 3 consecutive full runs,
+  plus the other full runs in this session, all passed. I do not know the cause. It happened once, directly after other
+  test activity on the same database; a leftover process or a slow database start are possible but unproven. If it
+  happens again, the `FAIL ... [file]` lines show the load error, and I will look at that run.
+* A third, separate test mistake (clicking the "uploaded" notification instead of the file card) was my test's fault and is fixed.

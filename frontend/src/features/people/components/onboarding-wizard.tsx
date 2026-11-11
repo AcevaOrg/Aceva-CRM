@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
+import { isLive } from "@/lib/api/http";
 import { livePeopleApi } from "../live-api";
 import { ArrowLeft, ArrowRight, Check, MailCheck, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ function Wizard() {
   const lookup = useLookup();
   const viewer = useViewer();
   const canPay = useCan("people.manage_pay");
+  const canAuthorize = useCan("org.manage");
   const create = useCreateEmployee();
   // You can only add people below your own level, into a department that fits their level (spec §2.1).
   const myLevel: Level = viewer?.employee.level ?? 5;
@@ -76,7 +78,7 @@ function Wizard() {
   /** The one person each level reports to in the fixed structure (Development → CTO; CTO, Sales and Finance → Director). */
   const bossesFor = (l: Level) => lookup.employees.filter((e) => e.status !== "left" && e.level === reportsToLevel(l));
   const [step, setStep] = React.useState(0);
-  const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean; emailSent: boolean } | null>(null);
+  const [done, setDone] = React.useState<{ empId: string; email: string; name: string; payPending: boolean; emailSent: boolean; pending: boolean } | null>(null);
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -133,8 +135,8 @@ function Wizard() {
           ? { baseSalary: values.baseSalary, allowanceName: values.allowanceName || undefined, allowanceAmount: values.allowanceAmount || undefined, bankName: values.bankName ?? "", accountNumber: values.accountNumber ?? "" }
           : undefined,
       });
-      setDone({ empId: res.empId, email: values.officialEmail, name: values.name, payPending: res.payPending, emailSent: (res as { welcomeEmailSent?: boolean }).welcomeEmailSent !== false });
-      toast.success(`${res.empId} created`);
+      setDone({ empId: res.empId, email: values.officialEmail, name: values.name, payPending: res.payPending, emailSent: (res as { welcomeEmailSent?: boolean }).welcomeEmailSent !== false, pending: (res as { status?: string }).status === "pending_approval" });
+      toast.success((res as { status?: string }).status === "pending_approval" ? "Hire sent for approval" : `${res.empId} created`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't create the employee.");
     }
@@ -147,11 +149,16 @@ function Wizard() {
           <span className="grid size-14 place-content-center rounded-2xl bg-success/12 text-success">
             <MailCheck className="size-7" />
           </span>
-          <p className="text-xl font-semibold tracking-tight">Emp-ID <span className="font-mono">{done.empId}</span> created</p>
+          {done.pending ? <p className="text-xl font-semibold tracking-tight">Hire sent for approval</p> : <p className="text-xl font-semibold tracking-tight">Emp-ID <span className="font-mono">{done.empId}</span> created</p>}
           <p className="max-w-md text-[13.5px] text-muted-foreground">
-            {done.emailSent ? "A welcome email with a temporary password was sent to" : "The welcome email with the temporary password is meant for"} <span className="font-medium text-foreground">{done.email}</span>. {done.name.split(" ")[0]} sets a new password and accepts the tracking policy at first login.
+            {done.pending ? "No account exists yet. Once approved, the welcome email goes to" : done.emailSent ? "A welcome email with a temporary password was sent to" : "The welcome email with the temporary password is meant for"} <span className="font-medium text-foreground">{done.email}</span>. {done.name.split(" ")[0]} sets a new password and accepts the tracking policy at first login.
           </p>
-          {!done.emailSent && (
+          {done.pending && (
+            <p className="max-w-md text-[13.5px] text-muted-foreground">
+              The Owner or CEO must authorize the level and reporting line. The Emp-ID is generated, the account is created and the welcome email with the temporary password is sent only after they approve.
+            </p>
+          )}
+          {!done.pending && !done.emailSent && (
             <p className="rounded-lg bg-warning/12 px-3 py-2 text-[12.5px]">
               The welcome email could not be sent. The employee is created.{" "}
               <button
@@ -166,7 +173,7 @@ function Wizard() {
           {done.payPending && <p className="rounded-lg bg-warning/12 px-3 py-2 text-[12.5px]">Pay details are still missing. The Director adds them on the profile&apos;s Pay tab.</p>}
           <div className="mt-3 flex flex-wrap justify-center gap-2">
             <Button asChild>
-              <Link href={`/people/${done.empId}`}>Open profile</Link>
+              <Link href={done.pending ? "/people" : `/people/${done.empId}`}>{done.pending ? "Back to People" : "Open profile"}</Link>
             </Button>
             <Button
               variant="outline"
@@ -325,7 +332,7 @@ function Wizard() {
                 </Button>
               ) : (
                 <Button type="submit" loading={create.isPending}>
-                  <UserPlus /> Create employee
+                  <UserPlus /> {isLive("m3") && !canAuthorize ? "Send for approval" : "Create employee"}
                 </Button>
               )}
             </div>
