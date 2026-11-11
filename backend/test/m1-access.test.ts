@@ -6,6 +6,7 @@ import { AUTHENTICATED_ONLY, IS_PUBLIC, REQUIRED_PERMISSIONS } from '../src/acce
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { createTestApp, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
+import { resetTestDatabase } from './helpers/reset-db';
 
 /** A route that someone forgot to protect: the guard must refuse it anyway. */
 @Controller('test-unprotected')
@@ -39,6 +40,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await t.close();
   await prisma.$disconnect();
+  await resetTestDatabase();
 });
 
 const deniedCount = async (actorEmpId: string | null, reason: string) =>
