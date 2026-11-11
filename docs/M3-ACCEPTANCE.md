@@ -1,7 +1,36 @@
 # Module 3 acceptance checklist (plan section 7)
 
-**Status: the three browser-testing gaps and the confirm-again dialog are closed and verified. NOT accepted:** acceptance is
-yours to give. The remaining limits are listed at the end.
+**Status: M3 ACCEPTED** by the project owner, based on the regression results below. Accepted with the deferred and
+outstanding items listed in the next section, which are NOT part of this acceptance.
+
+## What is accepted, what is deferred, what is outstanding
+
+**1. M3 requirements implemented and tested (accepted).** Employee profiles with the five sections and their visibility rules;
+server-enforced edits by role with full history (old and new values, who, when, reason); encrypted CNIC and bank account with
+logged reveals; salary never sent before an audited reveal; the joining workflow (Director/HR start, Owner/CEO authorize,
+Emp-ID, login, welcome email, first-login change); private documents and photo; the leaving workflow (access ends 00:00
+Pakistan time the day after the last working day, scheduled job with retries and crash recovery, login disabled, sessions
+ended, record kept); unresolved reports of leavers shown and reassigned only by Owner/CEO; the lost-authenticator reset;
+and the server-verified confirm-again. Details and the test that proves each item are in the tables below.
+
+**2. Deferred until M5 and M8 (not part of this acceptance).** The leaving workflow writes the versioned events
+`task.transfer.requested` (open tasks to the manager) and `payroll.final_settlement.requested` (final salary) to the outbox.
+**No consumer exists**, because Module 5 (Tasks) and Module 8 (Payroll) do not exist. Nothing moves tasks or prepares a final
+salary today. The consumers are built with M5 and M8.
+
+**3. Still outstanding, separate from M3.** **Redis hierarchy caching (M1-11) is not implemented** (the hierarchy cache is
+PostgreSQL only; Redis is used for sessions). Therefore **M1 is not fully complete** and is not marked as such.
+
+**4. Pending verification.** **GitHub Actions CI has never run on GitHub.** The workflow file exists, but no run has passed, so
+CI is **not** claimed to pass. It also does not yet include the browser tests.
+
+**5. Unexplained, not reproducible.** Once, one `npm test` run had three backend test files fail to load (the other files
+passed). It did not recur in any later full run (many runs, all passing). The cause is unknown; no fix was made for it. If it
+happens again, the `FAIL ... [file]` lines show the load error.
+
+**Regression results this acceptance rests on:** backend `npm test`: 307 backend tests in 18 files and 6 contract tests, all
+passing. Browser suite (real Chromium): 30 of 30 passing (M1 8, M2 8, M3 14), from one clean run. Typechecks clean, frontend
+lint 0 errors, frontend production build succeeds. Work is on branch `cycle1-m1-m3`; `main` was not modified and nothing was pushed.
 
 Statuses: **Done and tested** = a test I ran passes. **Partial** = built, with a stated gap. **Open** = not done.
 Backend tests: `backend/test/m3-*.test.ts` and `backend/test/m2-reset-2fa.test.ts`. Browser tests (real Chromium, real

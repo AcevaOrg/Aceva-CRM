@@ -1,5 +1,7 @@
 # Module 1 acceptance checklist (plan section 5)
 
+**M1 is NOT fully complete.** Requirement G2 / item M1-11 (the hierarchy kept in Redis) is not implemented: Redis is used for sessions only and the hierarchy cache is PostgreSQL. All other rows below are done and tested. GitHub Actions has never run (pending).
+
 Statuses: **Done and tested** (a test that I ran passes), **Partial**, **Open** (needs a decision), **Blocked** (needs a later module).
 Backend tests are in `backend/test` and `backend/src/**.test.ts`; browser tests are in `e2e/`.
 
