@@ -529,6 +529,8 @@ model Session {
   tokenHash           String    @unique @map("token_hash")
   rememberMe          Boolean   @default(false) @map("remember_me")
   twoFactorVerifiedAt DateTime? @map("two_factor_verified_at") @db.Timestamptz(3)
+  /// The last time the person confirmed their password (and authenticator code) again for a risky action. Valid 5 minutes.
+  stepUpAt            DateTime? @map("step_up_at") @db.Timestamptz(3)
   /// SHA-256 of the CSRF token the browser must send in the X-CSRF-Token header on every change request.
   csrfTokenHash       String?   @map("csrf_token_hash")
   ip                  String?

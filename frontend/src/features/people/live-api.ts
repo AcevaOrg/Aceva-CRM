@@ -97,8 +97,13 @@ export const livePeopleApi = {
   },
 
   updateJob: async (empId: string, patch: JobPatch, reason: string) => {
-    const { reportsTo, ...rest } = patch;
-    await http.patch(`/employees/${empId}/job`, { ...rest, ...(reportsTo !== undefined ? { reportsToEmpId: reportsTo } : {}), reason });
+    const { reportsTo, joiningDate, ...rest } = patch;
+    await http.patch(`/employees/${empId}/job`, {
+      ...rest,
+      ...(joiningDate !== undefined ? { joiningDate: isoDay(joiningDate) } : {}),
+      ...(reportsTo !== undefined ? { reportsToEmpId: reportsTo } : {}),
+      reason,
+    });
   },
 
   updatePersonal: async (empId: string, patch: PersonalPatch) => {
@@ -172,6 +177,11 @@ export const livePeopleApi = {
     form.set("type", kind);
     form.set("file", file.blob, file.fileName);
     return mapDocument(empId)(await http.upload<DocumentView>(`/employees/${empId}/documents`, form));
+  },
+
+  /** DELETE /employees/:empId/documents/:id: archived (kept, never deleted), the reason is audited */
+  archiveDocument: async (empId: string, documentId: string, reason: string) => {
+    await http.delete(`/employees/${empId}/documents/${documentId}`, { reason });
   },
 
   /** GET /employees/:empId/documents/:id/download: permission-checked and logged on the server */

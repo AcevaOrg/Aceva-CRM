@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import type {
   ChangePasswordRequest,
   DisableTwoFactorRequest,
+  StepUpRequest,
+  StepUpResponse,
   ForgotPasswordRequest,
   LoginHistoryItem,
   LoginRequest,
@@ -251,6 +253,51 @@ export class AuthService {
     await this.sessions.markTwoFactorVerified(sessionId);
     const state = await this.state.get(actor.id);
     return { stage: state ? this.state.stage(state, true) : 'ok' };
+  }
+
+  /**
+   * "Confirm again" for risky actions (plan section 6): the password, and the current authenticator code for people who
+   * use one. Both are checked HERE, on the server. A correct answer makes risky actions available for 5 minutes in this
+   * session only. Five wrong answers in 15 minutes end the session. A code works once, so a code that was just used to
+   * log in cannot be used again within the same 30 seconds.
+   */
+  async stepUp(actor: Actor, sessionId: string, dto: StepUpRequest, client: RequestInfo): Promise<StepUpResponse> {
+    const credential = await this.prisma.credential.findUnique({ where: { employeeId: actor.id }, select: { passwordHash: true } });
+    const totp = await this.prisma.totpSecret.findUnique({ where: { employeeId: actor.id } });
+    const usesCode = !!totp?.confirmedAt;
+    if (usesCode && !dto.code) {
+      throw new BadRequestException({ statusCode: 400, code: 'code_required', message: 'Enter the 6-digit code from your authenticator app' });
+    }
+
+    const passwordOk = !!credential && (await this.passwords.verify(credential.passwordHash, dto.password));
+    let codeOk = true;
+    if (usesCode && passwordOk) {
+      const check = this.totp.verify(this.crypto.decrypt(totp!.secretEncrypted), dto.code!, this.clock.now(), totp!.lastUsedStep === null ? null : Number(totp!.lastUsedStep));
+      codeOk =
+        check.valid &&
+        (
+          await this.prisma.totpSecret.updateMany({
+            where: { employeeId: actor.id, OR: [{ lastUsedStep: null }, { lastUsedStep: { lt: check.step! } }] },
+            data: { lastUsedStep: check.step! },
+          })
+        ).count > 0;
+    } else if (usesCode) {
+      codeOk = false;
+    }
+
+    if (!passwordOk || !codeOk) {
+      await this.recordFailure(actor.empId, { id: actor.id, empId: actor.empId }, client, 'two_factor_failed');
+      await this.audit.record({ actorId: actor.id, action: 'auth.step_up.failed', targetType: 'employee', targetId: actor.empId, outcome: 'denied', ...client });
+      if ((await this.throttle.recentTwoFactorFailures(actor.id)) >= MAX_WRONG_CODES) {
+        await this.sessions.end(sessionId, 'forced');
+        throw new ForbiddenException({ statusCode: 403, code: 'too_many_wrong_codes', message: 'Too many wrong answers. Please log in again.' });
+      }
+      // The same answer whichever part was wrong: it does not tell an attacker which one to fix.
+      throw new BadRequestException({ statusCode: 400, code: 'invalid_credentials', message: 'The password or the code is not right' });
+    }
+    await this.sessions.markStepUp(sessionId);
+    await this.audit.record({ actorId: actor.id, action: 'auth.step_up', targetType: 'employee', targetId: actor.empId, ...client });
+    return { ok: true, validForSec: SessionService.STEP_UP_VALID_MS / 1000 };
   }
 
   /** Switch two-step login off. Only possible where it is optional, and needs the password and a current code. */

@@ -13,7 +13,8 @@ import type { ProfileAccessView } from '@aceva/contracts';
  *   - the employee changes only their own phone, address and emergency contact
  *   - Director or HR (people.manage) change job-related fields, for people of lower rank or below them
  *   - only the Director (people.manage_pay) changes pay, never their own
- *   - levels and reporting lines change only through the Owner/CEO rules of Module 1
+ *   - levels and reporting lines change only through the Owner/CEO rules of Module 1; so the Owner and CEO (org.manage)
+ *     also get the Job form for people below them (they are the only ones who can reassign a manager)
  *
  * Pure function: the server calls it for every request, and the screens receive the result.
  */
@@ -30,6 +31,7 @@ export function computeProfileAccess({ isSelf, isAbove, lowerRank, can }: Access
   const manages = can('people.manage');
   // Director or HR may act on people of lower rank or below them in the line, never on themselves.
   const administers = manages && !isSelf && (lowerRank || isAbove);
+  const structural = can('org.manage') && !isSelf && (lowerRank || isAbove);
   const personalRole = can('people.view_personal');
   const payRole = can('people.view_pay');
   const job = isSelf || isAbove || manages;
@@ -46,7 +48,7 @@ export function computeProfileAccess({ isSelf, isAbove, lowerRank, can }: Access
     },
     edit: {
       basic: administers,
-      job: administers,
+      job: administers || structural,
       personal: administers ? 'all' : isSelf ? 'contact' : 'none',
       pay: can('people.manage_pay') && !isSelf && (lowerRank || isAbove),
       documents: isSelf || administers,

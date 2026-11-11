@@ -14,7 +14,7 @@ import {
   updatePersonalRequestSchema,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
-import { Authenticated, ClientInfo, CurrentActor, RequestInfo, RequirePermission } from '../access/decorators';
+import { Authenticated, ClientInfo, CurrentActor, CurrentSessionId, RequestInfo, RequirePermission } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { z } from 'zod';
 import { JoiningService } from './joining.service';
@@ -146,15 +146,15 @@ export class PeopleController {
   @Patch(':empId/pay')
   @Authenticated()
   @ApiOperation({ summary: 'Change pay information (the Director only, never their own)' })
-  updatePay(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: UpdatePayDto, @ClientInfo() client: RequestInfo) {
-    return this.people.updatePay(actor, empId, body, client);
+  updatePay(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('empId') empId: string, @Body() body: UpdatePayDto, @ClientInfo() client: RequestInfo) {
+    return this.people.updatePay(actor, empId, body, client, sessionId);
   }
 
   @Post(':empId/reveal')
   @Authenticated()
   @HttpCode(200)
   @ApiOperation({ summary: 'Show a masked CNIC or bank account number. Every reveal is logged.' })
-  reveal(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: RevealDto, @ClientInfo() client: RequestInfo) {
-    return this.people.reveal(actor, empId, body.field, client);
+  reveal(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('empId') empId: string, @Body() body: RevealDto, @ClientInfo() client: RequestInfo) {
+    return this.people.reveal(actor, empId, body.field, client, sessionId);
   }
 }

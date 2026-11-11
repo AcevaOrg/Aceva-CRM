@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { createTestPrisma } from '../backend/test/helpers/prisma';
-import { API, PASSWORD, apiAs, openAs } from './auth-helpers';
+import { API, PASSWORD, apiAs, nextCode, openAs } from './auth-helpers';
+import { E2E_FILES } from './paths';
 
 /**
  * Module 3 (employee profiles, joining, leaving) driven through the real screens in Chromium, with the real backend,
@@ -30,12 +32,37 @@ const toastText = (page: Page, text: RegExp | string) => page.locator('[data-son
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
-async function stepUp(page: Page) {
-  // the confirmation screen for sensitive actions (a demonstration screen: any 6 digits are accepted)
+/** A real authenticator code (each code works once; wait for the next 30-second window when two were just used). */
+async function freshCode(empId: string): Promise<string> {
+  for (let i = 0; i < 40; i++) {
+    try {
+      return nextCode(empId);
+    } catch {
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  throw new Error('No authenticator code available');
+}
+
+/** The "confirm it's you" dialog: the SERVER checks the password and the code. */
+async function stepUp(page: Page, empId: string) {
   await page.locator('#stepup-pw').fill(PASSWORD);
   await page.locator('input[aria-label="Digit 1"]').click();
-  await page.keyboard.type('123456');
+  await page.keyboard.type(await freshCode(empId));
   await page.getByRole('button', { name: 'Confirm' }).click();
+}
+
+/** Confirm again through the API for a signed-in API client. */
+async function apiStepUp(api: Awaited<ReturnType<typeof apiAs>>, empId: string, withCode = true) {
+  const res = await api.post('auth/step-up', { password: PASSWORD, ...(withCode ? { code: await freshCode(empId) } : {}) });
+  expect(res.status()).toBe(200);
+}
+
+/** The reason dialog (title varies): type a reason and confirm. */
+async function giveReason(page: Page, reason: string) {
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('textarea').fill(reason);
+  await dialog.locator('button[type="submit"]').click(); // not .last(): the close (X) button comes after the footer
 }
 
 test('the Director fills the joining wizard: it creates a request, not an employee', async ({ browser, request }) => {
@@ -148,7 +175,7 @@ test('the person uploads a CV and downloads it back, and sets a photo that other
   await page.goto(`/people/${hireId}?tab=documents`);
   await page.locator('input[type="file"]').first().setInputFiles({ name: 'my-cv.pdf', mimeType: 'application/pdf', buffer: PDF });
   await expect(page.getByText('my-cv.pdf').first()).toBeVisible();
-  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('li').getByRole('button', { name: /my-cv.pdf/ }).click()]);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.locator('li').getByRole('button', { name: /^my-cv.pdf/ }).click()]);
   expect(download.suggestedFilename()).toBe('my-cv.pdf');
   expect(readFileSync((await download.path())!).equals(PDF)).toBe(true);
   // a wrong kind of file is refused by the server
@@ -174,7 +201,7 @@ test('the Director sees pay only after a logged reveal; HR never sees pay', asyn
   expect(html).not.toMatch(/180,?000/); // the amount is not in the page, nor in the data sent to it
   expect(html).not.toContain('PK12MEZN0001234567890');
   await director.page.getByRole('button', { name: 'Show base salary' }).click();
-  await stepUp(director.page);
+  await stepUp(director.page, DIRECTOR);
   await expect(director.page.getByText(/180,?000/).first()).toBeVisible();
   const prisma = createTestPrisma();
   try {
@@ -200,6 +227,222 @@ test('the Director edits a profile field in the screen; the change is in the his
   await expect(director.page.getByText('QA Engineer').first()).toBeVisible();
   await expect(director.page.getByText('Senior QA Engineer').first()).toBeVisible();
   await director.context.close();
+});
+
+test('the confirm-again dialog is checked by the server: a wrong password or an arbitrary code is refused and nothing is revealed', async ({ browser, playwright }) => {
+  const director = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=pay`);
+  const page = director.page;
+  await page.getByRole('button', { name: 'Show base salary' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.locator('#stepup-pw')).toBeVisible();
+
+  // wrong password with a plausible code
+  await dialog.locator('#stepup-pw').fill('not-the-right-password');
+  await dialog.locator('input[aria-label="Digit 1"]').click();
+  await page.keyboard.type('123456');
+  await dialog.getByRole('button', { name: 'Confirm' }).click();
+  await expect(dialog.locator('[role="alert"]')).toContainText('not right');
+  await expect(dialog).toBeVisible(); // it stays open: nothing was confirmed
+  // right password, arbitrary six digits
+  await dialog.locator('#stepup-pw').fill(PASSWORD);
+  await dialog.locator('input[aria-label="Digit 1"]').click();
+  await page.keyboard.type('000000');
+  await dialog.getByRole('button', { name: 'Confirm' }).click();
+  await expect(dialog.locator('[role="alert"]')).toContainText('not right');
+  await expect(page.getByText(/1[89]\d,?000/)).toHaveCount(0); // no salary shown
+  // the server agrees: this session has not confirmed, so the reveal is refused
+  const direct = await apiAs(playwright, DIRECTOR);
+  const refused = await direct.post(`employees/${hireId}/reveal`, { field: 'salary' });
+  expect(refused.status()).toBe(403);
+  expect((await refused.json()).code).toBe('step_up_required');
+
+  // right password and the real code
+  await dialog.locator('#stepup-pw').fill(PASSWORD);
+  await dialog.locator('input[aria-label="Digit 1"]').click();
+  await page.keyboard.type(await freshCode(DIRECTOR));
+  await dialog.getByRole('button', { name: 'Confirm' }).click();
+  await expect(page.getByText(/180,?000/).first()).toBeVisible();
+  await director.context.close();
+
+  const prisma = createTestPrisma();
+  try {
+    expect(await prisma.auditLog.count({ where: { action: 'auth.step_up.failed', actor: { empId: DIRECTOR } } })).toBeGreaterThanOrEqual(2);
+    expect(await prisma.auditLog.count({ where: { action: 'auth.step_up', actor: { empId: DIRECTOR } } })).toBeGreaterThanOrEqual(1);
+  } finally {
+    await prisma.$disconnect();
+  }
+});
+
+test('pay edit form: the Director edits through confirm-again and a reason; history is masked; everyone else is refused', async ({ browser, playwright }) => {
+  const director = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=pay`);
+  const page = director.page;
+  await page.getByRole('button', { name: 'Edit pay' }).click();
+  await stepUp(page, DIRECTOR);
+  await expect(page.locator('#pay-base')).toHaveValue('180000'); // prefilled from the logged reveal
+  await page.locator('#pay-base').fill('195000');
+  await page.getByRole('button', { name: 'Save pay' }).click();
+  await giveReason(page, 'Annual review 2026');
+  await expect(toastText(page, 'Pay saved')).toBeVisible();
+
+  // history: both amounts are hidden, the field and the reason are there
+  await page.goto(`/people/${hireId}?tab=history`);
+  await expect(page.getByText('Base salary').first()).toBeVisible();
+  await expect(page.getByText('Annual review 2026')).toBeVisible();
+  const html = await page.content();
+  expect(html).not.toMatch(/195,?000|180,?000/);
+  await director.context.close();
+
+  const prisma = createTestPrisma();
+  try {
+    const row = await prisma.profileChange.findFirstOrThrow({ where: { employee: { empId: hireId }, field: 'Base salary' }, orderBy: { changedAt: 'desc' } });
+    expect(row.isSensitive).toBe(true);
+    expect(`${row.oldValue}${row.newValue}`).not.toMatch(/195000|180000/); // stored encrypted
+    expect(await prisma.auditLog.count({ where: { action: 'employee.pay.updated', targetId: hireId, actor: { empId: DIRECTOR } } })).toBeGreaterThanOrEqual(1);
+  } finally {
+    await prisma.$disconnect();
+  }
+  // the new amount is really saved (reveal after confirming again)
+  const api = await apiAs(playwright, DIRECTOR);
+  await apiStepUp(api, DIRECTOR);
+  expect((await (await api.post(`employees/${hireId}/reveal`, { field: 'salary' })).json()).value).toBe('195000.00');
+
+  // others never edit pay, with or without confirming again
+  const attempts: Array<[string, string]> = [[HR, 'HR'], [CEO, 'CEO'], [OWNER, 'Owner'], [PEER, 'peer'], [FINANCE, 'finance']];
+  for (const [who, label] of attempts) {
+    const client = await apiAs(playwright, who);
+    if (['ACV-0001', 'ACV-0002', 'ACV-0010'].includes(who)) await apiStepUp(client, who); // prove it is the permission, not the missing confirmation
+    const res = await client.patch(`employees/${hireId}/pay`, { baseSalary: 1, reason: `${label} must not change pay` });
+    expect(res.status(), label).toBe(403);
+  }
+  const hr = await openAs(browser, HR, `/people/${hireId}`);
+  await expect(tabs(hr.page).filter({ hasText: 'Pay' })).toHaveCount(0);
+  await hr.context.close();
+  const ceo = await openAs(browser, CEO, `/people/${hireId}?tab=pay`);
+  await expect(ceo.page.getByRole('button', { name: /Edit pay|Add pay/ })).toHaveCount(0); // the CEO may view, not edit
+  await expect(ceo.page.getByText(/View only/)).toBeVisible();
+  await ceo.context.close();
+  expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).pay.salaryOnFile).toBe(true);
+});
+
+test('job edit form: HR edits job fields in the screen; only the Owner or CEO change the manager, and everyone else is refused', async ({ browser, playwright }) => {
+  // HR: type and weekly capacity (the level and manager are shown but cannot be changed)
+  const hr = await openAs(browser, HR, `/people/${hireId}?tab=job`);
+  await hr.page.getByRole('button', { name: 'Edit' }).first().click();
+  await expect(hr.page.locator('#j-level')).toHaveCount(0); // no level control for HR
+  await expect(hr.page.locator('#j-boss')).toHaveCount(0); // no manager control for HR
+  await expect(hr.page.getByText('Only the Owner or CEO change levels.')).toBeVisible();
+  await hr.page.locator('#j-type').selectOption('part_time');
+  await hr.page.locator('#j-cap').fill('20');
+  await hr.page.getByRole('button', { name: 'Save changes' }).click();
+  await giveReason(hr.page, 'Reduced hours agreed with the employee');
+  await expect(toastText(hr.page, 'Job details saved')).toBeVisible();
+  await hr.context.close();
+
+  const api = await apiAs(playwright, DIRECTOR);
+  const job = (await (await api.get(`employees/${hireId}`)).json()).job;
+  expect([job.type, job.weeklyCapacityHours, job.reportsTo]).toEqual(['part_time', 20, 'ACV-0004']);
+
+  // the CEO reassigns the manager in the form (CTO -> Director)
+  const ceo = await openAs(browser, CEO, `/people/${hireId}?tab=job`);
+  await ceo.page.getByRole('button', { name: 'Edit' }).first().click();
+  await expect(ceo.page.locator('#j-boss')).toBeVisible();
+  await ceo.page.locator('#j-boss').selectOption('ACV-0003');
+  await ceo.page.getByRole('button', { name: 'Save changes' }).click();
+  await giveReason(ceo.page, 'Moves to the management team');
+  await expect(toastText(ceo.page, 'Job details saved')).toBeVisible();
+  await ceo.context.close();
+  expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).job.reportsTo).toBe('ACV-0003');
+
+  // history shows both changes with who and why
+  const dir = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=history`);
+  await expect(dir.page.getByText('Reports to').first()).toBeVisible();
+  await expect(dir.page.getByText('Moves to the management team').first()).toBeVisible();
+  await expect(dir.page.getByText('Reduced hours agreed with the employee').first()).toBeVisible(); // on both the type and the capacity rows
+  await dir.context.close();
+
+  // unauthorized attempts, sent directly to the server
+  const attempts: Array<[string, Record<string, unknown>]> = [
+    [HR, { level: 4, reason: 'HR must not change levels' }],
+    [HR, { reportsToEmpId: 'ACV-0004', reason: 'HR must not move people' }],
+    [DIRECTOR, { reportsToEmpId: 'ACV-0004', reason: 'Director must not move people' }],
+    [DIRECTOR, { level: 4, reason: 'Director must not change levels' }],
+    [PEER, { type: 'full_time', reason: 'A colleague must not edit jobs' }],
+    [FINANCE, { reportsToEmpId: 'ACV-0004', reason: 'Finance must not move people' }],
+  ];
+  for (const [who, body] of attempts) {
+    const res = await (await apiAs(playwright, who)).patch(`employees/${hireId}/job`, body);
+    expect(res.status(), JSON.stringify(body) + ' by ' + who).toBe(403);
+  }
+  // an invalid line is refused even for the CEO (the reporting rules still apply)
+  const bad = await (await apiAs(playwright, CEO)).patch(`employees/${hireId}/job`, { reportsToEmpId: PEER, reason: 'A colleague of equal level cannot be the manager' });
+  expect(bad.status()).toBe(400);
+  expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).job.reportsTo).toBe('ACV-0003');
+  // the employee cannot edit their own job
+  const self = await playwright.request.newContext({ baseURL: API + '/' });
+  const login = await (await self.post('auth/login', { data: { empId: hireId, password: NEW_PASSWORD } })).json();
+  const csrf = login.csrfToken as string;
+  const own = await self.patch(`employees/${hireId}/job`, { headers: { 'X-CSRF-Token': csrf }, data: { type: 'full_time', reason: 'I want full time' } });
+  expect(own.status()).toBe(403);
+});
+
+test('document archiving: the person and HR archive in the screen; others are refused; archived files cannot be opened', async ({ browser, playwright, page }) => {
+  const prisma = createTestPrisma();
+  const docs = async () => prisma.employeeDocument.findMany({ where: { employee: { empId: hireId } }, orderBy: { createdAt: 'asc' } });
+  try {
+    // the person adds a second file
+    await page.goto('/login');
+    await page.locator('#empId').fill(hireId.replace('ACV-', ''));
+    await page.locator('#password').fill(NEW_PASSWORD);
+    await page.getByRole('button', { name: /^Sign in/ }).click();
+    await page.waitForURL(/\/$/);
+    await page.goto(`/people/${hireId}?tab=documents`);
+    await page.locator('input[type="file"]').first().setInputFiles({ name: 'second.pdf', mimeType: 'application/pdf', buffer: PDF });
+    await expect(page.locator('li').getByRole('button', { name: /^second\.pdf/ })).toBeVisible();
+    const [first, second] = await docs();
+    expect(first.archivedAt).toBeNull();
+
+    // others cannot archive, with the right or wrong id
+    for (const who of [PEER, 'ACV-0004', FINANCE]) {
+      const res = await (await apiAs(playwright, who)).delete(`employees/${hireId}/documents/${second.id}`, { reason: 'not allowed' });
+      expect(res.status(), who).toBe(403);
+      expect((await (await apiAs(playwright, who)).get(`employees/${hireId}/documents/${second.id}/download`)).status(), who).toBe(403);
+    }
+    expect((await docs())[1].archivedAt).toBeNull();
+
+    // the person archives the first file in the screen (a reason is required)
+    await page.getByRole('button', { name: /Archive my-cv\.pdf/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.locator('button[type="submit"]')).toBeDisabled();
+    await giveReason(page, 'Replaced by a newer version');
+    await expect(toastText(page, 'my-cv.pdf archived')).toBeVisible();
+    await expect(page.locator('li').getByRole('button', { name: /my-cv\.pdf/ })).toHaveCount(0); // gone from the list
+    await page.reload();
+    await expect(page.locator('li').getByRole('button', { name: /my-cv\.pdf/ })).toHaveCount(0);
+    await expect(page.locator('li').getByRole('button', { name: /^second\.pdf/ })).toBeVisible();
+
+    // the record and the file are kept, but nobody can open the archived file
+    const archived = (await docs())[0];
+    expect(archived.archivedAt).not.toBeNull();
+    expect(existsSync(join(E2E_FILES, archived.storageKey))).toBe(true);
+    for (const who of [DIRECTOR, HR]) {
+      const client = await apiAs(playwright, who);
+      expect((await client.get(`employees/${hireId}/documents/${archived.id}/download`)).status(), who).toBe(404);
+      const list = (await (await client.get(`employees/${hireId}/documents`)).json()) as Array<{ id: string }>;
+      expect(list.some((d) => d.id === archived.id)).toBe(false);
+    }
+    expect(await prisma.auditLog.count({ where: { action: 'employee.document.archived', targetId: hireId, reason: 'Replaced by a newer version' } })).toBe(1);
+
+    // HR archives the second file in the screen
+    const hr = await openAs(browser, HR, `/people/${hireId}?tab=documents`);
+    await hr.page.getByRole('button', { name: /Archive second\.pdf/ }).click();
+    await giveReason(hr.page, 'Duplicate upload');
+    await expect(toastText(hr.page, 'second.pdf archived')).toBeVisible();
+    await hr.context.close();
+    expect((await docs())[1].archivedAt).not.toBeNull();
+    expect(existsSync(join(E2E_FILES, (await docs())[1].storageKey))).toBe(true);
+  } finally {
+    await prisma.$disconnect();
+  }
 });
 
 test('the Director resets the authenticator in the dialog: the person is signed out and must enrol again', async ({ browser, playwright }) => {
@@ -273,7 +516,9 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   expect((await dir.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Director cannot reassign' })).status()).toBe(403);
   expect((await cApi.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Finance lead left' })).status()).toBe(200);
   await ceo.page.reload();
-  await expect(ceo.page.getByTestId('unresolved-reports')).toHaveCount(0);
+  // the reassigned person leaves the list; the demo roster's other person who reported to Finance is still waiting
+  await expect(ceo.page.getByTestId('unresolved-reports')).not.toContainText('E2E Orphan');
+  await expect(ceo.page.getByTestId('unresolved-reports')).toContainText('Danish Iqbal');
   void orphanRow;
   await ceo.context.close();
 });

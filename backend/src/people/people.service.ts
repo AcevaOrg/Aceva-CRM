@@ -17,6 +17,7 @@ import type { RequestInfo } from '../access/decorators';
 import { PermissionService } from '../access/permission.service';
 import { ScopeService } from '../access/scope.service';
 import { CryptoService } from '../auth/crypto.service';
+import { SessionService } from '../auth/session/session.service';
 import { Prisma } from '../generated/prisma/client';
 import { OrgService } from '../org/org.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -97,6 +98,7 @@ export class PeopleService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly org: OrgService,
+    private readonly sessions: SessionService,
   ) {}
 
   // ===================================================================== reading
@@ -225,11 +227,13 @@ export class PeopleService {
   }
 
   /** Shows a masked CNIC or bank account number to someone allowed to see that section. Logged EVERY time. */
-  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account' | 'salary', client: RequestInfo): Promise<{ value: string; allowances?: string }> {
+  async reveal(actor: Actor, empId: string, field: 'cnic' | 'account' | 'salary', client: RequestInfo, sessionId: string | null = null): Promise<{ value: string; allowances?: string }> {
     const target = await this.requireTarget(empId);
     const access = await this.accessFor(actor, target);
     const allowed = field === 'cnic' ? access.revealCnic : access.revealPay;
     if (!allowed) return this.deny(actor, 'reveal_not_allowed', empId, client);
+    // Bank details and salary need a recent "confirm again" (plan section 6).
+    if (field !== 'cnic') await this.requireStepUp(actor, sessionId, field === 'account' ? 'reveal_account' : 'reveal_salary', empId, client);
     const label = { cnic: 'CNIC', account: 'bank account', salary: 'salary' }[field];
     let value: string;
     if (field === 'salary') {
@@ -306,7 +310,8 @@ export class PeopleService {
   async updateJob(actor: Actor, empId: string, dto: UpdateJobRequest, client: RequestInfo): Promise<ProfileResponse> {
     const target = await this.requireTarget(empId);
     const access = await this.accessFor(actor, target);
-    const wantsStructure = dto.level !== undefined || dto.reportsToEmpId !== undefined;
+    // A form that sends the current level and manager back unchanged is not asking to change them.
+    const wantsStructure = (dto.level !== undefined && dto.level !== target.level.number) || (dto.reportsToEmpId !== undefined && dto.reportsToEmpId !== (target.reportsTo?.empId ?? null));
     const wantsFields = dto.joiningDate !== undefined || dto.type !== undefined || dto.weeklyCapacityHours !== undefined;
 
     if (dto.status !== undefined && dto.status !== target.status) {
@@ -403,10 +408,11 @@ export class PeopleService {
   }
 
   /** Pay section: the Director only (never their own). */
-  async updatePay(actor: Actor, empId: string, dto: UpdatePayRequest, client: RequestInfo): Promise<ProfileResponse> {
+  async updatePay(actor: Actor, empId: string, dto: UpdatePayRequest, client: RequestInfo, sessionId: string | null = null): Promise<ProfileResponse> {
     const target = await this.requireTarget(empId);
     const access = await this.accessFor(actor, target);
     if (!access.edit.pay) return this.deny(actor, 'pay_edit_not_allowed', empId, client);
+    await this.requireStepUp(actor, sessionId, 'edit_pay', empId, client);
 
     await this.prisma.$transaction(async (tx) => {
       const current = target.pay;
@@ -492,6 +498,13 @@ export class PeopleService {
       officialEmail: target.officialEmail,
       hasPhoto: !!target.photoKey,
     };
+  }
+
+  /** Risky actions need the password (and code) confirmed again in this session within the last 5 minutes. */
+  private async requireStepUp(actor: Actor, sessionId: string | null, action: string, empId: string, client: RequestInfo): Promise<void> {
+    if (await this.sessions.hasRecentStepUp(sessionId)) return;
+    await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: empId, outcome: 'denied', reason: 'step_up_required', details: { attempted: action }, ...client });
+    throw new ForbiddenException({ statusCode: 403, code: 'step_up_required', message: 'Confirm your password again to do this' });
   }
 
   private async deny(actor: Actor, reason: string, targetEmpId: string, client: RequestInfo): Promise<never> {

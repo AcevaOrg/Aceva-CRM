@@ -172,6 +172,21 @@ export class SessionService {
     }
   }
 
+/** How long a "confirm again" stays valid. */
+  static readonly STEP_UP_VALID_MS = 5 * 60_000;
+
+  /** The person has confirmed their password (and code) again in this session. */
+  async markStepUp(sessionId: string): Promise<void> {
+    await this.prisma.session.updateMany({ where: { id: sessionId, revokedAt: null }, data: { stepUpAt: this.clock.now() } });
+  }
+
+  /** True if this session confirmed again within the last 5 minutes (checked in PostgreSQL, the permanent record). */
+  async hasRecentStepUp(sessionId: string | null): Promise<boolean> {
+    if (!sessionId) return false;
+    const row = await this.prisma.session.findFirst({ where: { id: sessionId, revokedAt: null }, select: { stepUpAt: true } });
+    return !!row?.stepUpAt && this.clock.now().getTime() - row.stepUpAt.getTime() <= SessionService.STEP_UP_VALID_MS;
+  }
+
   /** Ends one session everywhere and tells Module 4. Safe to call twice. */
   async end(sessionId: string, reason: EndReason): Promise<boolean> {
     const row = await this.prisma.session.findUnique({

@@ -136,3 +136,15 @@ export interface TwoFactorStatus {
 }
 
 export const empIdForAuth = empIdSchema;
+
+/** POST /auth/step-up: confirm the password (and the authenticator code, for people who use one) again before a risky action. */
+export const stepUpRequestSchema = z.object({
+  password: z.string().min(1).max(200),
+  code: z.string().regex(/^\d{6}$/, 'The code has 6 digits').optional(),
+});
+export type StepUpRequest = z.infer<typeof stepUpRequestSchema>;
+export interface StepUpResponse {
+  ok: true;
+  /** How long the confirmation counts, in seconds. */
+  validForSec: number;
+}

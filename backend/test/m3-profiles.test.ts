@@ -58,6 +58,7 @@ describe('M3 staff directory (Basic information: everyone)', () => {
 describe('M3 pay and personal details are set by the right people', () => {
   it('HR enters personal details (including the CNIC) and the Director enters pay', async () => {
     await t.as(HR).patch(`/api/v1/employees/${DEV1}/personal`).send({ cnic: '42101-1234567-1', phone: '+92 300 1234567', homeAddress: 'House 12, Block B, Dadu', emergencyContact: { name: 'Imran Khan', relation: 'Father', phone: '+92 301 7654321' } }).expect(200);
+    await t.stepUp(DIRECTOR);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 300000, allowances: 8000, bankName: 'Bank Alfalah', accountNumber: 'PK36ALFH55019987123344', reason: 'Starting salary' }).expect(200);
     // the Director's own pay, so own-pay visibility can be checked
     await t.as(OWNER).get(`/api/v1/employees/${DIRECTOR}`).expect(200);
@@ -133,6 +134,7 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
     await me.patch(`/api/v1/employees/${DEV1}/job`).send({ type: 'part_time', reason: 'I would like fewer hours' }).expect(403);
     await me.patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 999999, reason: 'I deserve it' }).expect(403);
     await me.patch(`/api/v1/employees/${DEV1}/job`).send({ level: 4, reason: 'promote myself please' }).expect(403);
+    await t.stepUp(DIRECTOR);
     expect((await t.as(DIRECTOR).post(`/api/v1/employees/${DEV1}/reveal`).send({ field: 'salary' }).expect(200)).body.value).toBe('300000.00');
   });
 
@@ -151,11 +153,13 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
   });
 
   it('only the Director changes pay, never their own, and HR cannot', async () => {
+    await t.stepUp(DIRECTOR);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 320000, reason: 'Annual review' }).expect(200);
     await t.as(HR).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'HR may not change pay' }).expect(403);
     await t.as(CEO).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'CEO may not change pay' }).expect(403);
     await t.as(FINANCE).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'Finance may not change pay' }).expect(403);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DIRECTOR}/pay`).send({ baseSalary: 999999, reason: 'Raise for myself' }).expect(403);
+    await t.stepUp(DIRECTOR);
     expect((await t.as(DIRECTOR).post(`/api/v1/employees/${DEV1}/reveal`).send({ field: 'salary' }).expect(200)).body.value).toBe('320000.00');
     expect(await denied('pay_edit_not_allowed')).toBeGreaterThanOrEqual(5);
   });
@@ -209,6 +213,7 @@ describe('M3 every change keeps the old value (who, when, old, new)', () => {
 
   it('keeps the old CNIC and bank account encrypted, and shows them masked', async () => {
     await t.as(HR).patch(`/api/v1/employees/${DEV1}/personal`).send({ cnic: '42101-7654321-9' }).expect(200);
+    await t.stepUp(DIRECTOR);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/pay`).send({ accountNumber: 'PK99NEWB00112233445566', reason: 'Changed bank' }).expect(200);
     const history = (await profile(DIRECTOR)).history as Array<{ field: string; oldValue: string; newValue: string }>;
     const cnic = history.find((h) => h.field === 'CNIC' && h.oldValue !== '—')!;
@@ -241,14 +246,28 @@ describe('M3 every change keeps the old value (who, when, old, new)', () => {
   });
 });
 
+describe('M3 who is offered the Job form', () => {
+  const canEditJob = async (viewer: string, target: string) => (await profile(viewer, target)).access.edit.job as boolean;
+
+  it('Director, HR, Owner and CEO get it for people below them; nobody gets it for themselves, upward or sideways', async () => {
+    for (const who of [DIRECTOR, HR, CEO, OWNER]) expect(await canEditJob(who, DEV1), who).toBe(true);
+    for (const who of [DIRECTOR, HR, CEO, OWNER]) expect(await canEditJob(who, who), who).toBe(false); // never their own
+    expect(await canEditJob(HR, DIRECTOR)).toBe(false); // upward
+    expect(await canEditJob(DIRECTOR, CEO)).toBe(false); // upward
+    for (const who of [DEV2, SALES1, CTO, FINANCE, DEV1]) expect(await canEditJob(who, DEV1), who).toBe(false); // peers, the manager, the person themself
+  });
+});
+
 describe('M3 revealing masked values', () => {
   const reveal = (viewer: string, field: 'cnic' | 'account', target = DEV1) => t.as(viewer).post(`/api/v1/employees/${target}/reveal`).send({ field });
 
   it('shows the full value to someone allowed to see that section, and logs every reveal', async () => {
     const before = await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } });
     expect((await reveal(DIRECTOR, 'cnic').expect(200)).body.value).toBe('42101-7654321-9');
+    await t.stepUp(DIRECTOR);
     expect((await reveal(DIRECTOR, 'account').expect(200)).body.value).toBe('PK99NEWB00112233445566');
     expect((await reveal(HR, 'cnic').expect(200)).body.value).toBe('42101-7654321-9');
+    await t.stepUp(DEV1);
     expect((await reveal(DEV1, 'account').expect(200)).body.value).toBe('PK99NEWB00112233445566'); // their own
     expect(await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } })).toBe(before + 4);
     const entry = await prisma.auditLog.findFirstOrThrow({ where: { action: 'employee.sensitive.revealed', targetId: DEV1, actor: { empId: HR } }, include: { actor: true } });
@@ -262,11 +281,13 @@ describe('M3 revealing masked values', () => {
     await reveal(CTO, 'cnic').expect(403);
     await reveal(CTO, 'account').expect(403);
     await reveal(FINANCE, 'cnic').expect(403); // Finance sees pay, not personal details
+    await t.stepUp(FINANCE);
     expect((await reveal(FINANCE, 'account').expect(200)).body.value).toBe('PK99NEWB00112233445566');
   });
 
   it('logs a salary reveal too, and only for people allowed to see pay', async () => {
     const before = await prisma.auditLog.count({ where: { action: 'employee.sensitive.revealed' } });
+    await t.stepUp(DIRECTOR);
     expect((await reveal(DIRECTOR, 'salary' as 'cnic').expect(200)).body).toEqual({ value: '320000.00', allowances: '8000.00' });
     await reveal(HR, 'salary' as 'cnic').expect(403);
     await reveal(CTO, 'salary' as 'cnic').expect(403);

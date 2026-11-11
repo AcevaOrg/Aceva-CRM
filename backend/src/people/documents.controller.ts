@@ -56,8 +56,8 @@ export class DocumentsController {
   @Delete('documents/:documentId')
   @Authenticated()
   @ApiOperation({ summary: 'Archive a document (kept, never deleted)' })
-  archive(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Param('documentId', new ParseUUIDPipe()) documentId: string, @ClientInfo() client: RequestInfo) {
-    return this.documents.archive(actor, empId, documentId, client);
+  archive(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Param('documentId', new ParseUUIDPipe()) documentId: string, @Body() body: { reason?: string } | undefined, @ClientInfo() client: RequestInfo) {
+    return this.documents.archive(actor, empId, documentId, client, typeof body?.reason === 'string' ? body.reason.slice(0, 500) : null);
   }
 
   @Post('photo')

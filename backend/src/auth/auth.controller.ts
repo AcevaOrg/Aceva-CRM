@@ -9,6 +9,7 @@ import {
   forgotPasswordRequestSchema,
   loginRequestSchema,
   resetPasswordRequestSchema,
+  stepUpRequestSchema,
   verifyTwoFactorRequestSchema,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
@@ -22,6 +23,7 @@ import { SessionIdentityProvider } from './session/session-identity.provider';
 import { clearCookieOptions, SESSION_COOKIE, sessionCookieOptions } from './session/session-cookie';
 
 class LoginDto extends createZodDto(loginRequestSchema) {}
+class StepUpDto extends createZodDto(stepUpRequestSchema) {}
 class VerifyDto extends createZodDto(verifyTwoFactorRequestSchema) {}
 class DisableDto extends createZodDto(disableTwoFactorRequestSchema) {}
 class ChangePasswordDto extends createZodDto(changePasswordRequestSchema) {}
@@ -95,6 +97,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Check the 6-digit code on the server. The first correct code also confirms the set-up.' })
   twoFactorVerify(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Body() body: VerifyDto, @ClientInfo() client: RequestInfo) {
     return this.auth.twoFactorVerify(actor, sessionId ?? '', body.code, client);
+  }
+
+  @Post('step-up')
+  @Authenticated()
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Confirm again: password (and authenticator code) checked on the server; risky actions then work for 5 minutes' })
+  stepUp(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Body() body: StepUpDto, @ClientInfo() client: RequestInfo) {
+    return this.auth.stepUp(actor, sessionId ?? '', body, client);
   }
 
   @Post('2fa/disable')

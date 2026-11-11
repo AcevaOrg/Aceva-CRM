@@ -41,6 +41,7 @@ No login needed. `{ "status": "ok", "database": "up", "time": "...", "version": 
 | `DELETE /auth/sessions/:id` | logged in | Log out one of my other devices (someone else's session looks like it does not exist) |
 | `DELETE /auth/sessions` | logged in | Log out all my other devices |
 | `GET /auth/login-history` | logged in | My recent logins and failed attempts |
+| `POST /auth/step-up` | logged in | **Confirm again.** Body `{ password, code? }`. The server checks the password and, for people with an authenticator, the current code (a code works once). Wrong answers get one message; 5 wrong in 15 minutes end the session. A correct answer allows risky actions for 5 minutes in this session only (`validForSec: 300`). Needed for bank-account reveal, salary reveal and pay edits (otherwise 403 `step_up_required`) |
 | `POST /auth/employees/:empId/unlock` | `auth.unlock_account`, above them in the line or HR duty | Unlock a locked account |
 | `POST /auth/employees/:empId/force-logout` | `session.force_logout`, below the caller | Ends every session on every device at once |
 | `POST /auth/employees/:empId/reset-2fa` | `auth.reset_two_factor`: Owner/CEO (anyone below), Director (below them in the line), HR duty (below them in the line). Never yourself, same level or upward | Body `{ reason }`. Lost authenticator phone: deletes the old secret, ends every session, and the person must enrol a new authenticator at next login. Audited (`auth.2fa.reset`). |

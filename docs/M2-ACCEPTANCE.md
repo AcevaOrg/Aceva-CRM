@@ -46,3 +46,4 @@ Backend tests are in `backend/test/m2-*.test.ts` and `backend/src/auth/primitive
   first-login wizard already reads the name from the server.
 - **GitHub Actions** has still never run on GitHub; Redis was added to its definition but that is untested.
 | K | Lost authenticator phone: Owner/CEO reset anyone below, Director those below them, HR duty those in its scope; never self, same level or upward; reason required; audited; sessions revoked; old secret invalidated; fresh enrolment at next login | Done and tested (added with Module 3) | `m2-reset-2fa` (9 tests), `docs/API.md` |
+| L | Confirm again for risky actions (plan section 6): password and 2FA code checked on the server, valid 5 minutes per session | Done and tested (added with Module 3; enforced for bank details, salary and pay edits) | `m3-step-up` (9 tests), e2e |

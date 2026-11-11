@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
+import { E2E_FILES } from './paths';
 
 /**
  * Browser tests for the screens that are connected to the real API (Module 1 now; M2 and M3 later).
@@ -9,6 +10,7 @@ import { defineConfig } from '@playwright/test';
   * People log in through the real login screen (Emp-ID, password, authenticator code) and the API sees their
  * session cookie. Requires PostgreSQL and Redis to be running.
  */
+rmSync(E2E_FILES, { recursive: true, force: true }); // uploaded test files belong to one run
 if (existsSync('backend/.env')) process.loadEnvFile('backend/.env');
 const testDb = process.env.TEST_DATABASE_URL;
 if (!testDb || !new URL(testDb).pathname.includes('test')) {
@@ -46,6 +48,7 @@ export default defineConfig({
         DATABASE_URL: testDb,
         CORS_ORIGIN: 'http://localhost:3100',
         REDIS_KEY_PREFIX: 'aceva:e2e:',
+        FILE_STORAGE_ROOT: E2E_FILES,
         TRUST_PROXY: '0',
       },
     },

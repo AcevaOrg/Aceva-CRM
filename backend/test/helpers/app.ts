@@ -42,6 +42,8 @@ export interface TestApp {
   freshIp: () => string;
   /** The current 6-digit code for a person whose authenticator was set up through signIn. */
   codeFor: (empId: string) => string;
+  /** "Confirm again" for a signed-in demo person: the real password and, where they use one, a fresh authenticator code. */
+  stepUp: (empId: string) => Promise<void>;
   /** A raw request to the server, no identity at all. */
   anonymous: () => Client;
   close: () => Promise<void>;
@@ -163,6 +165,18 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
       const person = personas.get(empId);
       if (!person) throw new Error(`${empId} is not logged in: call signInAll() in beforeAll`);
       return person;
+    },
+    stepUp: async (empId) => {
+      const person = personas.get(empId);
+      if (!person) throw new Error(`${empId} is not logged in: call signInAll() in beforeAll`);
+      const body: { password: string; code?: string } = { password: TEST_PASSWORD };
+      if (secrets.has(empId)) {
+        const step = () => Math.floor(clock.now().getTime() / 30_000);
+        if (lastStep.get(empId) === step()) clock.advance(30_000);
+        lastStep.set(empId, step());
+        body.code = codeFor(empId);
+      }
+      await person.post('/api/v1/auth/step-up').send(body).expect(200);
     },
     anonymous: () => clientWith(app, (r) => r),
     close: () => app.close(),

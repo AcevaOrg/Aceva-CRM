@@ -92,13 +92,13 @@ export class DocumentsService {
   }
 
   /** Documents are archived, never deleted (the file stays in private storage). */
-  async archive(actor: Actor, empId: string, documentId: string, client: RequestInfo): Promise<{ ok: true }> {
+  async archive(actor: Actor, empId: string, documentId: string, client: RequestInfo, reason: string | null = null): Promise<{ ok: true }> {
     const target = await this.people.requireTarget(empId);
     const access = await this.people.accessFor(actor, target);
     if (!access.edit.documents) return this.deny(actor, 'document_upload_not_allowed', empId, client);
     const { count } = await this.prisma.employeeDocument.updateMany({ where: { id: documentId, employeeId: target.id, archivedAt: null }, data: { archivedAt: new Date(), updatedBy: actor.id } });
     if (count === 0) throw new NotFoundException('Document not found');
-    await this.audit.record({ actorId: actor.id, action: 'employee.document.archived', targetType: 'employee', targetId: empId, details: { documentId }, ...client });
+    await this.audit.record({ actorId: actor.id, action: 'employee.document.archived', targetType: 'employee', targetId: empId, reason, details: { documentId }, ...client });
     return { ok: true };
   }
 

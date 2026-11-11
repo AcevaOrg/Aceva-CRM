@@ -237,7 +237,7 @@ export function JobSection({ view }: { view: ProfileView }) {
           })}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Level" htmlFor="j-level" hint={canMoveLevel ? "The role follows the level and the department." : "Only the Director changes levels."}>
+            <Field label="Level" htmlFor="j-level" hint={canMoveLevel ? "The role follows the level and the department." : isLive("m3") ? "Only the Owner or CEO change levels." : "Only the Director changes levels."}>
               {canMoveLevel ? (
                 <NativeSelect id="j-level" {...form.register("level", { valueAsNumber: true, onChange: () => form.setValue("reportsTo", "", { shouldDirty: true }) })}>
                   {levelOptions.map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
@@ -248,7 +248,7 @@ export function JobSection({ view }: { view: ProfileView }) {
                 </div>
               )}
             </Field>
-            <Field label="Reports to" htmlFor="j-boss" hint={canMoveLevel ? REPORTS_TO_HINT[level] : "Only the Director changes reporting lines."}>
+            <Field label="Reports to" htmlFor="j-boss" hint={canMoveLevel ? REPORTS_TO_HINT[level] : isLive("m3") ? "Only the Owner or CEO change reporting lines." : "Only the Director changes reporting lines."}>
               {canMoveLevel ? (
                 <EmployeeSelect
                   id="j-boss"
@@ -523,6 +523,8 @@ export function PaySection({ view }: { view: ProfileView }) {
 export function DocumentsSection({ view }: { view: ProfileView }) {
   const e = view.employee;
   const upload = useUploadDocument();
+  const askReason = useReason();
+  const qc = useQueryClient();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [kind, setKind] = React.useState<DocumentKind>("certificate");
   const docs = view.documents ?? [];
@@ -577,6 +579,26 @@ export function DocumentsSection({ view }: { view: ProfileView }) {
               />
               <p className="flex items-center gap-2 px-1 text-[11.5px] text-muted-foreground">
                 <Badge tone="outline">{DOC_LABEL[d.kind]}</Badge> Added {formatDate(d.uploadedAt)}
+                {isLive("m3") && view.access.edit.documents && (
+                  <button
+                    type="button"
+                    className="ml-auto rounded px-1.5 py-0.5 text-[11.5px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label={`Archive ${d.fileName}`}
+                    onClick={async () => {
+                      const reason = await askReason({ title: `Archive ${d.fileName}?`, description: "It disappears from the list. The file is kept, never deleted.", confirmLabel: "Archive", placeholder: "Why is it archived?" });
+                      if (!reason) return;
+                      try {
+                        await livePeopleApi.archiveDocument(e.empId, d.id, reason);
+                        qc.invalidateQueries({ queryKey: ["people"] });
+                        toast.success(`${d.fileName} archived`);
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : "Couldn't archive the file.");
+                      }
+                    }}
+                  >
+                    Archive
+                  </button>
+                )}
               </p>
             </li>
           ))}

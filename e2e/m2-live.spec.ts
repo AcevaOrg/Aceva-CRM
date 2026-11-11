@@ -142,7 +142,7 @@ test('My devices lists where I am signed in and signs out the others', async ({ 
   await a.page.getByRole('button', { name: 'Sign out all other devices' }).click();
   await expect(a.page.getByText(/signed in on 1 device\b/)).toBeVisible();
   await b.page.goto('/tasks');
-  await b.page.waitForURL(/\/login/); // the other device is signed out at once
+  await expect(b.page).toHaveURL(/\/login/); // the other device is signed out at once (polled: the redirect can cancel a page-load wait)
   await a.page.goto('/account?tab=devices');
   await expect(a.page.getByText('This device')).toBeVisible(); // this one is still in
   await a.context.close();

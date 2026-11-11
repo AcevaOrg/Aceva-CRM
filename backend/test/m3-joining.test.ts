@@ -202,6 +202,7 @@ describe('M3 joining: who may hire at which level', () => {
     const profile = (await t.as(DIRECTOR).get(`/api/v1/employees/${empId}`).expect(200)).body;
     expect(profile.pay).toMatchObject({ salaryOnFile: true, bankName: 'HBL' });
     expect(JSON.stringify(profile)).not.toMatch(/150000|5000\.00/); // the salary is only shown by the logged reveal
+    await t.stepUp(DIRECTOR);
     expect((await t.as(DIRECTOR).post(`/api/v1/employees/${empId}/reveal`).send({ field: 'salary' }).expect(200)).body).toEqual({ value: '150000.00', allowances: '5000.00' });
     expect(profile.personal.cnicMasked).toMatch(/^\*+3213$/);
     const raw = await prisma.$queryRaw<Array<{ cnic_encrypted: string; bank_account_encrypted: string }>>`
