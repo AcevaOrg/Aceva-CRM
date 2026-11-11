@@ -30,3 +30,11 @@ backend/src/generated/
 test-results/
 playwright-report/
 e2e/.auth/
+
+# npm download caches must never be committed. The cache lives in the user-level npm config (~/.npmrc), not in the repo.
+npm-cache/
+.npm/
+_cacache/
+# a Windows cache path written literally on Linux CI (the old project .npmrc said cache=E:\npm-cache)
+E:*/
+/E:*
