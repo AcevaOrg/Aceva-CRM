@@ -37,7 +37,7 @@ export const REPORTS_TO_HINT: Record<Level, string> = {
  * People who manage others and can approve for them: the CEO, the Director, the CTO and Level 4 heads and leads.
  * The Owner oversees everything but approves nothing.
  */
-export const isManager = (e: Pick<Employee, "role">) => e.role === "ceo" || e.role === "director" || e.role === "cto" || e.role === "lead";
+export const isManager = (e: Pick<Employee, "role">) => e.role === "ceo" || e.role === "director" || e.role === "cto" || e.role === "level4_default";
 
 /**
  * Maker-checker on the roles matrix (only roles.manage, the Director, edits it):

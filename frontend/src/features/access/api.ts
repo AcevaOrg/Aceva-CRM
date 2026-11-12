@@ -51,7 +51,7 @@ const notInLive = (what: string): never => {
 };
 
 const KNOWN_PERMISSIONS = new Set<string>(PERMISSIONS);
-const ROLE_KEY_FROM_API: Record<string, RoleKey> = { owner: "owner", ceo: "ceo", director: "director", cto: "cto", sales: "sales", level4_default: "lead", employee: "developer" };
+const ROLE_KEY_FROM_API: Record<string, RoleKey> = { owner: "owner", ceo: "ceo", director: "director", cto: "cto", sales: "sales", level4_default: "level4_default", employee: "developer" };
 
 export const accessApi = {
   /** GET /org/tree */

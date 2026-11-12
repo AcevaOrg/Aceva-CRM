@@ -19,10 +19,10 @@ class UnprotectedController {
 
 // Demo people (see prisma/seed-data.ts)
 const OWNER = 'ACV-0001';
-const CEO = 'ACV-0002';
+let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
-const HR = 'ACV-0015';
+let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const FINANCE = 'ACV-0010';
 const SALES1 = 'ACV-0009';
 const SALES2 = 'ACV-0012';
@@ -35,6 +35,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp({ extraControllers: [UnprotectedController] });
   await t.signInAll();
+  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
   prisma = createTestPrisma();
 });
 afterAll(async () => {

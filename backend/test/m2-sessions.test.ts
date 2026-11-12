@@ -28,7 +28,7 @@ class FinanceScreenController {
 }
 
 const OWNER = 'ACV-0001';
-const CEO = 'ACV-0002';
+let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 const FINANCE = 'ACV-0010';
@@ -52,6 +52,8 @@ let sessions: SessionService;
 beforeAll(async () => {
   t = await createTestApp({ extraControllers: [FinanceScreenController] });
   prisma = createTestPrisma();
+  await t.ensureFixtures();
+  CEO = t.fixtures.CEO;
   redis = t.app.get(RedisService);
   sessions = t.app.get(SessionService);
 });

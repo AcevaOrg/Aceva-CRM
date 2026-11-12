@@ -93,7 +93,7 @@ const CTO: Permission[] = [
 ];
 
 /** L4 Department Head / Team Lead (default Level 4 role): own work plus a team lead's basics. Extra duties add more. */
-const LEAD: Permission[] = [...BASE, "standin.manage", "task.assign", "task.review", "task.view_team"];
+const LEVEL4_DEFAULT: Permission[] = [...BASE, "standin.manage", "task.assign", "task.review", "task.view_team"];
 
 /** L4 Sales: own leads, deals, follow-ups and daily report. */
 const SALES: Permission[] = [...BASE, "sales.own"];
@@ -112,7 +112,7 @@ const DEVELOPER: Permission[] = [...BASE];
 export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
   owner: OWNER,
   ceo: CEO,
-  lead: LEAD,
+  level4_default: LEVEL4_DEFAULT,
   director: DIRECTOR,
   cto: CTO,
   sales: SALES,
@@ -134,7 +134,7 @@ export const DUTY_PERMISSIONS: Record<Duty, Permission[]> = {
 export const ROLE_LABEL: Record<RoleKey, string> = {
   owner: "Owner",
   ceo: "CEO",
-  lead: "Department Head / Team Lead",
+  level4_default: "Department Head / Team Lead",
   director: "Director",
   cto: "CTO",
   sales: "Sales",

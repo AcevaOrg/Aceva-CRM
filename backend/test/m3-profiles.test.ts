@@ -6,10 +6,10 @@ import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
 const OWNER = 'ACV-0001';
-const CEO = 'ACV-0002';
+let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
-const HR = 'ACV-0015';
+let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const FINANCE = 'ACV-0010';
 const SALES1 = 'ACV-0009';
 const DEV1 = 'ACV-0006'; // the person whose profile most tests look at (reports to the CTO)
@@ -22,6 +22,7 @@ let crypto: CryptoService;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
+  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
   prisma = createTestPrisma();
   crypto = t.app.get(CryptoService);
 });

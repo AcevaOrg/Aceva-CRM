@@ -59,26 +59,39 @@ describe('seed data integrity', () => {
     expect(await prisma.office.count()).toBe(OFFICES.length);
   });
 
-  it('creates the demo people with the roster Emp-IDs (ACV-0005 stays unused)', async () => {
+  it('creates the demo people with the roster Emp-IDs (ACV-0002, ACV-0005 and ACV-0015 stay unused)', async () => {
     const employees = await prisma.employee.findMany({ orderBy: { empId: 'asc' } });
     expect(employees).toHaveLength(DEMO_EMPLOYEES.length);
-    expect(employees.map((e) => e.empId)).toEqual(
-      DEMO_EMPLOYEES.map((e) => e.empId),
-    );
+    expect(employees.map((e) => e.empId)).toEqual(DEMO_EMPLOYEES.map((e) => e.empId));
+    for (const unused of ['ACV-0002', 'ACV-0005', 'ACV-0015']) expect(employees.map((e) => e.empId)).not.toContain(unused);
   });
 
-  it('has Owner, CEO, Director and CTO as four separate people at the plan levels', async () => {
+  it('seeds the Owner, Director and CTO; the CEO is an official level and role, but the demo company has no CEO person', async () => {
     const byRole = async (key: string) =>
       prisma.employee.findFirstOrThrow({ where: { role: { key } }, include: { level: true, reportsTo: true } });
     const owner = await byRole('owner');
-    const ceo = await byRole('ceo');
     const director = await byRole('director');
     const cto = await byRole('cto');
-    expect([owner.level.number, ceo.level.number, director.level.number, cto.level.number]).toEqual([1, 2, 3, 3]);
+    expect([owner.level.number, director.level.number, cto.level.number]).toEqual([1, 3, 3]);
     expect(owner.reportsToId).toBeNull();
-    expect(ceo.reportsToId).toBe(owner.id);
-    expect(director.reportsToId).toBe(ceo.id);
+    expect(director.reportsToId).toBe(owner.id); // no CEO in the demo seed, so the Director reports to the Owner
     expect(cto.reportsToId).toBe(director.id);
+    // Level 2 and the CEO role still exist (the five official levels are unchanged); nobody holds it yet.
+    expect((await prisma.level.findMany({ orderBy: { number: 'asc' } })).map((l) => l.number)).toEqual([1, 2, 3, 4, 5]);
+    expect((await prisma.role.findUniqueOrThrow({ where: { key: 'ceo' }, include: { level: true } })).level.number).toBe(2);
+    expect(await prisma.employee.count({ where: { role: { key: 'ceo' } } })).toBe(0);
+  });
+
+  it('has no role called "lead" (the default Level 4 role is level4_default) and every employee has a valid role', async () => {
+    expect(await prisma.role.findUnique({ where: { key: 'lead' } })).toBeNull();
+    expect(ROLES.map((r) => r.key)).not.toContain('lead');
+    const level4 = await prisma.role.findUniqueOrThrow({ where: { key: 'level4_default' }, include: { level: true, rolePermissions: true } });
+    expect(level4.level.number).toBe(4);
+    expect(level4.isDefault).toBe(true);
+    expect(level4.rolePermissions.length).toBeGreaterThan(0);
+    const roleLevelMismatch = await prisma.$queryRaw<Array<{ emp_id: string }>>`
+      SELECT e.emp_id FROM employees e JOIN roles r ON r.id = e.role_id WHERE r.level_id <> e.level_id`;
+    expect(roleLevelMismatch).toEqual([]);
   });
 
   it('gives every employee except the Owner a reporting person', async () => {
@@ -86,14 +99,10 @@ describe('seed data integrity', () => {
     expect(without.map((e) => e.role.key)).toEqual(['owner']);
   });
 
-  it('has one clearly labelled demo HR employee and a Finance-duty employee', async () => {
-    const hr = await prisma.employee.findMany({ where: { fullName: { contains: 'DEMO HR' } } });
-    expect(hr).toHaveLength(1);
+  it('has a Director with the HR duty (no separate demo HR person) and a Finance-duty employee', async () => {
     const holders = async (duty: string) =>
-      (await prisma.employeeDuty.findMany({ where: { duty: { key: duty }, endedAt: null }, include: { employee: true } })).map(
-        (d) => d.employee.fullName,
-      );
-    expect(await holders('hr')).toContain(hr[0].fullName);
+      (await prisma.employeeDuty.findMany({ where: { duty: { key: duty }, endedAt: null }, include: { employee: true } })).map((d) => d.employee.empId);
+    expect(await holders('hr')).toEqual(['ACV-0003']);
     expect((await holders('finance')).length).toBe(1);
   });
 
@@ -180,12 +189,12 @@ describe('Emp-ID rules', () => {
     expect(new Set(ids).size).toBe(15);
     ids.forEach((id) => expect(id).toMatch(/^ACV-\d{4,}$/));
     // Every new ID is after the seeded ones.
-    expect([...ids].sort()[0] > 'ACV-0015').toBe(true); // the sequence continues after the roster
+    expect([...ids].sort()[0] > 'ACV-0014').toBe(true); // the sequence continues after the roster
   });
 
   it('never hands out an Emp-ID that the demo roster already uses', async () => {
     const [row] = await prisma.$queryRaw<Array<{ last_value: bigint }>>`SELECT last_value FROM emp_id_seq`;
-    expect(Number(row.last_value)).toBeGreaterThanOrEqual(15);
+    expect(Number(row.last_value)).toBeGreaterThanOrEqual(14);
   });
 
   it('is never reused even after a rolled-back creation (gaps are fine)', async () => {
@@ -243,7 +252,7 @@ describe('database constraints', () => {
     const dates = await sqlError(`
       INSERT INTO stand_ins (manager_id, stand_in_id, starts_on, ends_on)
       SELECT m.id, s.id, '2026-12-05', '2026-12-01' FROM employees m, employees s
-      WHERE m.emp_id = 'ACV-0004' AND s.emp_id = 'ACV-0015'`);
+      WHERE m.emp_id = 'ACV-0004' AND s.emp_id = 'ACV-0006'`);
     expect(dates).toMatch(/stand_ins_dates_ordered/);
   });
 

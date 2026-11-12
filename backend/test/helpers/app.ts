@@ -11,6 +11,9 @@ import { configureApp } from '../../src/app.setup';
 import { Clock } from '../../src/common/clock';
 import { Mailer } from '../../src/mail/mailer';
 import { RedisService } from '../../src/redis/redis.service';
+import { seedDevPasswords } from '../../prisma/seed-dev-passwords';
+import { createFixtureStaff } from './people';
+import { createTestPrisma } from './prisma';
 import { testDatabaseUrl } from './env';
 import { FakeClock, MemoryMailer } from './fakes';
 
@@ -32,7 +35,11 @@ export interface TestApp {
   storageRoot: string;
   /** A request made "as" a demo person with a real session. Call signInAll() first. */
   as: (empId: string | null) => Client;
-  /** Logs every demo person in for real (password, and the authenticator code where 2FA is required). */
+  /** Test-only CEO and HR officer (not in the demo seed). Filled by signInAll(). */
+  fixtures: { CEO: string; HR: string };
+  /** Creates the test-only CEO and HR officer (and logins for them) without signing anyone in. */
+  ensureFixtures: () => Promise<void>;
+  /** Creates the test-only CEO and HR officer, then logs every demo person and them in for real (password, and the authenticator code where 2FA is required). */
   signInAll: () => Promise<void>;
   /** A client with a real session: logs in with Emp-ID and password (and the authenticator code when needed). */
   signIn: (empId: string, options?: { password?: string; rememberMe?: boolean; ip?: string; userAgent?: string }) => Promise<SignedIn>;
@@ -146,8 +153,20 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
   };
 
   const personas = new Map<string, SignedIn>();
+  const fixtures = { CEO: '', HR: '' };
+  const ensureFixtures = async () => {
+    const prisma = createTestPrisma();
+    try {
+      Object.assign(fixtures, await createFixtureStaff(prisma));
+      await seedDevPasswords(prisma, TEST_PASSWORD);
+    } finally {
+      await prisma.$disconnect();
+    }
+  };
   const signInAll = async () => {
-    for (const person of DEMO_EMPLOYEES) personas.set(person.empId, await signIn(person.empId));
+    await ensureFixtures();
+    const everyone = [...DEMO_EMPLOYEES.map((p) => p.empId), fixtures.CEO, fixtures.HR];
+    for (const empId of everyone) personas.set(empId, await signIn(empId));
   };
 
   return {
@@ -159,6 +178,8 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
     rawLogin,
     freshIp,
     codeFor,
+    fixtures,
+    ensureFixtures,
     signInAll,
     as: (empId) => {
       if (!empId) return clientWith(app, (r) => r);

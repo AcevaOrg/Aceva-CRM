@@ -30,9 +30,17 @@ both listening on this computer only. PostgreSQL starts by itself as a Windows s
 | Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` |
 
 ## Signing in to the demo
-Everyone in the demo roster signs in with their Emp-ID (for example `ACV-0009`) and the `DEMO_PASSWORD` you chose. The Owner, CEO,
+Everyone in the demo roster signs in with their Emp-ID (for example `ACV-0009`) and the `DEMO_PASSWORD` you chose. The Owner,
 Director, CTO and the Finance person are asked to set up an authenticator app (Google or Microsoft Authenticator) on first login:
 scan the QR code on screen, then enter the 6-digit code.
+
+The demo roster has no CEO and no separate HR officer (the Director holds the HR duty). Level 2 (CEO) is still an official level and
+role. A CEO is added through the joining workflow when the company has one. The automated tests add a test-only CEO and HR officer
+to the test database only.
+
+The npm download cache is kept on `E:` through your user-level npm config (`npm config set cache E:
+pm-cache --location=user`),
+not in the repository.
 
 ## Not installed (on purpose)
 Docker and MinIO. Redis and Mailpit are installed as plain Windows programs (no admin rights, no services).

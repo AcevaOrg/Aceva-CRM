@@ -27,18 +27,14 @@ export const DEPARTMENTS: Department[] = [
 type Seed = Omit<Employee, "id" | "officialEmail" | "status" | "weeklyCapacityHours" | "type"> &
   Partial<Pick<Employee, "status" | "weeklyCapacityHours" | "type">> & { email: string };
 
-/* Emp-IDs are never reused (plan §6), so the roster keeps its original numbers; 0005 is not used. 0002 (CEO) and 0015 (demo HR) are the additions. */
+/* Emp-IDs are never reused (plan §6), so the roster keeps its original numbers; 0002 (the demo CEO), 0005 and 0015 (the demo HR officer) are not used. */
 const RAW: Seed[] = [
   // L1 Owner: sees everything, approves nothing
   { empId: "ACV-0001", name: "Hamza Qureshi", designation: "Owner and Founder", departmentId: "dep-mgmt", officeId: "off-dadu", email: "hamza", level: 1, role: "owner", duties: [], reportsTo: null, joiningDate: daysFromNow(-1460), avatarHue: 85 },
-  // L2 CEO: a different person from the Owner
-  { empId: "ACV-0002", name: "Ayesha Siddiqui", designation: "Chief Executive Officer", departmentId: "dep-mgmt", officeId: "off-dadu", email: "ayesha", level: 2, role: "ceo", duties: [], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1300), avatarHue: 330 },
   // L3 Director: the approver for the whole company; also HR duty and sales manager
-  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-mgmt", officeId: "off-dadu", email: "bilal", level: 3, role: "director", duties: ["hr", "sales_manager"], reportsTo: "ACV-0002", joiningDate: daysFromNow(-1100), avatarHue: 264 },
+  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-mgmt", officeId: "off-dadu", email: "bilal", level: 3, role: "director", duties: ["hr", "sales_manager"], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1100), avatarHue: 264 },
   // L3 CTO (reports to the Director: the one documented same-level line)
   { empId: "ACV-0004", name: "Omar Farooq", designation: "Chief Technology Officer", departmentId: "dep-eng", officeId: "off-dadu", email: "omar", level: 3, role: "cto", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-1050), avatarHue: 220 },
-  // L4 demo HR officer (HR duty): clearly labelled demo person
-  { empId: "ACV-0015", name: "Rabia Anwar (DEMO HR)", designation: "HR Officer", departmentId: "dep-hr", officeId: "off-dadu", email: "rabia", level: 4, role: "lead", duties: ["hr"], reportsTo: "ACV-0003", joiningDate: daysFromNow(-200), avatarHue: 10 },
   // L4 Sales (report to the Director)
   { empId: "ACV-0009", name: "Hira Baig", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "hira", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-300), avatarHue: 52 },
   { empId: "ACV-0012", name: "Kamran Javed", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-remote", email: "kamran", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-150), avatarHue: 15 },
@@ -69,8 +65,6 @@ export const EMPLOYEES: Employee[] = seedEmployees();
 
 /** Monthly pay (PKR) used by Payroll and the profile Pay tab. Highly confidential. */
 export const PAY: Record<string, { base: number; allowances: { name: string; amount: number }[]; bank: string; account: string }> = {
-  "ACV-0002": { base: 550000, allowances: [{ name: "Car", amount: 50000 }], bank: "Meezan Bank", account: "0101-0045870002" },
-  "ACV-0015": { base: 130000, allowances: [{ name: "Transport", amount: 8000 }], bank: "HBL", account: "1234-0000150015" },
   "ACV-0001": { base: 650000, allowances: [{ name: "Car", amount: 60000 }], bank: "Meezan Bank", account: "0101-0045872214" },
   "ACV-0003": { base: 450000, allowances: [{ name: "Car", amount: 40000 }], bank: "HBL", account: "1234-7865540921" },
   "ACV-0004": { base: 480000, allowances: [{ name: "Internet", amount: 10000 }], bank: "Meezan Bank", account: "0101-0045879931" },

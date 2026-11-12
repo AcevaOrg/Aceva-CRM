@@ -10,7 +10,7 @@ import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
 const DIRECTOR = 'ACV-0003';
-const HR = 'ACV-0015';
+let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const SALES1 = 'ACV-0009';
 const SALES2 = 'ACV-0012';
 const SALES3 = 'ACV-0014';
@@ -25,6 +25,8 @@ let auth: AuthService;
 beforeAll(async () => {
   t = await createTestApp();
   prisma = createTestPrisma();
+  await t.ensureFixtures();
+  HR = t.fixtures.HR;
   auth = t.app.get(AuthService);
 });
 afterAll(async () => {

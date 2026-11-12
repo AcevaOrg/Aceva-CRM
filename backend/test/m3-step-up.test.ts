@@ -7,7 +7,7 @@ import { resetTestDatabase } from './helpers/reset-db';
 
 /** "Confirm again" (plan section 6): checked on the server, and required for bank details, salary and pay edits. */
 const DIRECTOR = 'ACV-0003';
-const HR = 'ACV-0015';
+let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const DEV1 = 'ACV-0006';
 
 let t: TestApp;
@@ -16,6 +16,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
+  HR = t.fixtures.HR;
   prisma = createTestPrisma();
   await t.stepUp(HR); // HR enters personal details; Director enters pay
   await t.as(HR).patch(`/api/v1/employees/${DEV1}/personal`).send({ cnic: '42101-1234567-1' }).expect(200);

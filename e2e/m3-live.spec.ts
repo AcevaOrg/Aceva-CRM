@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { createTestPrisma } from '../backend/test/helpers/prisma';
 import { API, PASSWORD, apiAs, nextCode, openAs } from './auth-helpers';
-import { E2E_FILES } from './paths';
+import { E2E_FILES, FIXTURE_CEO, FIXTURE_HR } from './paths';
 
 /**
  * Module 3 (employee profiles, joining, leaving) driven through the real screens in Chromium, with the real backend,
@@ -13,9 +13,9 @@ import { E2E_FILES } from './paths';
  */
 const MAILPIT = 'http://127.0.0.1:8025/api/v1';
 const DIRECTOR = 'ACV-0003';
-const CEO = 'ACV-0002';
+const CEO = FIXTURE_CEO; // test-only CEO, added by reset-test-db.ts
 const OWNER = 'ACV-0001';
-const HR = 'ACV-0015';
+const HR = FIXTURE_HR; // test-only HR officer
 const FINANCE = 'ACV-0010';
 const PEER = 'ACV-0006';
 const HIRE_EMAIL = 'e2e.joiner@acevatech.com';
@@ -310,7 +310,7 @@ test('pay edit form: the Director edits through confirm-again and a reason; hist
   const attempts: Array<[string, string]> = [[HR, 'HR'], [CEO, 'CEO'], [OWNER, 'Owner'], [PEER, 'peer'], [FINANCE, 'finance']];
   for (const [who, label] of attempts) {
     const client = await apiAs(playwright, who);
-    if (['ACV-0001', 'ACV-0002', 'ACV-0010'].includes(who)) await apiStepUp(client, who); // prove it is the permission, not the missing confirmation
+    if ([OWNER, CEO, FINANCE].includes(who)) await apiStepUp(client, who); // prove it is the permission, not the missing confirmation
     const res = await client.patch(`employees/${hireId}/pay`, { baseSalary: 1, reason: `${label} must not change pay` });
     expect(res.status(), label).toBe(403);
   }

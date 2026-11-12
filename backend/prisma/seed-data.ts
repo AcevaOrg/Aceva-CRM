@@ -71,15 +71,15 @@ type DemoEmployee = {
 
 /**
  * The demo company, following the DEVELOPMENT PLAN's five levels:
- *   Level 1 Owner > Level 2 CEO > Level 3 Director > Level 3 CTO (same-level line, explicitly configured),
- *   Level 4 heads and leads (Sales, Finance, HR) report to the Director, Level 5 developers report to the CTO.
- * Emp-IDs match the frontend's demo roster (ACV-0005 stays unused, like a person who left); the CEO is ACV-0002
- * and the clearly labelled demo HR officer is ACV-0015.
+ *   Level 1 Owner > Level 3 Director > Level 3 CTO (same-level line, explicitly configured),
+ *   Level 4 heads and leads (Sales, Finance) report to the Director, Level 5 developers report to the CTO.
+ * Level 2 (CEO) is an official level and role, but the demo company has no CEO yet, so the Director reports to the Owner.
+ * The demo HR work is done by the Director, who holds the HR duty. Emp-IDs match the frontend's demo roster; ACV-0002, ACV-0005
+ * and ACV-0015 are not used (Emp-IDs are never renumbered or reused).
  */
 export const DEMO_EMPLOYEES: DemoEmployee[] = [
   { empId: 'ACV-0001', slug: 'owner', name: 'Hamza Qureshi', email: 'hamza', designation: 'Owner and Founder', department: 'dep-mgmt', office: 'off-dadu', level: 1, role: 'owner', reportsTo: null },
-  { empId: 'ACV-0002', slug: 'ceo', name: 'Ayesha Siddiqui', email: 'ayesha', designation: 'Chief Executive Officer', department: 'dep-mgmt', office: 'off-dadu', level: 2, role: 'ceo', reportsTo: 'owner' },
-  { empId: 'ACV-0003', slug: 'director', name: 'Bilal Ahmed', email: 'bilal', designation: 'Director', department: 'dep-mgmt', office: 'off-dadu', level: 3, role: 'director', reportsTo: 'ceo', duties: ['hr'] },
+  { empId: 'ACV-0003', slug: 'director', name: 'Bilal Ahmed', email: 'bilal', designation: 'Director', department: 'dep-mgmt', office: 'off-dadu', level: 3, role: 'director', reportsTo: 'owner', duties: ['hr'] },
   { empId: 'ACV-0004', slug: 'cto', name: 'Omar Farooq', email: 'omar', designation: 'Chief Technology Officer', department: 'dep-eng', office: 'off-dadu', level: 3, role: 'cto', reportsTo: 'director' },
   { empId: 'ACV-0006', slug: 'dev1', name: 'Fahad Khan', email: 'fahad', designation: 'Senior Backend Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0007', slug: 'dev2', name: 'Mariam Shah', email: 'mariam', designation: 'Software Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
@@ -90,7 +90,6 @@ export const DEMO_EMPLOYEES: DemoEmployee[] = [
   { empId: 'ACV-0012', slug: 'sales2', name: 'Kamran Javed', email: 'kamran', designation: 'Sales Executive', department: 'dep-sales', office: 'off-remote', level: 4, role: 'sales', reportsTo: 'director' },
   { empId: 'ACV-0013', slug: 'sqa2', name: 'Nida Aslam', email: 'nida', designation: 'SQA Intern', department: 'dep-eng', office: 'off-dadu', level: 5, role: 'employee', reportsTo: 'cto', type: 'intern', weeklyHours: 20 },
   { empId: 'ACV-0014', slug: 'sales3', name: 'Saad Mirza', email: 'saad', designation: 'Senior Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'sales', reportsTo: 'director' },
-  { empId: 'ACV-0015', slug: 'hr', name: 'Rabia Anwar (DEMO HR)', email: 'rabia', designation: 'HR Officer', department: 'dep-hr', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['hr'] },
 ];
 
 export function demoEmail(person: { email: string }): string {
@@ -226,8 +225,8 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
         if (head) await tx.department.updateMany({ where: { code: d.code, headEmployeeId: null }, data: { headEmployeeId: head.id } });
       }
 
-      // The demo roster uses explicit Emp-IDs up to ACV-0015; the sequence must never hand those out again.
-      await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 15))`;
+      // The demo roster uses explicit Emp-IDs up to ACV-0014; the sequence must never hand those out again.
+      await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 14))`;
 
       await rebuildReportingClosure(tx);
     },

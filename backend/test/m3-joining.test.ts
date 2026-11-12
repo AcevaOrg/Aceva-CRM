@@ -6,10 +6,10 @@ import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
 const OWNER = 'ACV-0001';
-const CEO = 'ACV-0002';
+let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
-const HR = 'ACV-0015';
+let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const FINANCE = 'ACV-0010';
 const DEV1 = 'ACV-0006';
 
@@ -19,6 +19,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
+  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -80,7 +81,8 @@ describe('M3 joining: Director or HR start the hire, the Owner or CEO authorize 
   it('approval generates the Emp-ID, creates the login and emails a temporary password', async () => {
     const body = newHire();
     const { empId } = await hire(body);
-    expect(empId).toBe('ACV-0016');
+    const last = Math.max(...[t.fixtures.CEO, t.fixtures.HR].map((id) => Number(id.slice(4))), 14); // the demo roster ends at ACV-0014
+    expect(empId).toBe(`ACV-${String(last + 1).padStart(4, '0')}`); // the next number, in order
     const mail = t.mailer.lastTo(body.officialEmail)!;
     expect(mail.subject).toBe('Welcome to Aceva');
     expect(mail.text).toContain(empId);

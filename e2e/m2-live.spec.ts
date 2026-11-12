@@ -2,6 +2,7 @@ import * as argon2 from 'argon2';
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { createEmployee } from '../backend/test/helpers/people';
 import { createTestPrisma } from '../backend/test/helpers/prisma';
+import { FIXTURE_HR } from './paths';
 import { API, PASSWORD, apiAs, loginViaUi, nextCode } from './auth-helpers';
 
 /** Module 2 (Emp-ID login and sessions) through the real screens, backend, PostgreSQL, Redis and Mailpit. */
@@ -70,7 +71,7 @@ test('five wrong passwords lock the account on the screen, and HR unlocks it', a
   await fillLogin(page, HIRA, PASSWORD); // the correct password does not help
   await expect(alertOf(page)).toContainText('Account locked');
 
-  const hr = await apiAs(playwright, 'ACV-0015');
+  const hr = await apiAs(playwright, FIXTURE_HR);
   expect((await hr.post(`/auth/employees/${HIRA}/unlock`, { reason: 'Identity confirmed by phone' })).status()).toBe(200);
   await loginViaUi(page, HIRA);
   await expect(page).toHaveURL(/\/$/);

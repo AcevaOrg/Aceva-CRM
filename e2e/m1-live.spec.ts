@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { apiAs, openAs } from './auth-helpers';
+import { FIXTURE_CEO } from './paths';
 
 /** Module 1 screens against the real server, logged in for real (password, authenticator code, session cookie). */
 
@@ -8,19 +9,19 @@ const node = (page: Page, name: string) => page.getByRole('button', { name: new 
 test.describe.configure({ mode: 'serial' });
 
 test('the org chart is drawn from the real server, as the logged-in person', async ({ browser }) => {
-  const { page, context } = await openAs(browser, 'ACV-0002', '/');
+  const { page, context } = await openAs(browser, FIXTURE_CEO, '/');
   const tree = page.waitForResponse((r) => r.url().endsWith('/api/v1/org/tree') && r.status() === 200);
   await page.goto('/org');
   const response = await tree;
   expect(response.request().headers()['x-dev-emp-id']).toBeUndefined(); // the old development header is gone
   await expect(node(page, 'Hamza Qureshi')).toBeVisible();
-  await expect(node(page, 'Ayesha Siddiqui')).toBeVisible();
-  await expect(node(page, 'Rabia Anwar \\(DEMO HR\\)')).toBeVisible(); // the demo HR person exists only in the real data
+  await expect(node(page, 'Test CEO')).toBeVisible();
+  await expect(node(page, 'Test HR Officer')).toBeVisible(); // the test-only HR officer exists only in the real test data
   await context.close();
 });
 
 test('the CEO moves a person under another manager and it is saved on the server', async ({ browser, playwright }) => {
-  const { page, context } = await openAs(browser, 'ACV-0002', '/org');
+  const { page, context } = await openAs(browser, FIXTURE_CEO, '/org');
   await node(page, 'Danish Iqbal').click();
   await page.getByRole('button', { name: /Move under/ }).click();
   await page.locator('#move-boss').selectOption('ACV-0010'); // Sana Malik (Level 4)
@@ -37,14 +38,14 @@ test('the CEO moves a person under another manager and it is saved on the server
 });
 
 test('the server refuses an invalid reporting line even when the screen is bypassed', async ({ playwright }) => {
-  const ceo = await apiAs(playwright, 'ACV-0002');
+  const ceo = await apiAs(playwright, FIXTURE_CEO);
   const res = await ceo.patch('/org/employees/ACV-0009/reporting-line', { reportsToEmpId: 'ACV-0006', reason: 'invalid on purpose' });
   expect(res.status()).toBe(400);
   expect(JSON.stringify(await res.json())).toContain('manager_below_employee');
 });
 
 test('the CEO changes a level and the person gets the new permissions on the next request', async ({ browser, playwright }) => {
-  const { page, context } = await openAs(browser, 'ACV-0002', '/org');
+  const { page, context } = await openAs(browser, FIXTURE_CEO, '/org');
   await node(page, 'Mariam Shah').click();
   await page.getByRole('button', { name: 'Change level' }).click();
   await page.locator('#level-new').selectOption('4');
@@ -112,14 +113,14 @@ test('a manager names a stand-in and approvals route to them', async ({ browser,
 });
 
 test('the CEO changes a department head explicitly; reporting lines stay as they were', async ({ browser, playwright }) => {
-  const { page, context } = await openAs(browser, 'ACV-0002', '/org?tab=departments');
+  const { page, context } = await openAs(browser, FIXTURE_CEO, '/org?tab=departments');
   await page.getByRole('button', { name: 'Change head' }).nth(4).click(); // the Sales card (departments are listed by code)
   const dialog = page.getByRole('dialog');
   await dialog.locator('#head-person').selectOption('ACV-0014'); // Saad Mirza
   await dialog.locator('#head-reason').fill('Saad now leads the sales team');
   await dialog.getByRole('button', { name: 'Change head' }).click();
   await expect(page.getByText(/Head of .* changed/)).toBeVisible();
-  const departments = await (await (await apiAs(playwright, 'ACV-0002')).get('/org/departments')).json();
+  const departments = await (await (await apiAs(playwright, FIXTURE_CEO)).get('/org/departments')).json();
   expect(departments.departments.some((d: { headEmpId: string }) => d.headEmpId === 'ACV-0014')).toBe(true);
   await context.close();
 });

@@ -8,7 +8,7 @@ import { daysFromNow, minutesAgo } from "../time";
 const ROLE_DESCRIPTION: Record<RoleKey, string> = {
   owner: "Level 1. Sees everything (all activity, data, reports and exports) but approves, prepares and assigns nothing. Changes employee levels and reporting lines, with a reason, and every change is logged.",
   ceo: "Level 2. Oversight like the Owner, plus signs off the Director's own leave and attendance corrections. Changes levels and reporting lines below the CEO, with a reason.",
-  lead: "Level 4 default role: Department Heads and Team Leads. Own work plus assigning tasks to, and approving for, the people below. HR and Finance people hold their extra duty on top.",
+  level4_default: "Level 4 default role: Department Heads and Team Leads. Own work plus assigning tasks to, and approving for, the people below. HR and Finance people hold their extra duty on top.",
   director: "The approver for the whole company: payroll, journal entries, month close and reopen, Won deals, commission, targets, the last step of leave, settings. Also holds HR duty and sales-manager duty, and gives extra duties such as Finance. Prepares no finance items. Level 3, reports to the CEO.",
   cto: "Runs development: assigns and reviews tasks, first step of developers' leave and corrections, security alerts, backups and integrations. No finance, payroll or sales data. Level 3, reports to the Director (the one configured same-level reporting line).",
   sales: "Own leads, deals, follow-ups, targets and daily report. Reports to the Director. Manages nobody.",

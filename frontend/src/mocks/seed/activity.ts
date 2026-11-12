@@ -18,7 +18,7 @@ function rng(seed: number) {
 const SCREENS: Record<RoleKey, string[]> = {
   owner: ["Home", "Insights", "Statements", "Payroll", "Activity", "Sales reports"],
   ceo: ["Home", "Insights", "Statements", "Payroll", "Activity", "Approvals"],
-  lead: ["Home", "Task board", "Messages", "Leave", "Attendance"],
+  level4_default: ["Home", "Task board", "Messages", "Leave", "Attendance"],
   director: ["Home", "Approvals", "People", "Payroll", "Ledger", "Leave"],
   cto: ["Task board", "Approvals", "Activity", "Integrations", "Backups", "Messages"],
   finance: ["Ledger", "Journal entry", "Banking", "Payroll", "Statements", "Bills and expenses"],
@@ -40,7 +40,7 @@ const ACTIONS: Record<RoleKey, [ActivityEvent["action"], string, string][]> = {
     ["export", "Statements", "Exported the income statement (PDF)"],
     ["approve", "Leave", "Signed off the Director's leave request"],
   ],
-  lead: [
+  level4_default: [
     ["comment", "Tasks", "Commented on TSK-0120"],
     ["edit", "Leave", "Reviewed a team leave request"],
   ],
