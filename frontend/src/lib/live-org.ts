@@ -12,20 +12,23 @@ export type LiveOrgNode = Pick<
   "empId" | "name" | "designation" | "level" | "departmentId" | "officeId" | "reportsTo" | "avatarHue" | "status" | "role" | "duties"
 >;
 
-/** The server's role key, as a screen role. Level 4 heads and Finance/Sales people are told apart by duty and department. */
+/**
+ * The server's role key, as a screen role. The keys are the same, except that the server's Level 5 role "employee" is
+ * "developer" here (shown as "Developer / SQA"). An unknown key falls back to the default role of the level.
+ */
 export function roleFromApi(roleKey: string, level: number, departmentId: string, duties: string[]): RoleKey {
   switch (roleKey) {
     case "owner":
-    case "ceo":
     case "director":
     case "cto":
     case "sales":
+    case "finance":
       return roleKey;
     case "employee":
       return "developer";
     default:
-      if (duties.includes("finance")) return "finance";
-      return level === 4 ? roleFor(4, departmentId) : level === 3 ? "cto" : "developer";
+      if (level === 4 && duties.includes("finance")) return "finance";
+      return level >= 1 && level <= 5 ? roleFor(level as Level, departmentId) : "developer";
   }
 }
 

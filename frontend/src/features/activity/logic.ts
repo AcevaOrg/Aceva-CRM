@@ -54,15 +54,14 @@ export function canCheckAlert(viewer: Pick<Viewer, "can" | "employee">, alertEmp
   if (!canActOnAlerts(viewer) || alertEmpId === me.empId) return false;
   if (below.includes(alertEmpId)) return true;
   const role = list.find((e) => e.empId === alertEmpId)?.role;
-  return (me.role === "director" && role === "ceo") || (me.role === "cto" && role === "director");
+  return (me.role === "director" && role === "owner") || (me.role === "cto" && role === "director");
 }
 
 /** Short "who checks this" label for an alert the viewer can see but not check. */
 export function alertCheckerLabel(alertEmpId: string, list: Pick<Employee, "empId" | "role" | "reportsTo">[]) {
   const e = list.find((x) => x.empId === alertEmpId);
   if (!e) return "their manager";
-  if (e.role === "owner") return "the CEO";
-  if (e.role === "ceo") return "the Director";
+  if (e.role === "owner") return "the Director";
   if (e.role === "director") return "the CTO";
   const boss = list.find((x) => x.empId === e.reportsTo);
   return boss && !isTopLevelRole(boss.role) ? `the ${ROLE_LABEL[boss.role]}` : "their manager";

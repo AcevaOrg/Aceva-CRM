@@ -155,7 +155,7 @@ function Wizard() {
           </p>
           {done.pending && (
             <p className="max-w-md text-[13.5px] text-muted-foreground">
-              The Owner or CEO must authorize the level and reporting line. The Emp-ID is generated, the account is created and the welcome email with the temporary password is sent only after they approve.
+              The Director must authorize the level and reporting line. The Emp-ID is generated, the account is created and the welcome email with the temporary password is sent only after the Director approves.
             </p>
           )}
           {!done.pending && !done.emailSent && (

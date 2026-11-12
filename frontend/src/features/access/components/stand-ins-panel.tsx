@@ -52,7 +52,7 @@ export function StandInsPanel() {
     <div className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-2xl text-[13px] text-muted-foreground">
-          When a manager is away, their approvals go to a named stand-in for set dates. A stand-in is a manager who can approve, at the same level or higher. Without a stand-in, approvals go one level up the reporting line.
+          When a manager is away, their approvals go to a named stand-in for set dates. A stand-in is a manager who can approve, at the same level or higher (never the CEO / Founder / Owner). Without a stand-in, approvals go one level up the reporting line, but never on to the CEO / Founder / Owner: he approves only the Director&apos;s own requests.
           {!manages && <span className="mt-1 block font-medium text-foreground">View only. Managers set their own stand-ins.</span>}
         </p>
         {canSet && (
@@ -125,7 +125,7 @@ function AddStandInDialog({ onClose }: { onClose: () => void }) {
   // With roles.manage (the Director) you can also set one for a manager below you (the CTO).
   // Nobody can stand in for the Director (the CEO / Founder / Owner approves nothing), so the Director only sets them for others.
   const below = descendantIds(me.empId, lookup.employees);
-  const forOthers = !isLive("m1") && viewer.can("roles.manage") && lookup.employees.some((e) => below.includes(e.empId) && isManager(e));
+  const forOthers = !isLive("m1") && viewer.can("org.manage") && lookup.employees.some((e) => below.includes(e.empId) && isManager(e));
   const selfOk = isManager(me);
   const [manager, setManager] = React.useState(selfOk ? me.empId : "");
   const [standIn, setStandIn] = React.useState("");

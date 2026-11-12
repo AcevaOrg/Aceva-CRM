@@ -20,7 +20,7 @@ import { isManager } from "../logic";
 export function DepartmentsPanel() {
   const query = useDepartments();
   const lookup = useLookup();
-  // Owner and CEO add and change departments and offices. The head is chosen explicitly, never worked out.
+  // The Director adds and changes departments and offices. The head is chosen explicitly, never worked out.
   const canManage = useCan("org.manage");
   const [headFor, setHeadFor] = React.useState<{ id: string; name: string } | null>(null);
   const [newDept, setNewDept] = React.useState(false);
@@ -32,7 +32,7 @@ export function DepartmentsPanel() {
       <section>
         <SectionTitle
           title="Departments"
-          description={`Each department has a head. Headcount counts active staff and people on notice.${canManage ? "" : " View only: the Owner and the CEO add departments and offices."}`}
+          description={`Each department has a head. Headcount counts active staff and people on notice.${canManage ? "" : " View only: the Director adds departments and offices."}`}
           actions={
             canManage && (
               <Button size="sm" onClick={() => setNewDept(true)}>
@@ -236,7 +236,7 @@ function ChangeHeadDialog({ department, onClose }: { department: { id: string; n
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Change the head of {department.name}</DialogTitle>
-          <DialogDescription>The head is chosen explicitly. Only the Owner and the CEO can change it.</DialogDescription>
+          <DialogDescription>The head is chosen explicitly. Only the Director can change it.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <Field label="New head" htmlFor="head-person" required>

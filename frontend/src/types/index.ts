@@ -5,9 +5,10 @@
  */
 
 /**
- * Hierarchy level (development plan §5, the five levels):
- * 1 Owner · 2 CEO · 3 Director and CTO · 4 Department Heads and Team Leads (Sales, Finance, HR) · 5 Employees
- * Level and reporting line are separate: the CTO (Level 3) reports to the Director (Level 3).
+ * Hierarchy level (the final company structure, five levels):
+ * 1 CEO / Founder / Owner · 2 Director · 3 CTO · 4 Sales and Finance · 5 Developer / SQA
+ * Everybody reports to someone at a strictly higher level: the Director to the CEO / Founder / Owner, the CTO, Sales
+ * and Finance to the Director, Developer / SQA to the CTO. There is no same-level reporting line.
  */
 export type Level = 1 | 2 | 3 | 4 | 5;
 
@@ -27,18 +28,19 @@ export type Zone = "home" | "work" | "finance" | "sales" | "control";
 export type Duty = "finance" | "hr" | "sales_manager";
 
 /**
- * One role per person; the role belongs to a level (plan §5). Extra duties (Finance, HR) are separate.
- * "owner" and "ceo" are two different people. "level4_default" is the default Level 4 role (Department Head / Team Lead).
+ * One role per person; the role belongs to a level. Extra duties (Finance, HR, sales manager) are separate.
+ * The same keys as the server, except Level 5: the server's "employee" role is "developer" here (see roleFromApi).
+ * "owner" is the CEO / Founder / Owner (one person); there is no separate CEO role.
  */
-export type RoleKey = "owner" | "ceo" | "director" | "cto" | "level4_default" | "sales" | "finance" | "developer";
+export type RoleKey = "owner" | "director" | "cto" | "sales" | "finance" | "developer";
 
-export const ROLE_LEVEL: Record<RoleKey, Level> = { owner: 1, ceo: 2, director: 3, cto: 3, level4_default: 4, sales: 4, finance: 4, developer: 5 };
+export const ROLE_LEVEL: Record<RoleKey, Level> = { owner: 1, director: 2, cto: 3, sales: 4, finance: 4, developer: 5 };
 
-/** Default role for a level. Level 3 holds both Director and CTO: the role is chosen when the person is set up. */
-export const LEVEL_ROLE: Record<Level, RoleKey> = { 1: "owner", 2: "ceo", 3: "cto", 4: "level4_default", 5: "developer" };
+/** Default role of each level (the same as the server). The Level 4 finance role is chosen by department (roleFor). */
+export const LEVEL_ROLE: Record<Level, RoleKey> = { 1: "owner", 2: "director", 3: "cto", 4: "sales", 5: "developer" };
 
-/** Roles that oversee the whole company (Owner and CEO). */
-export const isTopLevelRole = (role: RoleKey) => role === "owner" || role === "ceo";
+/** The role that oversees the whole company: the CEO / Founder / Owner (sees everything, approves nothing). */
+export const isTopLevelRole = (role: RoleKey) => role === "owner";
 
 /** Role for a level in a department (level 4 in the Finance department is the finance person). */
 export function roleFor(level: Level, departmentId?: string): RoleKey {
