@@ -1,0 +1,745 @@
+// Aceva Digital System: shared database model for Cycle 1 (M1 hierarchy, M2 login, M3 profiles).
+//
+// Conventions (development plan section 22):
+//  * Internal IDs are random UUIDs. People only ever see Emp-IDs (ACV-0001).
+//  * Times are timestamptz (stored in UTC). Dates without a time are @db.Date.
+//  * Money is NUMERIC(12,2), never a float.
+//  * Mutable tables carry created_at / created_by / updated_at / updated_by.
+//    created_by / updated_by hold an employee UUID but are NOT foreign keys, so the
+//    very first seed rows and system jobs can be written. They are filled by the app.
+//  * Nothing important is hard-deleted: rows are archived (archived_at / ended_at / revoked_at).
+//  * History tables (audit_log, profile_changes, employment_history, password_history,
+//    login_attempts) accept inserts only. A database trigger blocks UPDATE and DELETE.
+//  * CHECK constraints, the Emp-ID sequence, partial unique indexes and the triggers live in
+//    the hand-written part of the first migration (Prisma cannot express them).
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum EmploymentType {
+  full_time
+  part_time
+  intern
+
+  @@map("employment_type")
+}
+
+enum EmployeeStatus {
+  active
+  on_notice
+  left
+
+  @@map("employee_status")
+}
+
+enum DocumentType {
+  cv
+  contract
+  cnic_copy
+  certificate
+
+  @@map("document_type")
+}
+
+enum ProfileSection {
+  basic
+  job
+  personal
+  pay
+
+  @@map("profile_section")
+}
+
+enum EmploymentEventType {
+  joined
+  level_changed
+  reporting_line_changed
+  department_changed
+  office_changed
+  designation_changed
+  employment_type_changed
+  status_changed
+  notice_given
+  left
+
+  @@map("employment_event_type")
+}
+
+enum AuditOutcome {
+  success
+  denied
+
+  @@map("audit_outcome")
+}
+
+enum HireRequestStatus {
+  pending
+  approved
+  rejected
+
+  @@map("hire_request_status")
+}
+
+enum JobStatus {
+  pending
+  running
+  succeeded
+  failed
+
+  @@map("job_status")
+}
+
+// ---------------------------------------------------------------------------
+// M1: levels, roles, permissions, duties, departments, offices
+// ---------------------------------------------------------------------------
+
+/// The five organisational levels: 1 Owner, 2 CEO, 3 Director and CTO, 4 Heads and Leads, 5 Employees.
+model Level {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  number      Int      @unique
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?  @map("created_by") @db.Uuid
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?  @map("updated_by") @db.Uuid
+
+  roles     Role[]
+  employees Employee[]
+
+  @@map("levels")
+}
+
+/// A named set of permissions. Every level has exactly one default role (is_default).
+model Role {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique
+  name        String
+  description String?
+  levelId     String   @map("level_id") @db.Uuid
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?  @map("created_by") @db.Uuid
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?  @map("updated_by") @db.Uuid
+
+  level           Level                    @relation(fields: [levelId], references: [id])
+  rolePermissions RolePermission[]
+  employees       Employee[]
+  ruleAsManager   SameLevelReportingRule[] @relation("RuleManagerRole")
+  ruleAsEmployee  SameLevelReportingRule[] @relation("RuleEmployeeRole")
+
+  @@index([levelId])
+  @@map("roles")
+}
+
+/// One allowed action, for example task.assign, finance.view, payroll.approve.
+/// New modules add rows here; the authorization code does not change.
+model Permission {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String   @unique
+  module      String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?  @map("created_by") @db.Uuid
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?  @map("updated_by") @db.Uuid
+
+  rolePermissions RolePermission[]
+  dutyPermissions DutyPermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String   @map("role_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy    String?  @map("created_by") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+/// An extra duty on top of a person's role, for example Finance or HR.
+/// Duties carry their own permissions (kept separate from role permissions).
+model Duty {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key               String   @unique
+  name              String
+  description       String?
+  /// 2FA is mandatory for anyone holding this duty (plan section 6: Finance duty).
+  requiresTwoFactor Boolean  @default(false) @map("requires_two_factor")
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy         String?  @map("created_by") @db.Uuid
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy         String?  @map("updated_by") @db.Uuid
+
+  dutyPermissions DutyPermission[]
+  employeeDuties  EmployeeDuty[]
+
+  @@map("duties")
+}
+
+model DutyPermission {
+  dutyId       String   @map("duty_id") @db.Uuid
+  permissionId String   @map("permission_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy    String?  @map("created_by") @db.Uuid
+
+  duty       Duty       @relation(fields: [dutyId], references: [id])
+  permission Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([dutyId, permissionId])
+  @@index([permissionId])
+  @@map("duty_permissions")
+}
+
+/// A duty given to an employee. Ending a duty sets ended_at (the row is kept).
+/// One active row per employee and duty (partial unique index in the migration).
+model EmployeeDuty {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String    @map("employee_id") @db.Uuid
+  dutyId     String    @map("duty_id") @db.Uuid
+  reason     String?
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  endedAt    DateTime? @map("ended_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  duty     Duty     @relation(fields: [dutyId], references: [id])
+
+  @@index([employeeId])
+  @@index([dutyId])
+  @@map("employee_duties")
+}
+
+model Department {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code           String    @unique
+  name           String    @unique
+  /// The department head, set explicitly by the Owner or CEO (never worked out from reporting lines).
+  headEmployeeId String?   @map("head_employee_id") @db.Uuid
+  archivedAt     DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy      String?   @map("created_by") @db.Uuid
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy      String?   @map("updated_by") @db.Uuid
+
+  employees Employee[]
+  head      Employee?  @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+
+  @@index([headEmployeeId])
+  @@map("departments")
+}
+
+model Office {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String    @unique
+  name       String    @unique
+  city       String?
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  employees Employee[]
+
+  @@map("offices")
+}
+
+// ---------------------------------------------------------------------------
+// M3 (central record, used by M1 and M2): the employee
+// ---------------------------------------------------------------------------
+
+/// THE one employee record. Every module links to this table.
+/// Holds the Basic and Job sections. Personal and Pay data live in their own
+/// one-to-one tables so a directory or list query can never leak them by accident.
+model Employee {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+
+  /// ACV-0001, ACV-0002 ... generated by the database from a sequence.
+  /// Never changes (trigger) and is never reused (employees are never deleted).
+  empId String @unique @default(dbgenerated("('ACV-'::text || lpad((nextval('emp_id_seq'::regclass))::text, 4, '0'::text))")) @map("emp_id")
+
+  // Basic (visible to everyone through the staff directory)
+  fullName      String  @map("full_name")
+  photoKey      String? @map("photo_key")
+  designation   String
+  departmentId  String  @map("department_id") @db.Uuid
+  officeId      String  @map("office_id") @db.Uuid
+  /// Official acevatech.com address. Null when the person has none.
+  officialEmail String? @unique @map("official_email")
+
+  // Job (visible to the employee and the levels above)
+  levelId             String         @map("level_id") @db.Uuid
+  roleId              String         @map("role_id") @db.Uuid
+  /// The primary reporting relationship. Null only for the Owner.
+  reportsToId         String?        @map("reports_to_id") @db.Uuid
+  joiningDate         DateTime       @map("joining_date") @db.Date
+  employmentType      EmploymentType @default(full_time) @map("employment_type")
+  status              EmployeeStatus @default(active)
+  lastWorkingDay      DateTime?      @map("last_working_day") @db.Date
+  weeklyCapacityHours Int            @default(40) @map("weekly_capacity_hours")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  department    Department   @relation(fields: [departmentId], references: [id])
+  headOf        Department[] @relation("DepartmentHead")
+  office        Office       @relation(fields: [officeId], references: [id])
+  level         Level        @relation(fields: [levelId], references: [id])
+  role          Role         @relation(fields: [roleId], references: [id])
+  reportsTo     Employee?    @relation("ReportsTo", fields: [reportsToId], references: [id])
+  directReports Employee[]   @relation("ReportsTo")
+
+  personal            EmployeePersonal?
+  pay                 EmployeePay?
+  duties              EmployeeDuty[]
+  ancestors           ReportingClosure[]   @relation("ClosureDescendant")
+  descendants         ReportingClosure[]   @relation("ClosureAncestor")
+  standInsAsManager   StandIn[]            @relation("StandInManager")
+  standInsAsCover     StandIn[]            @relation("StandInCover")
+  credential          Credential?
+  totpSecret          TotpSecret?
+  passwordHistory     PasswordHistory[]
+  passwordResets      PasswordResetToken[]
+  sessions            Session[]
+  loginAttempts       LoginAttempt[]
+  employmentHistory   EmploymentHistory[]
+  profileChanges      ProfileChange[]
+  documents           EmployeeDocument[]
+  hireRequestsMade    HireRequest[]        @relation("HireRequester")
+  hireRequestsDecided HireRequest[]        @relation("HireDecider")
+  hireRequestOf       HireRequest?         @relation("HireResult")
+  auditEntries        AuditLog[]
+
+  @@index([departmentId])
+  @@index([officeId])
+  @@index([levelId])
+  @@index([roleId])
+  @@index([reportsToId])
+  @@index([status])
+  @@map("employees")
+}
+
+/// Personal section: employee, HR, Director and above.
+model EmployeePersonal {
+  employeeId               String   @id @map("employee_id") @db.Uuid
+  /// AES-256-GCM ciphertext (encrypted by the app, never stored in plain text).
+  cnicEncrypted            String?  @map("cnic_encrypted")
+  cnicLast4                String?  @map("cnic_last4")
+  phone                    String?
+  homeAddress              String?  @map("home_address")
+  emergencyContactName     String?  @map("emergency_contact_name")
+  emergencyContactPhone    String?  @map("emergency_contact_phone")
+  emergencyContactRelation String?  @map("emergency_contact_relation")
+  createdAt                DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy                String?  @map("created_by") @db.Uuid
+  updatedAt                DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy                String?  @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("employee_personal")
+}
+
+/// Pay section: the employee (own only), Director, CEO, Owner and the finance duty person.
+model EmployeePay {
+  employeeId           String   @id @map("employee_id") @db.Uuid
+  baseSalary           Decimal  @default(0) @map("base_salary") @db.Decimal(12, 2)
+  allowances           Decimal  @default(0) @db.Decimal(12, 2)
+  bankName             String?  @map("bank_name")
+  /// AES-256-GCM ciphertext.
+  bankAccountEncrypted String?  @map("bank_account_encrypted")
+  bankAccountLast4     String?  @map("bank_account_last4")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy            String?  @map("created_by") @db.Uuid
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy            String?  @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("employee_pay")
+}
+
+// ---------------------------------------------------------------------------
+// M1: reporting tree helper and stand-ins
+// ---------------------------------------------------------------------------
+
+/// Closure table for the reporting tree. One row for every (manager above, person below) pair,
+/// plus a depth-0 row for each person themselves. Rebuilt in the same transaction as any
+/// change to reports_to_id. Lets "everyone below me" be one indexed query.
+model ReportingClosure {
+  ancestorId   String   @map("ancestor_id") @db.Uuid
+  descendantId String   @map("descendant_id") @db.Uuid
+  depth        Int
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  ancestor   Employee @relation("ClosureAncestor", fields: [ancestorId], references: [id])
+  descendant Employee @relation("ClosureDescendant", fields: [descendantId], references: [id])
+
+  @@id([ancestorId, descendantId])
+  @@index([descendantId])
+  @@map("reporting_closure")
+}
+
+/// A manager names a stand-in for set dates; approvals go to the stand-in meanwhile.
+model StandIn {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  managerId String    @map("manager_id") @db.Uuid
+  /// Null = the manager is away with no stand-in, so approvals go one level up.
+  standInId String?   @map("stand_in_id") @db.Uuid
+  startsOn  DateTime  @map("starts_on") @db.Date
+  endsOn    DateTime  @map("ends_on") @db.Date
+  reason    String?
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  manager Employee  @relation("StandInManager", fields: [managerId], references: [id])
+  standIn Employee? @relation("StandInCover", fields: [standInId], references: [id])
+
+  @@index([managerId, startsOn, endsOn])
+  @@index([standInId])
+  @@map("stand_ins")
+}
+
+/// Same-level reporting is allowed ONLY where listed here (plan: the CTO reports to the
+/// Director, both Level 3). Level and reporting line are separate concepts.
+model SameLevelReportingRule {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  managerRoleId  String   @map("manager_role_id") @db.Uuid
+  employeeRoleId String   @map("employee_role_id") @db.Uuid
+  reason         String
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy      String?  @map("created_by") @db.Uuid
+
+  managerRole  Role @relation("RuleManagerRole", fields: [managerRoleId], references: [id])
+  employeeRole Role @relation("RuleEmployeeRole", fields: [employeeRoleId], references: [id])
+
+  @@unique([managerRoleId, employeeRoleId])
+  @@map("same_level_reporting_rules")
+}
+
+// ---------------------------------------------------------------------------
+// M2: credentials, 2FA, sessions, login attempts, password history and reset
+// ---------------------------------------------------------------------------
+
+/// Login credentials. Argon2id hash only. Nobody can read the password.
+model Credential {
+  employeeId          String    @id @map("employee_id") @db.Uuid
+  passwordHash        String    @map("password_hash")
+  /// True for a temporary password: the person must choose a new one at next login.
+  mustChangePassword  Boolean   @default(true) @map("must_change_password")
+  passwordChangedAt   DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lockedAt            DateTime? @map("locked_at") @db.Timestamptz(3)
+  /// Set when the last working day is processed. A disabled login can never sign in.
+  loginDisabledAt     DateTime? @map("login_disabled_at") @db.Timestamptz(3)
+  /// Set when two-step login was reset (lost phone): a fresh authenticator MUST be set up at the next login.
+  mustEnrollTwoFactor Boolean   @default(false) @map("must_enroll_two_factor")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy           String?   @map("created_by") @db.Uuid
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy           String?   @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("credentials")
+}
+
+/// TOTP authenticator secret, stored encrypted (AES-256-GCM).
+model TotpSecret {
+  employeeId      String    @id @map("employee_id") @db.Uuid
+  secretEncrypted String    @map("secret_encrypted")
+  /// Which encryption key was used (lets us rotate keys later).
+  keyId           String    @default("v1") @map("key_id")
+  /// Null until the person proves they can generate a valid code.
+  confirmedAt     DateTime? @map("confirmed_at") @db.Timestamptz(3)
+  /// The last 30-second time step that was accepted, so one code cannot be used twice.
+  lastUsedStep    BigInt?   @map("last_used_step")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?   @map("created_by") @db.Uuid
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?   @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("totp_secrets")
+}
+
+/// Previous password hashes, to block reuse of the last three. Insert-only.
+model PasswordHistory {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId   String   @map("employee_id") @db.Uuid
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy    String?  @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, createdAt(sort: Desc)])
+  @@map("password_history")
+}
+
+/// One-time password reset link. Only the SHA-256 hash of the token is stored.
+model PasswordResetToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String    @map("employee_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt     DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@map("password_reset_tokens")
+}
+
+/// A login session. The browser holds a random token; only its hash is stored here.
+model Session {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId          String    @map("employee_id") @db.Uuid
+  tokenHash           String    @unique @map("token_hash")
+  rememberMe          Boolean   @default(false) @map("remember_me")
+  twoFactorVerifiedAt DateTime? @map("two_factor_verified_at") @db.Timestamptz(3)
+  /// The last time the person confirmed their password (and authenticator code) again for a risky action. Valid 5 minutes.
+  stepUpAt            DateTime? @map("step_up_at") @db.Timestamptz(3)
+  /// SHA-256 of the CSRF token the browser must send in the X-CSRF-Token header on every change request.
+  csrfTokenHash       String?   @map("csrf_token_hash")
+  ip                  String?
+  userAgent           String?   @map("user_agent")
+  device              String?
+  browser             String?
+  os                  String?
+  city                String?
+  lastActiveAt        DateTime  @default(now()) @map("last_active_at") @db.Timestamptz(3)
+  /// Hard limit: 12 hours after login, whatever the activity.
+  absoluteExpiresAt   DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason       String?   @map("revoked_reason")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy           String?   @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, revokedAt])
+  @@index([absoluteExpiresAt])
+  @@map("sessions")
+}
+
+/// Every login attempt, successful or not. Insert-only. Also drives the per-IP rate limit.
+model LoginAttempt {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// What was typed in the Emp-ID box (may not match a real employee).
+  empIdAttempted String   @map("emp_id_attempted")
+  employeeId     String?  @map("employee_id") @db.Uuid
+  ip             String
+  userAgent      String?  @map("user_agent")
+  success        Boolean
+  failureReason  String?  @map("failure_reason")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee? @relation(fields: [employeeId], references: [id])
+
+  @@index([ip, createdAt])
+  @@index([employeeId, createdAt])
+  @@map("login_attempts")
+}
+
+// ---------------------------------------------------------------------------
+// M3: history and documents
+// ---------------------------------------------------------------------------
+
+/// Job milestones: joined, level changed, moved department, on notice, left. Insert-only.
+model EmploymentHistory {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String              @map("employee_id") @db.Uuid
+  eventType   EmploymentEventType @map("event_type")
+  effectiveOn DateTime            @map("effective_on") @db.Date
+  details     Json?
+  reason      String?
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?             @map("created_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, effectiveOn])
+  @@map("employment_history")
+}
+
+/// Field-level change history: who, when, old value, new value. Insert-only.
+/// Sensitive values (CNIC, bank account, pay) are stored encrypted by the app (is_sensitive).
+model ProfileChange {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String         @map("employee_id") @db.Uuid
+  section     ProfileSection
+  field       String
+  oldValue    String?        @map("old_value")
+  newValue    String?        @map("new_value")
+  isSensitive Boolean        @default(false) @map("is_sensitive")
+  reason      String?
+  changedBy   String         @map("changed_by") @db.Uuid
+  changedAt   DateTime       @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, changedAt])
+  @@map("profile_changes")
+}
+
+/// Metadata for CV, contract, CNIC copy and certificates. The file itself lives in private
+/// storage under storage_key; this table never contains file bytes or public URLs.
+model EmployeeDocument {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId       String       @map("employee_id") @db.Uuid
+  type             DocumentType
+  title            String
+  storageKey       String       @unique @map("storage_key")
+  originalFilename String       @map("original_filename")
+  mimeType         String       @map("mime_type")
+  sizeBytes        Int          @map("size_bytes")
+  sha256           String
+  archivedAt       DateTime?    @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy        String?      @map("created_by") @db.Uuid
+  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?      @map("updated_by") @db.Uuid
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, type])
+  @@map("employee_documents")
+}
+
+// ---------------------------------------------------------------------------
+// Shared services: audit log, outbox, scheduled jobs
+// ---------------------------------------------------------------------------
+
+/// Who changed what and why, plus blocked access attempts. Insert-only.
+model AuditLog {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurredAt DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  /// Null for the system or for an unauthenticated request.
+  actorId    String?      @map("actor_id") @db.Uuid
+  action     String
+  targetType String       @map("target_type")
+  targetId   String?      @map("target_id")
+  outcome    AuditOutcome @default(success)
+  reason     String?
+  details    Json?
+  ip         String?
+  userAgent  String?      @map("user_agent")
+  requestId  String?      @map("request_id")
+
+  actor Employee? @relation(fields: [actorId], references: [id])
+
+  @@index([occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([targetType, targetId])
+  @@index([action])
+  @@map("audit_log")
+}
+
+/// Events for other modules (see packages/contracts). Written in the same transaction as the
+/// change. A consumer marks processed_at. Consumers are built in later cycles.
+model OutboxEvent {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        String
+  version     Int
+  actor       String
+  payload     Json
+  occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([type, version, createdAt])
+  @@index([processedAt])
+  @@map("outbox_events")
+}
+
+/// Temporary PostgreSQL-backed job queue (BullMQ replaces it once Redis exists).
+/// dedupe_key prevents duplicate jobs; locked_at/locked_by prevent double execution;
+/// attempts/max_attempts/last_error give retries and failure logging; a job left "running"
+/// after a restart is picked up again once its lock is stale.
+model ScheduledJob {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        String
+  dedupeKey   String    @unique @map("dedupe_key")
+  payload     Json
+  runAt       DateTime  @map("run_at") @db.Timestamptz(3)
+  status      JobStatus @default(pending)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5) @map("max_attempts")
+  lockedAt    DateTime? @map("locked_at") @db.Timestamptz(3)
+  lockedBy    String?   @map("locked_by")
+  lastError   String?   @map("last_error")
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy   String?   @map("created_by") @db.Uuid
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy   String?   @map("updated_by") @db.Uuid
+
+  @@index([status, runAt])
+  @@map("scheduled_jobs")
+}
+
+/// Director or HR start a hire; only the Owner or CEO authorize the level and reporting line (decision M3-3).
+/// Nothing exists as an employee (no Emp-ID, no login) until it is approved. Personal and pay details wait here encrypted.
+model HireRequest {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status              HireRequestStatus @default(pending)
+  name                String
+  designation         String
+  departmentCode      String            @map("department_code")
+  officeCode          String            @map("office_code")
+  officialEmail       String            @map("official_email")
+  joiningDate         DateTime          @map("joining_date") @db.Date
+  employmentType      EmploymentType    @map("employment_type")
+  weeklyCapacityHours Int?              @map("weekly_capacity_hours")
+  proposedLevel       Int               @map("proposed_level")
+  proposedReportsTo   String            @map("proposed_reports_to")
+  /// Encrypted JSON: personal and pay details entered by the requester.
+  sensitiveEncrypted  String?           @map("sensitive_encrypted")
+  requestedBy         String            @map("requested_by") @db.Uuid
+  requestedAt         DateTime          @default(now()) @map("requested_at") @db.Timestamptz(3)
+  decidedBy           String?           @map("decided_by") @db.Uuid
+  decidedAt           DateTime?         @map("decided_at") @db.Timestamptz(3)
+  decisionReason      String?           @map("decision_reason")
+  employeeId          String?           @unique @map("employee_id") @db.Uuid
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  requester Employee  @relation("HireRequester", fields: [requestedBy], references: [id])
+  decider   Employee? @relation("HireDecider", fields: [decidedBy], references: [id])
+  employee  Employee? @relation("HireResult", fields: [employeeId], references: [id])
+
+  @@index([status, requestedAt])
+  @@map("hire_requests")
+}

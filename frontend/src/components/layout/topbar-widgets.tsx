@@ -19,7 +19,7 @@ import { LevelMark } from "@/components/shared/level-mark";
 import { useMarkRead, useNotifications } from "@/features/system/hooks";
 import { NOTIFICATION_GROUP, type Notification } from "@/features/system/types";
 import { useNow } from "@/hooks/use-now";
-import { API_MODE } from "@/lib/api/http";
+import { API_MODE, isLive } from "@/lib/api/http";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { useSession } from "@/lib/auth/session";
 import { useViewer } from "@/lib/auth/viewer";
@@ -250,7 +250,7 @@ export function UserMenu() {
             </DropdownMenuRadioGroup>
           </DropdownMenuSubContent>
         </DropdownMenuSub>
-        {API_MODE === "mock" && (
+        {API_MODE === "mock" && !isLive("m2") && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>
               <Users /> View as… <span className="ml-auto text-[10px] font-semibold uppercase text-muted-foreground">Demo</span>

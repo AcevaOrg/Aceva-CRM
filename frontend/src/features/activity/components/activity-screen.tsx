@@ -1,4 +1,5 @@
 "use client";
+import { isTopLevelRole } from "@/types";
 import { BarChart3, Clock, Search, ShieldAlert, UserRound, Users } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/layout/page-header";
@@ -35,7 +36,7 @@ export function ActivityScreen() {
         title="Activity"
         description={
           team
-            ? viewer?.employee.role === "ceo"
+            ? (viewer && isTopLevelRole(viewer.employee.role))
               ? "Who did what and when inside the system, for everyone in the company. Nobody can edit or delete tracking data."
               : "Who did what and when inside the system, for everyone below you in your reporting line. Nobody can edit or delete tracking data."
             : "What the system records about you. You can always see your own history."

@@ -32,6 +32,8 @@ export interface PayDetails {
   allowances: Allowance[];
   bankName: string;
   accountNumber: string;
+  /** Live: salary amounts are not sent; this only says one is on file. */
+  salaryOnFile?: boolean;
 }
 
 export type DocumentKind = "cv" | "contract" | "cnic" | "certificate" | "other";
@@ -76,6 +78,8 @@ export interface ProfileView {
   pay?: PayDetails;
   documents?: EmployeeDocument[];
   history?: FieldChange[];
+  /** Live: a profile photo is on file (fetched separately, with the session). */
+  hasPhoto?: boolean;
 }
 
 export interface BasicPatch {

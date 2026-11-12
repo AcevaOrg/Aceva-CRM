@@ -9,6 +9,7 @@ import { useReason } from "@/components/shared/dialogs";
 import { LevelMark } from "@/components/shared/level-mark";
 import { QueryState } from "@/components/shared/states";
 import { permissionGroups, type Permission } from "@/lib/auth/permissions";
+import { isLive } from "@/lib/api/http";
 import { useViewer } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
 import { useRoles, useUpdateRole } from "../hooks";
@@ -19,7 +20,8 @@ import type { Role } from "../types";
 export function RolesMatrix() {
   const query = useRoles();
   const viewer = useViewer();
-  const canEdit = !!viewer?.can("roles.manage");
+  // While Module 1 is connected to the real server, roles are read only: they change through duties (plan §5).
+  const canEdit = !!viewer?.can("roles.manage") && !isLive("m1");
   const update = useUpdateRole();
   const askReason = useReason();
   const groups = permissionGroups();

@@ -23,6 +23,7 @@ import { formatDate } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import type { Employee } from "@/types";
 import { usePeople, usePresence } from "../hooks";
+import { HireRequestsPanel, UnresolvedReportsPanel } from "./hiring-panels";
 import { STATUS_INFO, TYPE_LABEL } from "../logic";
 
 type View = "grid" | "list";
@@ -68,6 +69,8 @@ export function PeopleDirectory() {
 
   return (
     <>
+      <HireRequestsPanel />
+      <UnresolvedReportsPanel />
       <PageHeader
         title="People"
         description={`Everyone at Aceva. Basic details are visible to all staff; personal and pay details follow the hierarchy.${canAdd ? "" : " The Director (HR duty) adds and offboards employees."}`}

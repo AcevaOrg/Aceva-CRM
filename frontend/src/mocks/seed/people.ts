@@ -12,27 +12,28 @@ export const OFFICES: Office[] = [
 ];
 
 /**
- * Aceva structure (strict, spec §2): L1 CEO / Founder / Owner → L2 Director → L3 CTO, L4 Sales, L4 Finance → L5 Development.
- * The CEO / Founder / Owner sees everything and approves nothing; the Director approves. The Director heads Sales
- * and Finance and holds HR and sales-manager duty; the finance person holds finance duty; the CTO heads Development.
+ * Aceva structure (development plan §5): L1 Owner → L2 CEO → L3 Director → L3 CTO (same-level line) and L4 Sales, Finance, HR
+ * → L5 Development (under the CTO). Owner and CEO oversee; the Director approves and holds HR duty; the finance person
+ * holds finance duty; a demo HR officer holds HR duty; the CTO heads Development.
  */
 export const DEPARTMENTS: Department[] = [
   { id: "dep-mgmt", name: "Management", headEmpId: "ACV-0001", color: "var(--level-1)", officeIds: ["off-dadu"] },
   { id: "dep-eng", name: "Software Development", headEmpId: "ACV-0004", color: "var(--zone-work)", officeIds: ["off-dadu", "off-khi", "off-remote"] },
   { id: "dep-sales", name: "Sales", headEmpId: "ACV-0003", color: "var(--zone-sales)", officeIds: ["off-khi", "off-remote"] },
   { id: "dep-fin", name: "Finance", headEmpId: "ACV-0003", color: "var(--zone-finance)", officeIds: ["off-dadu"] },
+  { id: "dep-hr", name: "Human Resources", headEmpId: "ACV-0003", color: "var(--chart-4)", officeIds: ["off-dadu"] },
 ];
 
 type Seed = Omit<Employee, "id" | "officialEmail" | "status" | "weeklyCapacityHours" | "type"> &
   Partial<Pick<Employee, "status" | "weeklyCapacityHours" | "type">> & { email: string };
 
-/* Emp-IDs are never reused (plan §6), so the roster keeps its original numbers; 0002 and 0005 are not used. */
+/* Emp-IDs are never reused (plan §6), so the roster keeps its original numbers; 0002 (the demo CEO), 0005 and 0015 (the demo HR officer) are not used. */
 const RAW: Seed[] = [
-  // L1 CEO / Founder / Owner (one person): sees everything, approves nothing
-  { empId: "ACV-0001", name: "Hamza Qureshi", designation: "CEO, Founder and Owner", departmentId: "dep-mgmt", officeId: "off-dadu", email: "hamza", level: 1, role: "ceo", duties: [], reportsTo: null, joiningDate: daysFromNow(-1460), avatarHue: 85 },
-  // L2 Director: the approver for the whole company; also HR duty and sales manager
-  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-mgmt", officeId: "off-dadu", email: "bilal", level: 2, role: "director", duties: ["hr", "sales_manager"], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1100), avatarHue: 264 },
-  // L3 CTO
+  // L1 Owner: sees everything, approves nothing
+  { empId: "ACV-0001", name: "Hamza Qureshi", designation: "Owner and Founder", departmentId: "dep-mgmt", officeId: "off-dadu", email: "hamza", level: 1, role: "owner", duties: [], reportsTo: null, joiningDate: daysFromNow(-1460), avatarHue: 85 },
+  // L3 Director: the approver for the whole company; also HR duty and sales manager
+  { empId: "ACV-0003", name: "Bilal Ahmed", designation: "Director", departmentId: "dep-mgmt", officeId: "off-dadu", email: "bilal", level: 3, role: "director", duties: ["hr", "sales_manager"], reportsTo: "ACV-0001", joiningDate: daysFromNow(-1100), avatarHue: 264 },
+  // L3 CTO (reports to the Director: the one documented same-level line)
   { empId: "ACV-0004", name: "Omar Farooq", designation: "Chief Technology Officer", departmentId: "dep-eng", officeId: "off-dadu", email: "omar", level: 3, role: "cto", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-1050), avatarHue: 220 },
   // L4 Sales (report to the Director)
   { empId: "ACV-0009", name: "Hira Baig", designation: "Sales Executive", departmentId: "dep-sales", officeId: "off-khi", email: "hira", level: 4, role: "sales", duties: [], reportsTo: "ACV-0003", joiningDate: daysFromNow(-300), avatarHue: 52 },

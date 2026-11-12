@@ -23,6 +23,7 @@ import { useCan, useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateShort, formatMonthKey } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import type { Currency } from "@/types";
+import { isTopLevelRole } from "@/types";
 import {
   useAcceptSuggestions, useAccounts, useBankAccounts, useCreateTransfer, useEntryFromStatement, useImportStatement, useMatchLine, usePeriods,
   useRates, useReconciliation, useTransfers,
@@ -69,7 +70,7 @@ function BankAccountsTab() {
   const viewer = useViewer();
   const router = useRouter();
   // Full bank account numbers: the Director and the CEO / Founder / Owner (view) only.
-  const canReveal = !!viewer && (viewer.employee.role === "ceo" || viewer.employee.role === "director");
+  const canReveal = !!viewer && (isTopLevelRole(viewer.employee.role) || viewer.employee.role === "director");
   if (q.isPending) return <CardsSkeleton count={4} />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const total = q.data.reduce((s, a) => s + num(a.balance.amount), 0);

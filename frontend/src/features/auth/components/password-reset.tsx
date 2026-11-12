@@ -7,6 +7,7 @@ import { ArrowLeft, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { isLive } from "@/lib/api/http";
 import { normalizeEmpId } from "@/lib/format";
 import { authApi } from "../api";
 import { AuthHeading } from "./auth-frame";
@@ -27,9 +28,11 @@ export function ForgotPasswordForm() {
           description="If this Emp-ID has an official @acevatech.com email, we sent a reset link. It works once and expires in 15 minutes."
         />
         <p className="rounded-lg bg-muted p-3 text-[13px] text-muted-foreground">No official email? Ask the Director (HR duty) for a temporary password. You&apos;ll set a new one when you sign in.</p>
-        <Button asChild variant="outline" className="mt-6">
-          <Link href="/reset-password">Open the reset link (demo)</Link>
-        </Button>
+        {!isLive("m2") && (
+          <Button asChild variant="outline" className="mt-6">
+            <Link href="/reset-password">Open the reset link (demo)</Link>
+          </Button>
+        )}
         <Link href="/login" className="mt-4 inline-flex items-center gap-1 justify-self-center text-[13px] text-muted-foreground hover:text-foreground">
           <ArrowLeft className="size-3.5" /> Back to sign in
         </Link>
@@ -66,6 +69,7 @@ export function ResetPasswordForm() {
   const router = useRouter();
   const [pw, setPw] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [linkError, setLinkError] = React.useState<string | null>(null);
   const onValid = React.useCallback((v: string | null) => setPw(v), []);
   return (
     <>
@@ -78,13 +82,28 @@ export function ResetPasswordForm() {
         loading={busy}
         onClick={async () => {
           setBusy(true);
-          await authApi.changePassword(pw!);
-          toast.success("Password changed", { description: "You were signed out on every device. Sign in with the new password." });
-          router.push("/login");
+          setLinkError(null);
+          try {
+            // Live: the one-time link in the email carries ?token=...
+            const token = new URLSearchParams(window.location.search).get("token") ?? "";
+            if (isLive("m2")) await authApi.resetPassword(token, pw!);
+            else await authApi.changePassword(pw!);
+            toast.success("Password changed", { description: "You were signed out on every device. Sign in with the new password." });
+            router.push("/login");
+          } catch (err) {
+            setLinkError(err instanceof Error ? err.message : "Couldn't save the new password.");
+          } finally {
+            setBusy(false);
+          }
         }}
       >
         Save new password
       </Button>
+      {linkError && (
+        <p role="alert" className="mt-3 text-[13px] text-danger">
+          {linkError} <Link href="/forgot-password" className="font-medium underline">Ask for a new link</Link>
+        </p>
+      )}
     </>
   );
 }

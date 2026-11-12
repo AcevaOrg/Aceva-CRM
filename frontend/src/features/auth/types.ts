@@ -9,10 +9,12 @@ export interface LoginRequest {
   password: string;
 }
 
-export type LoginStatus = "ok" | "2fa_required" | "password_change_required" | "locked" | "invalid" | "rate_limited";
+export type LoginStatus = "ok" | "2fa_required" | "2fa_setup_required" | "password_change_required" | "locked" | "invalid" | "rate_limited";
 
 export interface LoginResult {
   status: LoginStatus;
+  /** Live login: the CSRF token for this session. */
+  csrfToken?: string;
   attemptsLeft?: number;
   retryAfterSec?: number;
 }

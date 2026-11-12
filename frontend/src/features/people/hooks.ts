@@ -84,7 +84,7 @@ export function useOffboard() {
 export function useUploadDocument() {
   const done = useDone();
   return useMutation({
-    mutationFn: ({ empId, file }: { empId: string; file: { kind: DocumentKind; fileName: string; sizeBytes: number } }) => peopleApi.uploadDocument(empId, file),
+    mutationFn: ({ empId, file }: { empId: string; file: { kind: DocumentKind; fileName: string; sizeBytes: number; blob?: File } }) => peopleApi.uploadDocument(empId, file),
     onSuccess: done,
   });
 }

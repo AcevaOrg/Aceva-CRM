@@ -20,10 +20,11 @@ type Tab = "chart" | "departments" | "roles" | "standins";
 /** /org: Module 1 screens (spec §9.1). */
 export function OrgScreen() {
   const [tab, setTab] = useUrlState<Tab>("tab", "chart");
-  // The Director edits; the CEO / Founder / Owner (audit.view) sees the same tabs, view only.
+  // Owner and CEO change levels and reporting lines; the Director gives duties. Others see the chart, view only.
   const canRoles = useCan(["roles.manage", "audit.view"]);
   const canStandIns = useCan(["standin.manage", "audit.view"]);
   const canManage = useCan("org.manage");
+  const canChanges = useCan("audit.view");
 
   return (
     <RequireAccess permission="org.view">
@@ -31,8 +32,8 @@ export function OrgScreen() {
         title="Org and access"
         description={
           canManage
-            ? "The company's reporting lines and who can do what. You can change levels and reporting lines; every change is logged."
-            : "The company's reporting lines and who can do what. View only: the Director changes levels and reporting lines."
+            ? "The company's reporting lines and who can do what. You can change levels and reporting lines; every change needs a reason and is logged."
+            : "The company's reporting lines and who can do what. View only: the Owner and the CEO change levels and reporting lines."
         }
         seal="internal"
       />
@@ -57,7 +58,7 @@ export function OrgScreen() {
         </TabsList>
         <TabsContent value="chart" className="grid gap-6">
           <OrgChart />
-          {canRoles && <RecentChanges />}
+          {canChanges && <RecentChanges />}
         </TabsContent>
         <TabsContent value="departments">
           <DepartmentsPanel />

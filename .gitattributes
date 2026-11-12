@@ -1,0 +1,3 @@
+# Prisma checks migration files by checksum, so their line endings must never change.
+backend/prisma/migrations/** text eol=lf
+*.sh text eol=lf

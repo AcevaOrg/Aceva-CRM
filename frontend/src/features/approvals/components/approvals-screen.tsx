@@ -198,7 +198,7 @@ export function ApprovalsScreen() {
   const q = useApprovals();
   const viewer = useViewer();
   const [tab, setTab] = useUrlState<string>("type", "all");
-  const observer = viewer?.employee.role === "ceo";
+  const observer = viewer?.employee.role === "owner";
 
   return (
     <>

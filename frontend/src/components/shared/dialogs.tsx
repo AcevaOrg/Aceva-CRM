@@ -17,6 +17,7 @@ import { NativeSelect, SegmentedControl } from "@/components/ui/controls";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
+import { http, isLive } from "@/lib/api/http";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime } from "@/lib/dates";
 import type { Confidentiality } from "@/types";
@@ -95,7 +96,12 @@ function StepUpDialog({ req, close }: { req: StepUpReq; close: () => void }) {
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  const ready = password.length > 0 && code.replace(/\s/g, "").length === 6;
+  const [error, setError] = React.useState<string | null>(null);
+  // Live: the SERVER checks the password and the code (POST /auth/step-up); this screen never decides. The code is
+  // optional here because people who do not use an authenticator app have none; the server says if one is needed.
+  const live = isLive("m2");
+  const digits = code.replace(/\s/g, "");
+  const ready = password.length > 0 && (live || digits.length === 6);
 
   const finish = (ok: boolean) => {
     req.resolve(ok);
@@ -104,6 +110,20 @@ function StepUpDialog({ req, close }: { req: StepUpReq; close: () => void }) {
   const confirm = async () => {
     if (!ready) return;
     setBusy(true);
+    setError(null);
+    if (live) {
+      try {
+        await http.post("/auth/step-up", { password, ...(digits.length === 6 ? { code: digits } : {}) });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't confirm. Try again.");
+        setBusy(false);
+        setCode("");
+        return; // stays open: nothing is confirmed unless the server says so
+      }
+      toast.success("Confirmed", { description: `${req.action}. This action is logged.` });
+      finish(true);
+      return;
+    }
     await new Promise((r) => setTimeout(r, 450));
     toast.success("Confirmed", { description: `${req.action}. This action is logged.` });
     finish(true);
@@ -133,9 +153,14 @@ function StepUpDialog({ req, close }: { req: StepUpReq; close: () => void }) {
           <Field label="Password" htmlFor="stepup-pw">
             <Input id="stepup-pw" type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
-          <Field label="Authenticator code" hint="Demo: any 6 digits work.">
+          <Field label="Authenticator code" hint={live ? "Leave empty if you do not use an authenticator app." : "Demo: any 6 digits work."}>
             <OtpInput value={code} onChange={setCode} />
           </Field>
+          {error && (
+            <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+              {error}
+            </p>
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => finish(false)}>
               Cancel

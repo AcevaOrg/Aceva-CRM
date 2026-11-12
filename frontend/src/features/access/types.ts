@@ -30,7 +30,8 @@ export interface Role {
 export interface StandIn {
   id: string;
   managerEmpId: string;
-  standInEmpId: string;
+  /** Null when the manager is away with no stand-in: approvals go one level up. */
+  standInEmpId: string | null;
   from: string;
   to: string;
   reason?: string;
@@ -45,7 +46,7 @@ export type StandInStatus = "active" | "upcoming" | "ended";
 
 export interface OrgChange {
   id: string;
-  kind: "reporting_line" | "role_permissions" | "department" | "office" | "stand_in";
+  kind: "reporting_line" | "level" | "duty" | "role_permissions" | "department" | "office" | "stand_in";
   summary: string;
   reason: string;
   by: string;
@@ -58,8 +59,21 @@ export interface MoveInput {
   reason: string;
 }
 
+export interface ChangeLevelInput {
+  empId: string;
+  level: Level;
+  reason: string;
+}
+
+export interface DutyInput {
+  empId: string;
+  duty: Duty;
+  reason: string;
+}
+
 export interface StandInInput {
   managerEmpId: string;
+  /** Empty = away with no stand-in. */
   standInEmpId: string;
   from: string;
   to: string;
@@ -76,6 +90,7 @@ export interface DepartmentInput {
 export interface OfficeInput {
   name: string;
   city: string;
+  reason?: string;
 }
 
 export interface DepartmentsView {
