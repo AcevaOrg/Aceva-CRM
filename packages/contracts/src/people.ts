@@ -59,7 +59,7 @@ export type UpdateBasicRequest = z.infer<typeof updateBasicRequestSchema>;
 
 /**
  * PATCH /employees/:empId/job: joining date, type, status and weekly capacity by the Director or HR.
- * `level` and `reportsToEmpId` are accepted here for convenience but are changed ONLY by the Owner or CEO (Module 1 rules).
+ * `level` and `reportsToEmpId` are accepted here for convenience but are changed ONLY by the Director (Module 1 rules).
  */
 export const updateJobRequestSchema = z
   .object({
@@ -99,7 +99,7 @@ export const updatePayRequestSchema = z
   .strict();
 export type UpdatePayRequest = z.infer<typeof updatePayRequestSchema>;
 
-/** POST /employees: the joining workflow (Director or HR) */
+/** POST /employees: the joining workflow (HR starts a request; the Director hires directly) */
 export const createEmployeeRequestSchema = z
   .object({
     name: optionalText(120).min(2),
@@ -132,7 +132,7 @@ export type OffboardRequest = z.infer<typeof offboardRequestSchema>;
 export const revealRequestSchema = z.object({ field: z.enum(['cnic', 'account', 'salary']) });
 export type RevealRequest = z.infer<typeof revealRequestSchema>;
 
-/** POST /hire-requests/:id/approve: the Owner or CEO authorize the level and reporting line (they may correct the proposal). */
+/** POST /hire-requests/:id/approve: the Director authorizes the level and reporting line (and may correct the proposal). */
 export const approveHireRequestSchema = z
   .object({ level: z.number().int().min(3).max(5).optional(), reportsToEmpId: empIdSchema.optional() })
   .strict();
@@ -236,8 +236,8 @@ export interface ProfileResponse {
 }
 
 /**
- * Owner or CEO create the employee at once ("created"). Director or HR only START a hire: it waits as a request
- * until the Owner or CEO authorize the level and reporting line ("pending_approval"); no Emp-ID or login exists before that.
+ * The Director creates the employee at once ("created"). HR only STARTS a hire: it waits as a request until the
+ * Director authorizes the level and reporting line ("pending_approval"); no Emp-ID or login exists before that.
  */
 export type CreateEmployeeResponse =
   | {
@@ -271,7 +271,7 @@ export interface HireRequestView {
   empId: string | null;
 }
 
-/** Someone who still reports to a person who has left: the Owner or CEO must give them a new manager. */
+/** Someone who still reports to a person who has left: the Director must give them a new manager. */
 export interface UnresolvedReport {
   empId: string;
   name: string;
@@ -289,6 +289,6 @@ export interface OffboardResponse {
   lastWorkingDay: string;
   /** "now" when the date is today or in the past; "scheduled" otherwise. */
   processed: 'now' | 'scheduled';
-  /** People who reported to this person and now need a new manager (Owner or CEO moves them). */
+  /** People who reported to this person and now need a new manager (the Director moves them). */
   directReportsNeedingManager: string[];
 }

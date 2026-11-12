@@ -14,16 +14,17 @@ import { Prisma } from '../generated/prisma/client';
 import { Mailer } from '../mail/mailer';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Levels the Director or HR may START a hire at. The Owner or CEO authorize the level and reporting line. */
+/** Levels HR may START a hire at. The Director authorizes the level and reporting line (and hires at Levels 3 to 5 directly). */
 const REQUEST_LEVELS = new Set([4, 5]);
 
 type Sensitive = Pick<CreateEmployeeRequest, 'personal' | 'pay'>;
 const day = (d: Date): string => d.toISOString().slice(0, 10);
 
 /**
- * The joining workflow (plan section 7, with decision M3-3):
- *  1. Director or HR fill in the profile. This only STARTS the hire (a request at Level 4 or 5).
- *  2. The Owner or CEO authorize the level and reporting line (and may correct them). Owner/CEO can also hire directly.
+ * The joining workflow (plan section 7, with decision M3-3, in the final company structure):
+ *  1. HR fills in the profile. This only STARTS the hire (a request at Level 4 or 5).
+ *  2. The Director authorizes the level and reporting line (and may correct them). The Director can also hire directly,
+ *     at Levels 3 to 5 (never at or above their own level). The CEO / Founder / Owner sees the requests but hires nobody.
  *  3. On approval the system generates the Emp-ID, creates the login (Module 2) with a temporary password and emails it.
  *  4. The employee must change the temporary password at first login (Module 2 enforces it).
  * No Emp-ID, login or employee record exists before step 2.
@@ -47,13 +48,13 @@ export class JoiningService {
 
   async create(actor: Actor, dto: CreateEmployeeRequest, client: RequestInfo): Promise<CreateEmployeeResponse> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
-    const canAuthorize = access.permissions.has('org.manage'); // Owner or CEO
+    const canAuthorize = access.permissions.has('org.manage'); // the Director
     if (!canAuthorize && !access.permissions.has('people.manage')) {
       await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: null, outcome: 'denied', reason: 'hire_not_allowed', ...client });
       throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
     }
     if (!canAuthorize && !REQUEST_LEVELS.has(dto.level)) {
-      throw new BadRequestException({ statusCode: 400, code: 'level_not_allowed', message: 'You can start a hire at Level 4 or 5. The Owner or CEO place anyone higher.' });
+      throw new BadRequestException({ statusCode: 400, code: 'level_not_allowed', message: 'You can start a hire at Level 4 or 5. The Director places anyone higher.' });
     }
     if (dto.pay && !access.permissions.has('people.manage_pay')) {
       await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: null, outcome: 'denied', reason: 'pay_edit_not_allowed', ...client });
@@ -65,7 +66,7 @@ export class JoiningService {
       return { status: 'created', ...made };
     }
 
-    // Director or HR: validate now (so mistakes show immediately), then wait for the Owner or CEO.
+    // HR: validate now (so mistakes show immediately), then wait for the Director.
     const request = await this.prisma.$transaction(async (tx) => {
       await this.validate(tx, dto);
       if (await tx.hireRequest.findFirst({ where: { officialEmail: dto.officialEmail, status: 'pending' } })) {
@@ -95,9 +96,11 @@ export class JoiningService {
 
   // ===================================================================== authorize
 
+  /** The Director, HR and the CEO / Founder / Owner (who sees everything, view only) see the requests. */
   async list(actor: Actor, status?: string): Promise<HireRequestView[]> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
-    if (!access.permissions.has('org.manage') && !access.permissions.has('people.manage')) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
+    const allowed = ['org.manage', 'people.manage', 'people.view_personal'].some((p) => access.permissions.has(p));
+    if (!allowed) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
     const rows = await this.prisma.hireRequest.findMany({
       where: status && ['pending', 'approved', 'rejected'].includes(status) ? { status: status as 'pending' } : {},
       orderBy: { requestedAt: 'desc' },
@@ -125,7 +128,7 @@ export class JoiningService {
     }));
   }
 
-  /** The Owner or CEO authorize the level and reporting line; only now does the employee come into existence. */
+  /** The Director authorizes the level and reporting line; only now does the employee come into existence. */
   async approve(actor: Actor, requestId: string, body: ApproveHireRequest, client: RequestInfo): Promise<ApproveHireResponse> {
     const row = await this.prisma.hireRequest.findUnique({ where: { id: requestId } });
     if (!row) throw new NotFoundException('Hire request not found');
@@ -174,9 +177,12 @@ export class JoiningService {
     if (!manager) throw new NotFoundException(`Employee ${dto.reportsToEmpId} not found`);
     if (!level) throw new BadRequestException('Unknown level');
 
-    // The role follows the level (and the Sales department's own Level 4 role).
-    const roleKey = dto.level === 5 ? 'employee' : dto.level === 3 ? 'level3_default' : department.code === 'dep-sales' ? 'sales' : 'level4_default';
-    const role = await tx.role.findUniqueOrThrow({ where: { key: roleKey }, select: { id: true } });
+    // The role follows the level: the level's default role (L3 cto, L4 sales, L5 employee), except that a Level 4
+    // hire in the Finance department gets the finance role (the Finance duty is given separately by the Director).
+    const role =
+      dto.level === 4 && department.code === 'dep-fin'
+        ? await tx.role.findUniqueOrThrow({ where: { key: 'finance' }, select: { id: true } })
+        : await tx.role.findFirstOrThrow({ where: { isDefault: true, level: { number: dto.level } }, select: { id: true } });
     const problems = checkLevelRules(
       { id: 'new', empId: 'new', levelNumber: dto.level, roleId: role.id, status: 'active' },
       { id: manager.id, empId: manager.empId, levelNumber: manager.level.number, roleId: manager.roleId, status: manager.status },
@@ -187,6 +193,11 @@ export class JoiningService {
   }
 
   private async materialize(actor: Actor, dto: CreateEmployeeRequest, requestedBy: string, requestId: string | null, client: RequestInfo, meta: { corrected?: boolean } = {}) {
+    // Privilege-escalation guard (the same rule as a level change): nobody places a new person at or above their own level.
+    if (dto.level <= actor.levelNumber) {
+      await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: null, outcome: 'denied', reason: 'level_not_assignable', details: { requestedLevel: String(dto.level) }, ...client });
+      throw new ForbiddenException({ statusCode: 403, code: 'level_not_assignable', message: `You cannot place someone at Level ${dto.level}` });
+    }
     const created = await this.prisma.$transaction(async (tx) => {
       await this.hierarchy.lock(tx);
       const { department, office, manager, level, role } = await this.validate(tx, dto);

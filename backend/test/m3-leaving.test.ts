@@ -9,8 +9,7 @@ import { createTestApp, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
-const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner: sees everything, changes nothing
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
@@ -25,7 +24,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
+  HR = t.fixtures.HR;
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -53,7 +52,7 @@ describe('M3 Pakistan-time rules', () => {
 
 describe('M3 leaving: processed immediately when the last working day is already over', () => {
   it('only HR or the Director (above or over the person) can set a last working day', async () => {
-    for (const who of [DEV1, CTO, FINANCE, CEO, OWNER]) await offboard(who, DEV2, isoDay(0)).expect(403);
+    for (const who of [DEV1, CTO, FINANCE, OWNER]) await offboard(who, DEV2, isoDay(0)).expect(403);
     await offboard(HR, DIRECTOR, isoDay(0)).expect(403); // upward
     await offboard(HR, HR, isoDay(0)).expect(403); // themselves
     await offboard(HR, SALES1, isoDay(0)).expect(403); // beside, same level
@@ -108,27 +107,27 @@ describe('M3 leaving: processed immediately when the last working day is already
     expect(await prisma.employmentHistory.count({ where: { employee: { empId: DEV2 }, eventType: 'left' } })).toBe(1);
   });
 
-  it('never moves the leaver\'s reports by itself: they are listed until the Owner or CEO assign a new manager', async () => {
-    // a new Level 5 hire reports to Finance (Level 4), who then leaves
-    const hire = await t.as(OWNER).post('/api/v1/employees').send({ name: 'Orphan Report', designation: 'Analyst', departmentId: 'dep-fin', officeId: 'off-khi', officialEmail: 'orphan.report@acevatech.com', level: 5, reportsToEmpId: FINANCE, joiningDate: '2026-11-01', type: 'full_time' }).expect(201);
+  it('never moves the leaver\'s reports by itself: they are listed until the Director assigns a new manager', async () => {
+    // a new Level 5 hire (made directly by the Director) reports to Finance (Level 4), who then leaves
+    const hire = await t.as(DIRECTOR).post('/api/v1/employees').send({ name: 'Orphan Report', designation: 'Analyst', departmentId: 'dep-fin', officeId: 'off-khi', officialEmail: 'orphan.report@acevatech.com', level: 5, reportsToEmpId: FINANCE, joiningDate: '2026-11-01', type: 'full_time' }).expect(201);
     const orphan = hire.body.empId as string;
     const res = await offboard(DIRECTOR, FINANCE, isoDay(-1)).expect(200);
     expect(res.body.directReportsNeedingManager).toContain(orphan);
     const finance = await prisma.employee.findUniqueOrThrow({ where: { empId: FINANCE } });
     expect((await prisma.employee.findUniqueOrThrow({ where: { empId: orphan } })).reportsToId).toBe(finance.id); // unchanged
 
-    // the unresolved reports are shown to Owner, CEO, Director and HR; nobody else
-    for (const who of [OWNER, CEO, DIRECTOR, HR]) {
+    // the unresolved reports are shown to the Director, HR and the CEO / Founder / Owner (view only); nobody else
+    for (const who of [OWNER, DIRECTOR, HR]) {
       const list = (await t.as(who).get('/api/v1/employees/unresolved-reports').expect(200)).body as Array<{ empId: string; leftManager: { empId: string } }>;
       expect(list.find((r) => r.empId === orphan)!.leftManager.empId).toBe(FINANCE);
     }
-    await t.as(DEV1).get('/api/v1/employees/unresolved-reports').expect(403);
+    for (const who of [DEV1, CTO]) await t.as(who).get('/api/v1/employees/unresolved-reports').expect(403);
 
-    // only the Owner or CEO can reassign (Director and HR cannot)
-    await t.as(DIRECTOR).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'Director may not change lines' }).expect(403);
+    // only the Director can reassign (HR and the CEO / Founder / Owner cannot)
     await t.as(HR).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'HR may not change lines' }).expect(403);
-    await t.as(CEO).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'Finance lead left; reassigned' }).expect(200);
-    const after = (await t.as(CEO).get('/api/v1/employees/unresolved-reports').expect(200)).body as Array<{ empId: string }>;
+    await t.as(OWNER).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'The owner may not change lines' }).expect(403);
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${orphan}/job`).send({ reportsToEmpId: DIRECTOR, reason: 'Finance lead left; reassigned' }).expect(200);
+    const after = (await t.as(DIRECTOR).get('/api/v1/employees/unresolved-reports').expect(200)).body as Array<{ empId: string }>;
     expect(after.some((r) => r.empId === orphan)).toBe(false);
   });
 });

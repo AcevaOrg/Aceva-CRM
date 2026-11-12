@@ -485,11 +485,18 @@ export class AuthService {
 
   // ===================================================================== administration
 
-  /** A higher level (above them in the reporting line) or HR unlocks a locked account. */
+  /**
+   * A higher level (above them in the reporting line) or HR unlocks a locked account. The CEO / Founder / Owner
+   * unlocks only his direct report (the Director), never anyone else: he manages nobody.
+   */
   async unlock(actor: Actor, targetEmpId: string, reason: string | undefined, client: RequestInfo): Promise<void> {
     const target = await this.requireTarget(targetEmpId);
-    const isHr = (await this.permissions.getEffectiveAccess(actor.id)).duties.includes('hr');
-    if (!isHr && !(await this.scope.canAccess(actor.id, target.id, 'below'))) {
+    const isOwner = actor.levelNumber === 1;
+    const isHr = !isOwner && (await this.permissions.getEffectiveAccess(actor.id)).duties.includes('hr');
+    const allowed = isOwner
+      ? (await this.prisma.employee.count({ where: { id: target.id, reportsToId: actor.id } })) === 1 // his direct report only
+      : isHr || (await this.scope.canAccess(actor.id, target.id, 'below'));
+    if (!allowed) {
       await this.denyAdmin(actor, 'auth.account.unlock', target.empId, client);
     }
     const { count } = await this.prisma.credential.updateMany({ where: { employeeId: target.id, lockedAt: { not: null } }, data: { lockedAt: null, failedAttempts: 0, updatedBy: actor.id } });
@@ -534,19 +541,21 @@ export class AuthService {
   }
 
   /**
-   * Lost authenticator phone. Owner and CEO may reset anyone of lower rank; the Director anyone below them in the
-   * reporting chain; HR duty people of lower rank. Never oneself, never the same level, never upward.
+   * Lost authenticator phone. The Director may reset anyone below them in the reporting chain; HR duty people of lower
+   * rank; the CEO / Founder / Owner ONLY his direct report (the Director), never anyone else.
+   * Never oneself, never the same level, never upward.
    * The old secret is destroyed, every session ends, and a fresh authenticator must be set up at the next login.
    */
   async resetTwoFactor(actor: Actor, targetEmpId: string, reason: string, client: RequestInfo): Promise<{ ended: number }> {
-    const target = await this.prisma.employee.findUnique({ where: { empId: targetEmpId }, select: { id: true, empId: true, status: true, level: { select: { number: true } } } });
+    const target = await this.prisma.employee.findUnique({ where: { empId: targetEmpId }, select: { id: true, empId: true, status: true, reportsToId: true, level: { select: { number: true } } } });
     if (!target) throw new NotFoundException('Employee not found');
     const access = await this.permissions.getEffectiveAccess(actor.id);
     const lowerRank = target.level.number > actor.levelNumber; // strictly lower: never self, same level or upward
-    const byOwnerOrCeo = actor.levelNumber <= 2;
-    const byDirector = actor.roleKey === 'director' && (await this.scope.canAccess(actor.id, target.id, 'below'));
-    const byHr = access.duties.includes('hr');
-    const allowed = target.id !== actor.id && lowerRank && (byOwnerOrCeo || byDirector || byHr);
+    const isOwner = actor.levelNumber === 1;
+    const byOwner = isOwner && target.reportsToId === actor.id; // his direct report (the Director), nobody else
+    const byDirector = !isOwner && actor.roleKey === 'director' && (await this.scope.canAccess(actor.id, target.id, 'below'));
+    const byHr = !isOwner && access.duties.includes('hr');
+    const allowed = target.id !== actor.id && lowerRank && (byOwner || byDirector || byHr);
     if (!allowed) await this.denyAdmin(actor, 'auth.reset_two_factor', target.empId, client);
     if (target.status === 'left') throw new BadRequestException({ statusCode: 400, code: 'employee_left', message: 'This employee has left the company' });
 
@@ -561,7 +570,7 @@ export class AuthService {
       targetType: 'employee',
       targetId: target.empId,
       reason,
-      details: { ended, rule: byOwnerOrCeo ? 'owner_or_ceo' : byDirector ? 'director' : 'hr_duty' },
+      details: { ended, rule: byOwner ? 'owner_direct_report' : byDirector ? 'director' : 'hr_duty' },
       ...client,
     });
     return { ended };

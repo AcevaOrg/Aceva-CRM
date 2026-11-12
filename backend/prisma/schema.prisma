@@ -104,7 +104,7 @@ enum JobStatus {
 // M1: levels, roles, permissions, duties, departments, offices
 // ---------------------------------------------------------------------------
 
-/// The five organisational levels: 1 Owner, 2 CEO, 3 Director and CTO, 4 Heads and Leads, 5 Employees.
+/// The five organisational levels: 1 CEO / Founder / Owner, 2 Director, 3 CTO, 4 Sales and Finance, 5 Developer / SQA.
 model Level {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   number      Int      @unique
@@ -236,7 +236,7 @@ model Department {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   code           String    @unique
   name           String    @unique
-  /// The department head, set explicitly by the Owner or CEO (never worked out from reporting lines).
+  /// The department head, set explicitly by the Director (never worked out from reporting lines).
   headEmployeeId String?   @map("head_employee_id") @db.Uuid
   archivedAt     DateTime? @map("archived_at") @db.Timestamptz(3)
   createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -293,7 +293,7 @@ model Employee {
   // Job (visible to the employee and the levels above)
   levelId             String         @map("level_id") @db.Uuid
   roleId              String         @map("role_id") @db.Uuid
-  /// The primary reporting relationship. Null only for the Owner.
+  /// The primary reporting relationship. Null only for the CEO / Founder / Owner (Level 1).
   reportsToId         String?        @map("reports_to_id") @db.Uuid
   joiningDate         DateTime       @map("joining_date") @db.Date
   employmentType      EmploymentType @default(full_time) @map("employment_type")
@@ -344,7 +344,7 @@ model Employee {
   @@map("employees")
 }
 
-/// Personal section: employee, HR, Director and above.
+/// Personal section: the employee, HR, the Director and the CEO / Founder / Owner (view only).
 model EmployeePersonal {
   employeeId               String   @id @map("employee_id") @db.Uuid
   /// AES-256-GCM ciphertext (encrypted by the app, never stored in plain text).
@@ -365,7 +365,7 @@ model EmployeePersonal {
   @@map("employee_personal")
 }
 
-/// Pay section: the employee (own only), Director, CEO, Owner and the finance duty person.
+/// Pay section: the employee (own only), the Director, the CEO / Founder / Owner (view only) and the finance duty person.
 model EmployeePay {
   employeeId           String   @id @map("employee_id") @db.Uuid
   baseSalary           Decimal  @default(0) @map("base_salary") @db.Decimal(12, 2)
@@ -428,8 +428,8 @@ model StandIn {
   @@map("stand_ins")
 }
 
-/// Same-level reporting is allowed ONLY where listed here (plan: the CTO reports to the
-/// Director, both Level 3). Level and reporting line are separate concepts.
+/// Same-level reporting is allowed ONLY where listed here. In the final structure NO pair is listed: everybody reports
+/// to someone at a strictly higher level. Level and reporting line are separate concepts.
 model SameLevelReportingRule {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   managerRoleId  String   @map("manager_role_id") @db.Uuid
@@ -710,7 +710,7 @@ model ScheduledJob {
   @@map("scheduled_jobs")
 }
 
-/// Director or HR start a hire; only the Owner or CEO authorize the level and reporting line (decision M3-3).
+/// HR starts a hire; only the Director authorizes the level and reporting line, and may also hire directly (decision M3-3).
 /// Nothing exists as an employee (no Emp-ID, no login) until it is approved. Personal and pay details wait here encrypted.
 model HireRequest {
   id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

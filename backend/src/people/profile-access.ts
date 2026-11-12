@@ -5,16 +5,16 @@ import type { ProfileAccessView } from '@aceva/contracts';
  *
  *   Basic      everyone (the staff directory)
  *   Job        the employee, the levels above them (their reporting line), and Director/HR who manage people
- *   Personal   the employee, HR, Director and above        (permission people.view_personal)
- *   Pay        the employee (own only), Director, CEO, Owner and the finance duty person   (people.view_pay)
- *   Documents  the employee, HR, Director and above        (people.view_personal)
+ *   Personal   the employee, HR, the Director and the CEO / Founder / Owner      (permission people.view_personal)
+ *   Pay        the employee (own only), the Director, the CEO / Founder / Owner and the finance duty person (people.view_pay)
+ *   Documents  the employee, HR, the Director and the CEO / Founder / Owner      (people.view_personal)
  *
  * Changes:
  *   - the employee changes only their own phone, address and emergency contact
  *   - Director or HR (people.manage) change job-related fields, for people of lower rank or below them
  *   - only the Director (people.manage_pay) changes pay, never their own
- *   - levels and reporting lines change only through the Owner/CEO rules of Module 1; so the Owner and CEO (org.manage)
- *     also get the Job form for people below them (they are the only ones who can reassign a manager)
+ *   - levels and reporting lines change only through the Director's rules of Module 1 (org.manage); the Director gets
+ *     the Job form for people below them anyway (people.manage). The CEO / Founder / Owner sees everything, edits nothing.
  *
  * Pure function: the server calls it for every request, and the screens receive the result.
  */

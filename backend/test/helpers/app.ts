@@ -35,11 +35,11 @@ export interface TestApp {
   storageRoot: string;
   /** A request made "as" a demo person with a real session. Call signInAll() first. */
   as: (empId: string | null) => Client;
-  /** Test-only CEO and HR officer (not in the demo seed). Filled by signInAll(). */
-  fixtures: { CEO: string; HR: string };
-  /** Creates the test-only CEO and HR officer (and logins for them) without signing anyone in. */
+  /** The test-only HR officer (not in the demo seed). Filled by signInAll() or ensureFixtures(). */
+  fixtures: { HR: string };
+  /** Creates the test-only HR officer (and a login for them) without signing anyone in. */
   ensureFixtures: () => Promise<void>;
-  /** Creates the test-only CEO and HR officer, then logs every demo person and them in for real (password, and the authenticator code where 2FA is required). */
+  /** Creates the test-only HR officer, then logs every demo person and them in for real (password, and the authenticator code where 2FA is required). */
   signInAll: () => Promise<void>;
   /** A client with a real session: logs in with Emp-ID and password (and the authenticator code when needed). */
   signIn: (empId: string, options?: { password?: string; rememberMe?: boolean; ip?: string; userAgent?: string }) => Promise<SignedIn>;
@@ -153,7 +153,7 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
   };
 
   const personas = new Map<string, SignedIn>();
-  const fixtures = { CEO: '', HR: '' };
+  const fixtures = { HR: '' };
   const ensureFixtures = async () => {
     const prisma = createTestPrisma();
     try {
@@ -165,7 +165,7 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
   };
   const signInAll = async () => {
     await ensureFixtures();
-    const everyone = [...DEMO_EMPLOYEES.map((p) => p.empId), fixtures.CEO, fixtures.HR];
+    const everyone = [...DEMO_EMPLOYEES.map((p) => p.empId), fixtures.HR];
     for (const empId of everyone) personas.set(empId, await signIn(empId));
   };
 

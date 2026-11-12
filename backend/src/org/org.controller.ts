@@ -51,14 +51,14 @@ export class OrgController {
 
   @Post('departments')
   @RequirePermission('org.manage')
-  @ApiOperation({ summary: 'Add a department with its head (Owner or CEO). A reason is required.' })
+  @ApiOperation({ summary: 'Add a department with its head (the Director). A reason is required.' })
   createDepartment(@CurrentActor() actor: Actor, @Body() body: CreateDepartmentDto, @ClientInfo() client: RequestInfo) {
     return this.structure.createDepartment(actor, body, client);
   }
 
   @Patch('departments/:code')
   @RequirePermission('org.manage')
-  @ApiOperation({ summary: 'Rename a department or change its head (Owner or CEO). Head changes are audited.' })
+  @ApiOperation({ summary: 'Rename a department or change its head (the Director). Head changes are audited.' })
   updateDepartment(@CurrentActor() actor: Actor, @Param('code') code: string, @Body() body: UpdateDepartmentDto, @ClientInfo() client: RequestInfo) {
     return this.structure.updateDepartment(actor, code, body, client);
   }
@@ -72,14 +72,14 @@ export class OrgController {
 
   @Post('offices')
   @RequirePermission('org.manage')
-  @ApiOperation({ summary: 'Add an office (Owner or CEO)' })
+  @ApiOperation({ summary: 'Add an office (the Director)' })
   createOffice(@CurrentActor() actor: Actor, @Body() body: CreateOfficeDto, @ClientInfo() client: RequestInfo) {
     return this.structure.createOffice(actor, body, client);
   }
 
   @Patch('offices/:code')
   @RequirePermission('org.manage')
-  @ApiOperation({ summary: 'Rename an office or change its city (Owner or CEO)' })
+  @ApiOperation({ summary: 'Rename an office or change its city (the Director)' })
   updateOffice(@CurrentActor() actor: Actor, @Param('code') code: string, @Body() body: UpdateOfficeDto, @ClientInfo() client: RequestInfo) {
     return this.structure.updateOffice(actor, code, body, client);
   }
@@ -116,7 +116,7 @@ export class OrgController {
   @Patch('employees/:empId/level')
   @RequirePermission('org.manage')
   @Scope('empId', 'below')
-  @ApiOperation({ summary: 'Change an employee level (Owner or CEO only). A reason is required.' })
+  @ApiOperation({ summary: 'Change an employee level (the Director only, Levels 3 to 5). A reason is required.' })
   changeLevel(
     @CurrentActor() actor: Actor,
     @Param('empId') empId: string,
@@ -129,7 +129,7 @@ export class OrgController {
   @Patch('employees/:empId/reporting-line')
   @RequirePermission('org.manage')
   @Scope('empId', 'below')
-  @ApiOperation({ summary: 'Change who an employee reports to (Owner or CEO only). Validated before saving.' })
+  @ApiOperation({ summary: 'Change who an employee reports to (the Director only). Validated before saving.' })
   changeReportingLine(
     @CurrentActor() actor: Actor,
     @Param('empId') empId: string,

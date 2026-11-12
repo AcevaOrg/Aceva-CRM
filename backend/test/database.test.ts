@@ -66,29 +66,46 @@ describe('seed data integrity', () => {
     for (const unused of ['ACV-0002', 'ACV-0005', 'ACV-0015']) expect(employees.map((e) => e.empId)).not.toContain(unused);
   });
 
-  it('seeds the Owner, Director and CTO; the CEO is an official level and role, but the demo company has no CEO person', async () => {
+  it('seeds the final structure: CEO / Founder / Owner (L1) > Director (L2) > CTO (L3), one person each', async () => {
     const byRole = async (key: string) =>
-      prisma.employee.findFirstOrThrow({ where: { role: { key } }, include: { level: true, reportsTo: true } });
-    const owner = await byRole('owner');
-    const director = await byRole('director');
-    const cto = await byRole('cto');
-    expect([owner.level.number, director.level.number, cto.level.number]).toEqual([1, 3, 3]);
+      prisma.employee.findMany({ where: { role: { key } }, include: { level: true, reportsTo: true } });
+    const owners = await byRole('owner');
+    const directors = await byRole('director');
+    const [cto] = await byRole('cto');
+    expect([owners.length, directors.length]).toEqual([1, 1]);
+    const [owner] = owners;
+    const [director] = directors;
+    expect([owner.empId, director.empId, cto.empId]).toEqual(['ACV-0001', 'ACV-0003', 'ACV-0004']);
+    expect([owner.level.number, director.level.number, cto.level.number]).toEqual([1, 2, 3]);
     expect(owner.reportsToId).toBeNull();
-    expect(director.reportsToId).toBe(owner.id); // no CEO in the demo seed, so the Director reports to the Owner
-    expect(cto.reportsToId).toBe(director.id);
-    // Level 2 and the CEO role still exist (the five official levels are unchanged); nobody holds it yet.
-    expect((await prisma.level.findMany({ orderBy: { number: 'asc' } })).map((l) => l.number)).toEqual([1, 2, 3, 4, 5]);
-    expect((await prisma.role.findUniqueOrThrow({ where: { key: 'ceo' }, include: { level: true } })).level.number).toBe(2);
-    expect(await prisma.employee.count({ where: { role: { key: 'ceo' } } })).toBe(0);
+    expect(director.reportsToId).toBe(owner.id);
+    expect(await prisma.employee.count({ where: { reportsToId: owner.id } })).toBe(1); // only the Director reports to the owner
+    expect(cto.reportsToId).toBe(director.id); // strictly below the Director: no same-level line
+    expect((await prisma.role.findUniqueOrThrow({ where: { key: 'owner' } })).name).toBe('CEO / Founder / Owner'); // the key stays "owner"
   });
 
-  it('has no role called "lead" (the default Level 4 role is level4_default) and every employee has a valid role', async () => {
-    expect(await prisma.role.findUnique({ where: { key: 'lead' } })).toBeNull();
-    expect(ROLES.map((r) => r.key)).not.toContain('lead');
-    const level4 = await prisma.role.findUniqueOrThrow({ where: { key: 'level4_default' }, include: { level: true, rolePermissions: true } });
-    expect(level4.level.number).toBe(4);
-    expect(level4.isDefault).toBe(true);
-    expect(level4.rolePermissions.length).toBeGreaterThan(0);
+  it('has exactly the final roles (no ceo, level3_default, level4_default or lead) and every employee has a valid role', async () => {
+    const roles = await prisma.role.findMany({ include: { level: true }, orderBy: { key: 'asc' } });
+    expect(roles.map((r) => [r.key, r.level.number, r.isDefault])).toEqual([
+      ['cto', 3, true],
+      ['director', 2, true],
+      ['employee', 5, true],
+      ['finance', 4, false],
+      ['owner', 1, true],
+      ['sales', 4, true],
+    ]);
+    for (const removed of ['ceo', 'level3_default', 'level4_default', 'lead']) {
+      expect(await prisma.role.findUnique({ where: { key: removed } }), removed).toBeNull();
+      expect(ROLES.map((r) => r.key)).not.toContain(removed);
+    }
+    // No same-level reporting is configured any more (the CTO is strictly below the Director).
+    expect(await prisma.sameLevelReportingRule.count()).toBe(0);
+    // The finance person has the finance role and the Finance duty; the role itself gives no more than an employee's.
+    const sana = await prisma.employee.findUniqueOrThrow({ where: { empId: 'ACV-0010' }, include: { role: true, level: true } });
+    expect([sana.role.key, sana.level.number]).toEqual(['finance', 4]);
+    const keys = async (key: string) =>
+      (await prisma.rolePermission.findMany({ where: { role: { key } }, include: { permission: true } })).map((p) => p.permission.key).sort();
+    expect(await keys('finance')).toEqual(await keys('employee'));
     const roleLevelMismatch = await prisma.$queryRaw<Array<{ emp_id: string }>>`
       SELECT e.emp_id FROM employees e JOIN roles r ON r.id = e.role_id WHERE r.level_id <> e.level_id`;
     expect(roleLevelMismatch).toEqual([]);
@@ -99,11 +116,26 @@ describe('seed data integrity', () => {
     expect(without.map((e) => e.role.key)).toEqual(['owner']);
   });
 
-  it('has a Director with the HR duty (no separate demo HR person) and a Finance-duty employee', async () => {
+  it('has a Director with the HR and sales-manager duties (no separate demo HR person) and a Finance-duty employee', async () => {
     const holders = async (duty: string) =>
       (await prisma.employeeDuty.findMany({ where: { duty: { key: duty }, endedAt: null }, include: { employee: true } })).map((d) => d.employee.empId);
     expect(await holders('hr')).toEqual(['ACV-0003']);
-    expect((await holders('finance')).length).toBe(1);
+    expect(await holders('sales_manager')).toEqual(['ACV-0003']);
+    expect(await holders('finance')).toEqual(['ACV-0010']);
+  });
+
+  it("gives the CEO / Founder / Owner every view but nothing to manage or approve (except the Director's own items)", async () => {
+    const keys = async (role: string) =>
+      (await prisma.rolePermission.findMany({ where: { role: { key: role } }, include: { permission: true } })).map((p) => p.permission.key);
+    const owner = await keys('owner');
+    expect(owner).toEqual(expect.arrayContaining(['audit.view', 'finance.view', 'payroll.view', 'sales.all', 'settings.view', 'activity.view_all', 'people.view_pay']));
+    const managing = ['org.manage', 'roles.manage', 'people.manage', 'people.manage_pay', 'settings.manage', 'payroll.prepare', 'payroll.review', 'payroll.approve',
+      'finance.entry_create', 'finance.entry_approve', 'finance.close', 'finance.reopen', 'sales.commission_approve', 'sales.targets', 'duty.assign', 'task.assign', 'standin.manage'];
+    for (const key of managing) expect(owner, key).not.toContain(key);
+    // kept only so the Director's own leave and attendance corrections can be approved (nobody approves their own)
+    expect(owner).toEqual(expect.arrayContaining(['leave.approve', 'attendance.approve_correction', 'approval.approve']));
+    // everything the old "Owner or CEO" could change now belongs to the Director
+    expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'sales.commission_approve', 'duty.assign']));
   });
 
   it('keeps passwords only as Argon2id hashes (the demo logins come from a separate dev-only script)', async () => {
@@ -117,10 +149,29 @@ describe('seed data integrity', () => {
     history.forEach((h) => expect(h.passwordHash.startsWith('$argon2id$')).toBe(true));
   });
 
-  it('is safe to run twice (no duplicates)', async () => {
+  it('is safe to run twice (no duplicates), and keeps the role permissions exactly as listed', async () => {
+    // a stray permission on a role (for example one left over from the old structure) is taken away again
+    await prisma.rolePermission.create({ data: { role: { connect: { key: 'owner' } }, permission: { connect: { key: 'org.manage' } } } });
     await seedDatabase(prisma);
     expect(await prisma.employee.count()).toBe(DEMO_EMPLOYEES.length);
     expect(await prisma.rolePermission.count()).toBe(ROLES.reduce((n, r) => n + new Set(r.permissions).size, 0));
+    expect(await prisma.rolePermission.count({ where: { role: { key: 'owner' }, permission: { key: 'org.manage' } } })).toBe(0);
+  });
+
+  it('refuses to re-seed a database that still has the old structure, and changes nothing', async () => {
+    // put the Director back at Level 3 on an old-style role, as a database made before the final structure has it
+    const level3 = await prisma.level.findUniqueOrThrow({ where: { number: 3 } });
+    const level2 = await prisma.level.findUniqueOrThrow({ where: { number: 2 } });
+    const oldRole = await prisma.role.create({ data: { key: 'level3_default', name: 'Director / CTO (default)', levelId: level3.id } });
+    await prisma.employee.update({ where: { empId: 'ACV-0003' }, data: { levelId: level3.id, roleId: oldRole.id } });
+    try {
+      await expect(seedDatabase(prisma)).rejects.toThrow(/old company structure: ACV-0003 \(role level3_default, Level 3\)/);
+      expect(await prisma.role.count({ where: { key: 'level3_default' } })).toBe(1); // rolled back: nothing was changed
+    } finally {
+      const director = await prisma.role.findUniqueOrThrow({ where: { key: 'director' } });
+      await prisma.employee.update({ where: { empId: 'ACV-0003' }, data: { levelId: level2.id, roleId: director.id } });
+      await prisma.role.delete({ where: { id: oldRole.id } });
+    }
   });
 });
 
@@ -146,7 +197,7 @@ describe('reporting closure table', () => {
     expect(Number(rows[0].extra)).toBe(0);
   });
 
-  it('answers "everyone below me" in one query: the CTO sees 5 people below and the Owner sees all', async () => {
+  it('answers "everyone below me" in one query: the CTO sees 5 people below and the CEO / Founder / Owner sees all', async () => {
     const below = async (roleKey: string) =>
       prisma.reportingClosure.count({ where: { ancestor: { role: { key: roleKey } }, depth: { gt: 0 } } });
     expect(await below('cto')).toBe(5);

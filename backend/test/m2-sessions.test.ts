@@ -12,6 +12,7 @@ import type { PrismaClient } from '../src/generated/prisma/client';
 import { RedisService } from '../src/redis/redis.service';
 import { createTestApp, TEST_PASSWORD, type TestApp } from './helpers/app';
 import { baseEnv } from './helpers/base-env';
+import { seedDevPasswords } from '../prisma/seed-dev-passwords';
 import { createEmployee } from './helpers/people';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
@@ -28,7 +29,6 @@ class FinanceScreenController {
 }
 
 const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 const FINANCE = 'ACV-0010';
@@ -53,7 +53,6 @@ beforeAll(async () => {
   t = await createTestApp({ extraControllers: [FinanceScreenController] });
   prisma = createTestPrisma();
   await t.ensureFixtures();
-  CEO = t.fixtures.CEO;
   redis = t.app.get(RedisService);
   sessions = t.app.get(SessionService);
 });
@@ -337,7 +336,13 @@ describe('M2 two-step login (TOTP)', () => {
   });
 
   it('five wrong codes end the session and are recorded', async () => {
-    const login = await t.rawLogin({ empId: CEO, password: TEST_PASSWORD }).expect(200);
+    // a fresh person for whom 2FA is mandatory (Finance duty) and who has not set it up yet
+    const person = await createEmployee(prisma, { name: 'Two Step Person' });
+    const duty = await prisma.duty.findUniqueOrThrow({ where: { key: 'finance' }, select: { id: true } });
+    await prisma.employeeDuty.create({ data: { employeeId: person.id, dutyId: duty.id, reason: 'Test fixture' } });
+    await seedDevPasswords(prisma, TEST_PASSWORD);
+    const login = await t.rawLogin({ empId: person.empId, password: TEST_PASSWORD }).expect(200);
+    expect(login.body.status).toBe('2fa_setup_required');
     const headers = { Cookie: (login.headers['set-cookie'] as unknown as string[])[0].split(';')[0], 'X-CSRF-Token': login.body.csrfToken };
     await request(t.app.getHttpServer()).post('/api/v1/auth/2fa/setup').set(headers).send({}).expect(200);
     for (let i = 0; i < 4; i++) await request(t.app.getHttpServer()).post('/api/v1/auth/2fa/verify').set(headers).send({ code: '000000' }).expect(400);

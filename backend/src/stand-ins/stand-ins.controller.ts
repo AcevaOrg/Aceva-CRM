@@ -30,7 +30,7 @@ export class StandInsController {
 
   @Delete(':id')
   @RequirePermission('standin.manage')
-  @ApiOperation({ summary: 'End an away period early (the manager, or Owner/CEO for people below them)' })
+  @ApiOperation({ summary: 'End an away period early (the manager, or the Director for people below them)' })
   revoke(
     @CurrentActor() actor: Actor,
     @Param('id', new ParseUUIDPipe()) id: string,

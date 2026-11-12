@@ -40,7 +40,7 @@ export class HireRequestsController {
 
   @Get()
   @Authenticated()
-  @ApiOperation({ summary: 'Hire requests (Owner, CEO, Director, HR). ?status=pending|approved|rejected' })
+  @ApiOperation({ summary: 'Hire requests (the Director, HR, and the CEO / Founder / Owner to view). ?status=pending|approved|rejected' })
   list(@CurrentActor() actor: Actor, @Query('status') status?: string) {
     return this.joining.list(actor, status);
   }
@@ -48,7 +48,7 @@ export class HireRequestsController {
   @Post(':id/approve')
   @RequirePermission('org.manage')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Owner or CEO authorize the level and reporting line (they may correct them); the employee is created now' })
+  @ApiOperation({ summary: 'The Director authorizes the level and reporting line (and may correct them); the employee is created now' })
   approve(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: ApproveHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.approve(actor, id, body, client);
   }
@@ -56,7 +56,7 @@ export class HireRequestsController {
   @Post(':id/reject')
   @RequirePermission('org.manage')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Owner or CEO reject a hire request' })
+  @ApiOperation({ summary: 'The Director rejects a hire request' })
   reject(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: RejectHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.reject(actor, id, body.reason, client);
   }
@@ -80,14 +80,14 @@ export class PeopleController {
 
   @Get('unresolved-reports')
   @Authenticated()
-  @ApiOperation({ summary: 'People who still report to someone who left (the Owner or CEO assign a new manager)' })
+  @ApiOperation({ summary: 'People who still report to someone who left (the Director assigns a new manager)' })
   unresolvedReports(@CurrentActor() actor: Actor) {
     return this.people.unresolvedReports(actor);
   }
 
   @Post()
   @Authenticated()
-  @ApiOperation({ summary: 'Joining workflow. Director/HR start a hire (Level 4-5) that waits for the Owner or CEO; Owner/CEO create at once. On creation the Emp-ID is generated and a welcome email with a temporary password is sent.' })
+  @ApiOperation({ summary: 'Joining workflow. HR starts a hire (Level 4-5) that waits for the Director; the Director creates at once (Levels 3-5). On creation the Emp-ID is generated and a welcome email with a temporary password is sent.' })
   create(@CurrentActor() actor: Actor, @Body() body: CreateEmployeeDto, @ClientInfo() client: RequestInfo) {
     return this.joining.create(actor, body, client);
   }
@@ -131,7 +131,7 @@ export class PeopleController {
 
   @Patch(':empId/job')
   @Authenticated()
-  @ApiOperation({ summary: 'Change joining date, type or capacity (Director or HR). Levels and reporting lines: Owner or CEO only.' })
+  @ApiOperation({ summary: 'Change joining date, type or capacity (Director or HR). Levels and reporting lines: the Director only.' })
   updateJob(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: UpdateJobDto, @ClientInfo() client: RequestInfo) {
     return this.people.updateJob(actor, empId, body, client);
   }
