@@ -6,6 +6,12 @@ Machine-readable OpenAPI JSON: `http://localhost:4000/api/docs-json`
 
 Request and response shapes are defined once, in `packages/contracts/src` (Zod schemas), and shared with the website.
 
+**Company structure used by these rules** (final): Level 1 CEO / Founder / Owner (role key `owner`, one person; sees
+everything, approves and manages nothing), Level 2 Director (`director`, the only approver and the org administrator,
+holds the HR and sales-manager duties), Level 3 CTO (`cto`), Level 4 Sales (`sales`) and Finance (`finance`, with the
+Finance duty), Level 5 Developer / SQA (`employee`). Everybody reports to a strictly higher level; no same-level line
+is configured.
+
 ## How requests are protected
 
 - **Login gives an HttpOnly session cookie** (`aceva_session`, SameSite=Lax, Secure in production). Page scripts cannot read it.
@@ -42,9 +48,9 @@ No login needed. `{ "status": "ok", "database": "up", "time": "...", "version": 
 | `DELETE /auth/sessions` | logged in | Log out all my other devices |
 | `GET /auth/login-history` | logged in | My recent logins and failed attempts |
 | `POST /auth/step-up` | logged in | **Confirm again.** Body `{ password, code? }`. The server checks the password and, for people with an authenticator, the current code (a code works once). Wrong answers get one message; 5 wrong in 15 minutes end the session. A correct answer allows risky actions for 5 minutes in this session only (`validForSec: 300`). Needed for bank-account reveal, salary reveal and pay edits (otherwise 403 `step_up_required`) |
-| `POST /auth/employees/:empId/unlock` | `auth.unlock_account`, above them in the line or HR duty | Unlock a locked account |
+| `POST /auth/employees/:empId/unlock` | `auth.unlock_account`, above them in the line or HR duty; the CEO / Founder / Owner only for his direct report (the Director) | Unlock a locked account |
 | `POST /auth/employees/:empId/force-logout` | `session.force_logout`, below the caller | Ends every session on every device at once |
-| `POST /auth/employees/:empId/reset-2fa` | `auth.reset_two_factor`: Owner/CEO (anyone below), Director (below them in the line), HR duty (below them in the line). Never yourself, same level or upward | Body `{ reason }`. Lost authenticator phone: deletes the old secret, ends every session, and the person must enrol a new authenticator at next login. Audited (`auth.2fa.reset`). |
+| `POST /auth/employees/:empId/reset-2fa` | `auth.reset_two_factor`: the Director (below them in the line), HR duty (lower rank), the CEO / Founder / Owner (only his direct report, the Director). Never yourself, same level or upward | Body `{ reason }`. Lost authenticator phone: deletes the old secret, ends every session, and the person must enrol a new authenticator at next login. Audited (`auth.2fa.reset`, with the rule used: `director`, `hr_duty` or `owner_direct_report`). |
 | `POST /auth/employees/:empId/temporary-password` | `auth.set_temporary_password` (Director, HR duty) | For people with no official email only. The password is shown once and must be changed at next login |
 
 Limits: 5 wrong passwords lock the account (a higher level or HR unlocks it). From one internet address, failures are
@@ -58,15 +64,15 @@ slowed after 5 in 5 minutes and blocked after 15 in 15 minutes. "Remember me" ne
 | `GET /access/roles`, `/access/duties`, `/access/permissions` | `org.view` | Roles with permissions; extra duties; the permission catalogue (read only) |
 | `GET /org/tree` | `org.view` | The organisation chart as a tree |
 | `GET /org/team`, `GET /org/team/:empId` | logged in / scope: me or below | Me and everyone below me (filter runs in the database); one person, refused when above or beside me |
-| `PATCH /org/employees/:empId/level` | `org.manage` (Owner, CEO), below the caller | `{ level: 2..5, roleKey?, reason }`. Validated against the reporting lines; nobody can assign a level at or above their own |
-| `PATCH /org/employees/:empId/reporting-line` | `org.manage`, below the caller | `{ reportsToEmpId, reason }`. No loops, no self, no reporting to a lower level, same-level only where configured |
+| `PATCH /org/employees/:empId/level` | `org.manage` (the Director), below the caller | `{ level: 2..5, roleKey?, reason }`. Validated against the reporting lines; nobody can assign a level at or above their own, so the Director assigns Levels 3 to 5 |
+| `PATCH /org/employees/:empId/reporting-line` | `org.manage`, below the caller | `{ reportsToEmpId, reason }`. The Director only. No loops, no self, no reporting to the same or a lower level (no same-level pair is configured) |
 | `POST /org/employees/:empId/duties`, `DELETE .../duties/:dutyKey` | `duty.assign` (Director), below the caller | `{ dutyKey, reason }` / `{ reason }` |
 | `GET /org/departments` | `org.view` | Departments (with their explicit head) and offices with headcount |
-| `POST /org/departments`, `PATCH /org/departments/:code`, `POST /org/departments/:code/deactivate` | `org.manage` (Owner, CEO) | `{ name, headEmpId?, reason }`, `{ name?, headEmpId?, reason }`, `{ reason }`. Heads are chosen explicitly and audited; deactivating needs an empty department |
+| `POST /org/departments`, `PATCH /org/departments/:code`, `POST /org/departments/:code/deactivate` | `org.manage` (the Director) | `{ name, headEmpId?, reason }`, `{ name?, headEmpId?, reason }`, `{ reason }`. Heads are chosen explicitly and audited; deactivating needs an empty department |
 | `POST /org/offices`, `PATCH /org/offices/:code`, `POST /org/offices/:code/deactivate` | `org.manage` | `{ name, city?, reason }` and similar |
 | `GET /org/changes` | `audit.view` | Recent access changes, from the audit log |
 | `POST /stand-ins`, `GET /stand-ins`, `DELETE /stand-ins/:id` | `standin.manage` / logged in | `{ standInEmpId?, startsOn, endsOn, reason? }`. No stand-in means approvals go up the chain. Overlaps and conflicts are refused |
-| `GET /approvals/route/:empId?date=&afterSeat=` | scope: me or below | Who approves this person's request on a date (real reporting chain, stand-ins, people who left are passed over) |
+| `GET /approvals/route/:empId?date=&afterSeat=` | scope: me or below | Who approves this person's request on a date (real reporting chain, stand-ins, people who left are passed over). The CEO / Founder / Owner approves only for his direct report (the Director); for anyone further down his seat is skipped (`direct_reports_only`) and the request waits for the Director |
 | `GET /approvals/can-approve/:empId` | scope: below me | May I approve right now? Never my own |
 | `GET /access/can-assign-task/:empId` | logged in | Tasks only move down my reporting line |
 
@@ -77,17 +83,17 @@ Every change writes an audit record (who, what, before and after, and the reason
 | Method and path | Who | What it does |
 |---|---|---|
 | `GET /employees?q=` | everyone logged in | Staff directory: Basic fields only (Emp-ID, name, designation, department, office, official email, `hasPhoto`). People who have left are not listed |
-| `GET /employees/:empId` | everyone logged in | The profile with only the sections the caller may see (`basic` always; `job`: self, above, Director/HR; `personal` and `documents`: self, HR, Director and above; `pay`: self, Director, CEO, Owner, finance duty; `history`). `access` says what the caller may edit. CNIC and bank account are masked. **Salary amounts are never in the profile or the history**: `pay` has only `salaryOnFile`, the bank name and the masked account; the amounts come from the reveal below |
+| `GET /employees/:empId` | everyone logged in | The profile with only the sections the caller may see (`basic` always; `job`: self, above, Director/HR; `personal` and `documents`: self, HR, Director and above; `pay`: self, the Director, the CEO / Founder / Owner (view only), finance duty; `history`). `access` says what the caller may edit. CNIC and bank account are masked. **Salary amounts are never in the profile or the history**: `pay` has only `salaryOnFile`, the bank name and the masked account; the amounts come from the reveal below |
 | `PATCH /employees/:empId/basic` | Director or HR, for people of lower rank | Name, designation, department/office (codes), official email. Old values go to the history |
-| `PATCH /employees/:empId/job` | Director or HR for joining date, type, capacity; **Owner or CEO only** for `level` and `reportsToEmpId` (through the Module 1 rules) | Needs `reason`. Status cannot be changed here (use the leaving workflow) |
+| `PATCH /employees/:empId/job` | Director or HR for joining date, type, capacity; **the Director only** for `level` and `reportsToEmpId` (through the Module 1 rules) | Needs `reason`. Status cannot be changed here (use the leaving workflow) |
 | `PATCH /employees/:empId/personal` | the employee (phone, home address, emergency contact) or Director/HR (also CNIC) | History keeps old values; CNIC is stored encrypted |
 | `PATCH /employees/:empId/pay` | Director only, never their own | Needs `reason`. Base salary, allowances total, bank name, account number (encrypted) |
 | `POST /employees/:empId/reveal` | whoever may see that section | Body `{ field: cnic\|account\|salary }`. Returns `{ value }` (salary: `{ value, allowances }`). **Every reveal is permission-checked and audited** (the value is never logged) |
-| `POST /employees` | `people.manage` (Director, HR duty) or `org.manage` (Owner, CEO) | Joining workflow. **Director/HR only START a hire** (Level 4 or 5): the answer is `{ status: 'pending_approval', requestId }`; no employee, Emp-ID, login or email exists yet. **Owner/CEO create directly** (Levels 3-5): `{ status: 'created', empId, welcomeEmailSent }`. Pay may be included only by the Director |
-| `GET /hire-requests?status=` | Owner, CEO, Director, HR | Requests (no personal or pay details) |
-| `POST /hire-requests/:id/approve` | `org.manage` (**Owner or CEO only**) | Body `{ level?, reportsToEmpId? }` (they may correct the proposal; the reporting rules apply). Now the Emp-ID is generated, the login is created and the welcome email with a temporary password is sent. A request is decided once |
+| `POST /employees` | `people.manage` (HR duty) or `org.manage` (the Director) | Joining workflow. **HR only STARTS a hire** (Level 4 or 5): the answer is `{ status: 'pending_approval', requestId }`; no employee, Emp-ID, login or email exists yet. **The Director creates directly** (Levels 3-5, never at or above their own level): `{ status: 'created', empId, welcomeEmailSent }`. Pay may be included only by the Director. The CEO / Founder / Owner hires nobody (403) |
+| `GET /hire-requests?status=` | the Director, HR, the CEO / Founder / Owner (view only) | Requests (no personal or pay details) |
+| `POST /hire-requests/:id/approve` | `org.manage` (**the Director only**) | Body `{ level?, reportsToEmpId? }` (the Director may correct the proposal; the reporting rules apply). Now the Emp-ID is generated, the login is created and the welcome email with a temporary password is sent. A request is decided once |
 | `POST /hire-requests/:id/reject` | `org.manage` | Body `{ reason }` |
-| `GET /employees/unresolved-reports` | Owner, CEO, Director, HR | People who still report to someone who left. Nothing moves them automatically; the Owner or CEO use `PATCH /employees/:empId/job` with `reportsToEmpId` |
+| `GET /employees/unresolved-reports` | the Director, HR, the CEO / Founder / Owner (view only) | People who still report to someone who left. Nothing moves them automatically; the Director uses `PATCH /employees/:empId/job` with `reportsToEmpId` |
 | `POST /employees/:empId/resend-welcome` | `people.manage`, above the person | New temporary password and email, only before the first login |
 | `GET/POST /employees/:empId/documents`, `GET .../documents/:id/download`, `DELETE .../documents/:id` | self, HR, Director and above (employees add their own CV, CNIC copy, certificates; HR/Director add contracts) | Private storage. PDF, PNG, JPEG, .docx by real content, 10 MB. Download is permission-checked and logged; "delete" archives |
 | `POST/GET /employees/:empId/photo` | upload: self or Director/HR; view: everyone | JPEG or PNG, 2 MB |
@@ -97,7 +103,7 @@ Every change writes an audit record (who, what, before and after, and the reason
 When access ends the system: sets the status to `left`, disables the login and ends every session, ends duties and
 stand-in cover, clears a department head, writes the history, and queues the events `employee.offboarded`,
 `task.transfer.requested` and `payroll.final_settlement.requested`. **Reporting lines are not changed**: the leaver's direct
-reports are listed until the Owner or CEO assign a new manager. The record is never deleted.
+reports are listed until the Director assigns a new manager. The record is never deleted.
 
 ## Event contracts
 
