@@ -99,6 +99,82 @@ stand-in cover, clears a department head, writes the history, and queues the eve
 `task.transfer.requested` and `payroll.final_settlement.requested`. **Reporting lines are not changed**: the leaver's direct
 reports are listed until the Owner or CEO assign a new manager. The record is never deleted.
 
+## M7: attendance and leave
+
+Times always come from the server clock (Pakistan time, UTC+5); a time sent by the browser is ignored. People are named by
+Emp-ID in URLs. A month that payroll has locked refuses every change (`409 period_locked`, also enforced by the database).
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /attendance/today` | `attendance.self` | Server time, schedule, own check-in/out, `checkInAllowedHere` |
+| `POST /attendance/check-in`, `POST /attendance/check-out` | `attendance.self` | Once per day each (`409 already_checked_in` / `already_checked_out` / `not_checked_in`). Late after start + grace. Office-only rule when management turns it on (`403 outside_office_network`) |
+| `GET /attendance/me?month=`, `GET /attendance/employees/:empId?month=` | self; others need `attendance.view_team` and the person below the caller | Month view: on time, late, missed check-out, leave, holiday, absent |
+| `GET /attendance/team?date=`, `GET /attendance/team/summary?month=` | `attendance.view_team` | People below the caller only |
+| `GET/POST /attendance/corrections`, `GET /attendance/corrections/:id` | `attendance.self` (`?scope=team` needs view_team or approve_correction) | Ask for a correction of a past day; one pending per day. The original times are always kept |
+| `POST /attendance/corrections/:id/approve`, `/reject`, `/cancel` | the routed approver (`attendance.approve_correction`); cancel by the requester | Never your own (`403 self_approval`); a stand-in may decide |
+| `GET /leave/types`, `GET /leave/balances/:empId?year=`, `GET /leave/preview`, `GET /leave/calendar?month=` | logged in / `leave.request`, self or below | Balance = entitlement - approved - pending. The preview shows the day count and the approval chain |
+| `GET/POST /leave/requests`, `GET /leave/requests/:id` | `leave.request` | Working days only (weekends and holidays are not counted); half days; inside one leave year; never more than the balance; no overlap |
+| `POST /leave/requests/:id/approve`, `/reject`, `/cancel` | the routed approver of the current step (`leave.approve`); cancel by the requester before the first day | Team lead, then the Director, one level at a time (plan s.11); the Director's own leave goes to the CEO |
+| `GET /holidays`, `POST/PATCH /holidays`, `POST /holidays/:id/archive` | read: logged in; change: `settings.manage` | One holiday calendar for every module |
+| `GET/POST /settings/work-schedule`, `GET/POST /settings/office-networks`, `POST /settings/office-networks/:id/archive`, `GET/POST /settings/leave-entitlements` | `settings.manage` (reading the schedule: logged in) | A new schedule starts today or later; entitlements only for people below the setter, never your own |
+| `POST /leave/types`, `PATCH /leave/types/:id`, `POST /leave/types/:id/archive` | `settings.manage` | Paid or unpaid cannot change once leave of that type exists (`409 leave_type_in_use`); archive it and add a new type |
+
+## M8: payroll
+
+Every payroll management route is a finance screen: 10-minute idle limit, and a refused permission answers **404**.
+Amounts are exact decimals sent as strings (`"59900.00"`). The calculation reads the Module 7 month summary through
+`AttendancePayrollPort` and creates ledger entries only through Module 9's `LedgerPostingPort`.
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /payroll/runs`, `GET /payroll/runs/:id`, `GET /payroll/runs/:id/lines` | `payroll.view` | Runs (newest first) with totals, the ledger entry number and status, warnings (`missingPay`, `pendingAdjustments`). Viewing lines is audited (no amounts in the log) |
+| `POST /payroll/runs` `{month}` | `payroll.prepare` | `PR-YYYY-MM`, one per month, current month or earlier |
+| `POST /payroll/runs/:id/calculate` | `payroll.prepare` | Locks the month in attendance, reads the month summary, rewrites the lines. Needs a tax slab version (`409 tax_slabs_missing`); a negative net is refused |
+| `POST /payroll/runs/:id/items`, `DELETE /payroll/runs/:id/items/:itemId` | `payroll.prepare` | Bonus or deduction lines while the run is editable |
+| `POST /payroll/runs/:id/prepare`, then `/review`, then `/approve` | Finance (`payroll.prepare`), then the Director (`payroll.review`), then the **CEO** (`payroll.approve`, with "confirm again") | Maker-checker: the preparer can never review or approve (`403 maker_checker`). Approval creates the payslips, records advance repayments and creates the salary entry, **which waits for normal ledger approval** (P7, D5) |
+| `POST /payroll/runs/:id/return` `{reason}` | reviewer or approver | Back to "calculated", with the note |
+| `POST /payroll/runs/:id/mark-paid` `{bankAccountId, paidOn}` | `payroll.prepare` | Once, approved runs only, not dated in the future. Creates the payment entry (Dr salary payable, Cr bank), which also needs ledger approval |
+| `GET /payroll/runs/:id/bank-sheet` | `payroll.export` + "confirm again" | CSV marked highly confidential with full account numbers; audited with the run number and row count only |
+| `GET/POST /payroll/adjustments` | view / prepare | A correction to an approved month lands in a later run (an approved run never changes) |
+| `GET /payroll/advances`, `POST /payroll/advances`, `GET /payroll/advances/me` | view / prepare / own | An advance is paid through a ledger entry and deducted only once that entry is posted |
+| `GET /payslips/me`, `GET /payslips/me/:month` | `payroll.view_own` | Own payslips, with the year to date |
+| `GET /payslips/employees/:empId` | `payroll.view` only (a finance screen: anyone else, the employee included, gets 404; employees use `/payslips/me`) | One person's payslips; audited |
+| `GET /payslips/:id`, `GET /payslips/:id/document` | logged in: your own payslip, or anyone with `payroll.view` (audited) | Someone else's payslip answers 404 (the refusal is audited). The document is printable HTML (D15) |
+| `GET /settings/tax-slabs`, `POST /settings/tax-slabs` | view: payroll or settings viewers; add: `settings.manage` | Versioned slabs entered by the accountant (none are seeded) |
+
+## M9: finance ledger
+
+Every route is a finance screen (10-minute idle limit; a refused permission answers **404**) and needs `finance.view`
+plus the permission shown. Posted entries are never edited or deleted (database trigger): a mistake is corrected by a
+reversing entry. Debits must equal credits (`unbalanced_entry`, also checked by the database at commit). Nothing can be
+posted into a closed month (`409 period_closed`), and no new entry is made while a month waits for its close approval (`409 period_closing`). Reports are under `/ledger/reports/*` so they do not clash with
+Module 10's `/reports`.
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /journal-entries` (filters `status`, `month`, `source`, `accountId`, `partyId`, `projectId`, `awaitingMe`, `q`), `GET /journal-entries/:id` | `finance.view` | |
+| `POST /journal-entries`, `PATCH /journal-entries/:id`, `POST /journal-entries/:id/submit` | `finance.entry_create` (the maker's own draft) | |
+| `POST /journal-entries/:id/approve`, `/reject {reason}` | `finance.entry_approve` at the tier the PKR amount needs (`approval_limits`; development defaults: Director up to 50,000, CEO up to 500,000, Owner above and for every capital or loan entry) | Never the maker (`403 self_approval`); below the tier `403 approval_limit`; "confirm again" above `finance_settings.step_up_above` |
+| `POST /journal-entries/:id/reverse {reason, date?}` | `finance.entry_create` | A draft with the lines swapped, which follows normal approval. One live reversal per entry (database index); a rejected reversal does not block a new one |
+| `GET /accounts`, `POST /accounts`, `PATCH /accounts/:id` | view / `finance.entry_create` | Chart of accounts in five groups; system roles map automatic postings to accounts. New equity accounts need Owner approval by default (only the Owner may create one without it, `403 owner_only`); a sub-account of an account that needs Owner approval (for example under 2500 Loans) always needs it too (`409 owner_approval_inherited`, also enforced by the database). `PATCH` can add the rule but never remove it (`403 owner_only`) |
+| `PUT /accounts/:id/owner-approval {required, reason}` | **Owner only** (`finance.authority_manage`, decision D22) + "confirm again" | Adds or removes the "Owner approves" rule. Removing it from a sub-account whose parent needs it is refused (`409 owner_approval_inherited`). The database accepts a removal only together with the Owner's audit row in the same transaction |
+| `GET /bank-accounts`, `POST /bank-accounts`, `PUT /bank-accounts/:id/details` | view / entry_create / entry_create | Account numbers are encrypted and masked |
+| `POST /bank-accounts/:id/reveal` | `finance.view` + "confirm again" | Shows the full number once; audited without the number |
+| `GET /parties`, `GET /parties/:id`, `POST /parties`, `PATCH /parties/:id`; `GET /projects`, `POST /projects`, `PATCH /projects/:id`; `GET/POST /exchange-rates` | reads: view; changes: entry_create | Parties and projects are archived, never deleted. One USD rate per day (`409 rate_exists`) |
+| `GET /invoices`, `GET /invoices/:id`, `GET /invoices/:id/document`, `POST /invoices`; `GET /bills`, `GET /bills/:id`, `POST /bills` | reads: view; create: entry_create | Status is calculated from posted payments. The invoice document is printable HTML |
+| `POST /bills/:id/receipt`, `POST /receipts/journal-entries/:id`, `GET /receipts/:id` | attach: entry_create; download: view | A receipt is attached to a bill or to a journal entry. PDF, PNG or JPEG by real content, 10 MB, private storage; downloads audited |
+| `GET /payments`, `GET /payments/:id`, `POST /payments`; `GET/POST /transfers` | reads: view; create: entry_create | No overpayment; the payment currency must match |
+| `GET/POST /bank-statements`, `POST /bank-statements/auto-match`, `POST /bank-statements/lines/:id/match`, `/unmatch`, `/create-entry` | view / entry_create | CSV import (a file is imported once), suggestions, matching |
+| `GET /periods`, `GET /periods/:month` | view | Live checklist: entries posted, bank reconciled, payroll posted, USD revalued, trial balance |
+| `GET /periods/:month/revaluation?rate` | view | USD revaluation preview (default: the saved month-end rate) |
+| `POST /periods/:month/revaluation-preview {rate}`, `POST /periods/:month/revalue` | view + entry_create | Preview with a rate; create the month-end revaluation entry (once per month; it waits for approval) |
+| `POST /periods/:month/close`, then `/approve-close` or `/reject-close` | finance duty (`finance.close`), then the **CEO** (`finance.close_approve`), never the person who ran it | The checklist is checked again at approval |
+| `POST /periods/:month/reopen {reason}` | **Owner or CEO** (`finance.reopen`) + "confirm again" | Logged, audited and sent to the outbox |
+| `GET /settings/approval-limits`, `GET /settings/finance` | `finance.view` | |
+| `PUT /settings/approval-limits`, `PUT /settings/finance` | **Owner only** (`finance.authority_manage`, decision D22; also checked in the service) + a reason and "confirm again" (audited) | Nobody else, the Director included, can change an approval limit or the confirm-again amount (404). The unlimited tier is always the Owner (level 1), and the Owner tier is never removed (also enforced by the database) |
+| `GET /ledger/reports/{trial-balance, general-ledger, ar-aging, ap-due, profit-by-project, profit-by-client}` | `finance.view` | |
+| `GET /ledger/export?from&to` | `finance.export` + "confirm again" | CSV with a watermark line; formula injection blocked; audited |
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full

@@ -28,7 +28,9 @@ export const PERMISSION_KEYS: string[] = [
   'subscriptions.manage', 'comms.use', 'comms.admin', 'announcements.publish', 'sales.own',
   'sales.team', 'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve',
   'sales.export', 'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
-  'auth.set_temporary_password', 'auth.reset_two_factor',
+  'auth.set_temporary_password', 'auth.reset_two_factor', 'finance.close_approve',
+  // Owner only: approval limits, finance-wide security settings, and removing the "Owner approves" rule (decision D22).
+  'finance.authority_manage',
 ];
 
 export interface RoleSeed {
@@ -57,6 +59,10 @@ const OWNER: string[] = [
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
   'org.manage',
   'auth.reset_two_factor',
+  // Plan sections 11 and 13: approvals move up to the Owner; above PKR 500,000, capital and loans; reopening a month.
+  'leave.approve', 'attendance.approve_correction', 'finance.entry_approve', 'finance.reopen',
+  // Decision D22: only the Owner changes approval limits and finance-wide security settings (with "confirm again").
+  'finance.authority_manage',
 ];
 
 const CEO: string[] = [
@@ -71,6 +77,8 @@ const CEO: string[] = [
   'org.manage', 'standin.manage', 'auth.unlock_account', 'session.force_logout', 'leave.approve',
   'attendance.approve_correction', 'approval.approve',
   'auth.reset_two_factor',
+  // Plan sections 12, 13: the CEO approves payroll and the month close, approves entries up to their limit, reopens months.
+  'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen',
 ];
 
 const LEVEL3_DEFAULT: string[] = [
@@ -91,8 +99,8 @@ const DIRECTOR: string[] = [
   'attendance.approve_correction', 'leave.approve', 'auth.unlock_account', 'session.force_logout',
   'comms.admin', 'announcements.publish', 'roles.manage', 'people.view_personal', 'people.view_pay',
   'people.manage', 'people.manage_pay', 'activity.security', 'performance.weights', 'payroll.view',
-  'payroll.review', 'payroll.approve', 'payroll.export', 'finance.view', 'finance.entry_approve',
-  'finance.close', 'finance.reopen', 'finance.export', 'statements.view', 'statements.export',
+  'payroll.review', 'payroll.export', 'finance.view', 'finance.entry_approve',
+  'finance.export', 'statements.view', 'statements.export',
   'sheet.view', 'insights.view', 'audit.view', 'settings.view', 'settings.manage', 'backup.view',
   'billing.view', 'subscriptions.view', 'subscriptions.manage', 'sales.own', 'sales.team',
   'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.export',
@@ -115,6 +123,8 @@ const LEVEL4_DEFAULT: string[] = [
   'org.view', 'people.view_directory', 'activity.view_own', 'task.view_own', 'performance.view_own',
   'attendance.self', 'leave.request', 'payroll.view_own', 'comms.use', 'standin.manage',
   'task.assign', 'task.review', 'task.view_team', 'approval.approve',
+  // Plan section 11: leave goes to the team lead first; corrections go to the manager; team attendance is Internal.
+  'leave.approve', 'attendance.approve_correction', 'attendance.view_team',
 ];
 
 const SALES: string[] = [

@@ -23,6 +23,7 @@ export const Authenticated = () => SetMetadata(AUTHENTICATED_ONLY, true);
 export const AllowIncomplete = () => SetMetadata(ALLOW_INCOMPLETE, true);
 
 /** A finance screen: the session is ended after 10 minutes without activity here (30 minutes elsewhere). */
+/// Also (plan section 16): when the permission or scope check refuses a finance route, the answer is 404, not 403.
 export const FinanceScreen = () => SetMetadata(FINANCE_SCREEN, true);
 
 /** The caller's role or duties must include ALL of these permissions. */

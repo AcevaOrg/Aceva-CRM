@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { DUTY_SEEDS, PERMISSION_KEYS, ROLE_SEEDS } from './permission-catalogue';
+import { seedCycle3Defaults } from './seed-cycle3';
 
 /**
  * Development and test seed data. Safe to run more than once (it only adds what is missing).
@@ -227,6 +228,9 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
 
       // The demo roster uses explicit Emp-IDs up to ACV-0014; the sequence must never hand those out again.
       await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 14))`;
+
+      // Modules 7, 8, 9: development defaults (not company policy; see seed-cycle3.ts).
+      await seedCycle3Defaults(tx);
 
       await rebuildReportingClosure(tx);
     },

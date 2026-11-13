@@ -58,7 +58,7 @@ export interface Account {
 
 export type EntryStatus = "draft" | "pending_approval" | "posted" | "reversed";
 
-export type EntrySource = "manual" | "invoice" | "bill" | "payroll" | "payment" | "reversal" | "revaluation" | "transfer" | "opening";
+export type EntrySource = "manual" | "invoice" | "bill" | "payroll" | "payroll_payment" | "advance" | "payment" | "reversal" | "revaluation" | "transfer" | "opening";
 
 export interface JournalLine {
   id: string;
@@ -113,6 +113,23 @@ export interface JournalEntry {
   history: EntryEvent[];
   /** Note left when an approver sent it back. */
   rejectionNote?: string;
+  /**
+   * Live mode (m9): the SERVER decides the approval tier from the amount (plan section 13, limits in Settings). These come
+   * from the API and the screens show them instead of deciding anything themselves.
+   */
+  requiredLevel?: number | null;
+  requiredApproverLabel?: string | null;
+  /** The viewer may approve or reject it now (permission, tier, not the maker). */
+  canApprove?: boolean;
+  /** Approving it asks for the password again (large entry, plan section 16). */
+  needsStepUp?: boolean;
+  /** The maker's display name (live). */
+  makerName?: string;
+  /**
+   * Live mode: an approver rejected it (with `rejectionNote`). A rejected entry never changes; the maker makes a new one.
+   * Its `status` stays "draft" for the screens that only know the four statuses, but nothing on it can be edited or submitted.
+   */
+  rejected?: boolean;
 }
 
 export interface Party {
@@ -199,6 +216,8 @@ export interface FinancePeriod {
   approvedBy?: string;
   approvedAt?: string;
   reopenReason?: string;
+  /** Live mode: the viewer may approve or send back this close (server decides: the CEO, never the person who ran it). */
+  canApproveClose?: boolean;
 }
 
 export interface ExchangeRate {

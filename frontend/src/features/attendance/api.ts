@@ -4,6 +4,7 @@
  */
 import { endOfMonth, startOfMonth } from "date-fns";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
+import { isLive } from "@/lib/api/http";
 import { descendantsOf, isInScope } from "@/lib/auth/scope";
 import { useSession } from "@/lib/auth/session";
 import { getViewer } from "@/lib/auth/viewer";
@@ -17,6 +18,7 @@ import {
 } from "@/mocks/seed/attendance";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
+import { liveAttendanceApi } from "./live-api";
 import { averageClock, buildLeaveChain, correctionApprover, DEFAULT_SCHEDULE, isPendingLeave, lateMinutes, leaveDays, minutesBetween } from "./logic";
 import type {
   AttendanceCorrection, AttendanceDay, LeaveBalanceView, LeaveCalendarEntry, LeaveRequest, LeaveType, NewCorrectionInput,
@@ -197,7 +199,7 @@ function clashesFor(empId: string, from: string, to: string) {
     .map((t) => ({ taskId: t.id, number: t.number, title: t.title, deadline: t.deadline }));
 }
 
-export const attendanceApi = {
+export const mockAttendanceApi = {
   /** GET /settings/work-schedule */
   schedule: () => mock(() => DEFAULT_SCHEDULE, { delay: 60 }),
 
@@ -421,3 +423,6 @@ export const attendanceApi = {
   /** Days in a request, for live counting in forms. */
   countDays: (from: string, to: string, halfDay: boolean) => leaveDays(from, to, HOLIDAY_DATES, halfDay),
 };
+
+/** Module 7 is live when NEXT_PUBLIC_LIVE_MODULES contains m7 (or the whole app is live); otherwise the in-browser mock above. */
+export const attendanceApi = (isLive("m7") ? liveAttendanceApi : mockAttendanceApi) as typeof mockAttendanceApi;

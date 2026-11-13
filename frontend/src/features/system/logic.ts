@@ -65,7 +65,7 @@ export const SECTIONS: SectionMeta[] = [
   { key: "leave-types", label: "Leave types", group: "Company", description: "Leave types and their yearly balance." },
   { key: "task-sizes", label: "Task sizes and deadlines", group: "Work and performance", description: "Hours, points and suggested working days for each task size." },
   { key: "score-weights", label: "Score weights", group: "Work and performance", description: "How the monthly scorecard is weighted. Old scorecards keep the weights they were made with." },
-  { key: "approval-limits", label: "Approval limits", group: "Finance", description: "The Director approves every journal entry, any amount. The CEO / Founder / Owner is notified of large entries and of every capital or loan entry.", protected: true, viewPermission: "finance.view" },
+  { key: "approval-limits", label: "Approval limits", group: "Finance", description: "A different person approves each journal entry at the level its amount needs: Director, then CEO, then the Owner (no limit, and every capital or loan entry).", protected: true, viewPermission: "finance.view" },
   { key: "currencies", label: "Currencies and exchange rates", group: "Finance", description: "PKR is the main currency. USD entries save the rate used.", viewPermission: "finance.view" },
   { key: "finance-year", label: "Finance year", group: "Finance", description: "When the finance year starts and ends.", viewPermission: "finance.view" },
   { key: "chart-of-accounts", label: "Chart of accounts", group: "Finance", description: "Accounts are managed in the ledger.", viewPermission: "finance.view" },

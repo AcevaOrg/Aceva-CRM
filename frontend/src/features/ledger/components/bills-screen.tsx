@@ -27,6 +27,7 @@ import { formatMoneyCompact, toNumber } from "@/lib/format";
 import { uid } from "@/lib/utils";
 import type { Attachment } from "@/types";
 import { useAccounts, useBankAccounts, useBills, useCreateBill, useParties, usePayBill } from "../hooks";
+import { stashReceiptFile } from "../live-api";
 import type { Bill } from "../types";
 import { AccountPicker } from "./account-picker";
 import { FinanceRoleNote } from "./ledger-bits";
@@ -264,7 +265,11 @@ function NewBillSheet({ onClose }: { onClose: () => void }) {
                 className="hidden"
                 onChange={(ev) => {
                   const f = ev.target.files?.[0];
-                  if (f) setReceipt({ id: uid("rc"), fileName: f.name, sizeBytes: f.size, mimeType: f.type, uploadedAt: new Date().toISOString(), uploadedBy: viewer?.employee.empId ?? "" });
+                  if (f) {
+                    const att = { id: uid("rc"), fileName: f.name, sizeBytes: f.size, mimeType: f.type, uploadedAt: new Date().toISOString(), uploadedBy: viewer?.employee.empId ?? "" };
+                    stashReceiptFile(att.id, f); // live mode uploads the real file after the bill is saved
+                    setReceipt(att);
+                  }
                 }}
               />
             </Field>

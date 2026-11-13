@@ -19,11 +19,16 @@ export function AdjustmentDialog({ run, empId, name, open, onOpenChange }: { run
   const [amount, setAmount] = React.useState("");
   const [note, setNote] = React.useState("");
   const value = Number(amount);
-  const valid = value > 0 && note.trim().length >= 3;
+  const valid = value > 0 && note.trim().length >= 5;
   const toMonth = formatMonthKey(nextMonthKey(run.month));
 
   const save = async () => {
-    await add.mutateAsync({ runId: run.id, empId, amount: kind === "add" ? value : -value, note: note.trim() });
+    try {
+      await add.mutateAsync({ runId: run.id, empId, amount: kind === "add" ? value : -value, note: note.trim(), targetMonth: nextMonthKey(run.month) });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
     toast.success(`Adjustment added to ${toMonth}`, { description: `${kind === "add" ? "+" : "−"}${formatMoney(value)} for ${name}. Logged.` });
     onOpenChange(false);
     setAmount("");
@@ -52,7 +57,7 @@ export function AdjustmentDialog({ run, empId, name, open, onOpenChange }: { run
           <Field label="Amount (PKR)" htmlFor="adj-amount">
             <Input id="adj-amount" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} className="font-mono" placeholder="5000" />
           </Field>
-          <Field label="Reason" htmlFor="adj-note" hint="Shown on the payslip and saved in the audit log.">
+          <Field label="Reason" htmlFor="adj-note" hint="At least 5 characters. Shown on the payslip and saved in the audit log.">
             <Textarea id="adj-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Allowance missed in October" />
           </Field>
         </div>

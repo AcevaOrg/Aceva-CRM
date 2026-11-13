@@ -16,6 +16,7 @@ import { ListSkeleton } from "@/components/shared/states";
 import { FileCard } from "@/components/shared/timeline";
 import { useLookup } from "@/hooks/use-directory";
 import { useViewer } from "@/lib/auth/viewer";
+import { isLive } from "@/lib/api/http";
 import { formatMonthKey } from "@/lib/dates";
 import { formatMoney } from "@/lib/format";
 import { useUi } from "@/lib/ui-store";
@@ -112,7 +113,9 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
   const baseTotal = round2(check.debit * fxRate);
   const capital = touchesCapitalOrLoan(lines.filter((l) => l.accountId), accounts);
   const notifyCeo = ceoNotified(baseTotal, capital);
-  const route = approverFor(me, lookup.employees);
+  // Live (m9): the SERVER decides the approval tier from the amount when the entry is submitted; nothing is routed here.
+  const live = isLive("m9");
+  const route = live ? { blocked: false, empId: undefined } : approverFor(me, lookup.employees);
   const approver = lookup.employee(route.empId);
   const month = date ? monthKeyOf(new Date(`${date}T12:00:00`)) : "";
   const period = periods.data?.find((p) => p.month === month);
@@ -174,7 +177,9 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
       });
       toast.success(send ? `${entry.number} sent for approval` : `${entry.number} saved as a draft`, {
         description: send
-          ? `It goes to ${lookup.employee(entry.approverEmpId)?.name ?? "the Director"} (Director) for approval.${entry.ceoNotified ? " The CEO / Founder / Owner is notified." : ""}`
+          ? live
+            ? `It needs ${entry.requiredApproverLabel ?? "an approver"} approval (level ${entry.requiredLevel ?? "?"} or higher).`
+            : `It goes to ${lookup.employee(entry.approverEmpId)?.name ?? "the Director"} (Director) for approval.${entry.ceoNotified ? " The CEO / Founder / Owner is notified." : ""}`
           : "You can finish it later from the ledger.",
       });
       router.push(`/finance/ledger/${entry.id}`);
@@ -336,7 +341,12 @@ function ComposerForm({ draft, notEditable }: { draft?: JournalEntry; notEditabl
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-4 py-3 sm:px-6 lg:px-8">
           <BalanceMeter debit={check.debit} credit={check.credit} currency={currency} />
           <div className="grid min-w-0 flex-1 gap-1 text-[12.5px]">
-            {route.blocked ? (
+            {live ? (
+              <span className="text-muted-foreground">
+                {check.debit > 0 ? `${formatMoney(baseTotal, { exact: true })}${capital ? " · share capital or loan (Owner approval)" : ""} · ` : ""}
+                The approver level is set by the server from the PKR amount when you submit (limits in Settings); never the person who made it.
+              </span>
+            ) : route.blocked ? (
               <span className="text-danger">{DIRECTOR_MADE_IT}</span>
             ) : check.debit > 0 ? (
               <>

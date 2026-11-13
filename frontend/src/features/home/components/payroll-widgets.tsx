@@ -39,11 +39,15 @@ export function PayrollStageWidget() {
             ))}
           </ol>
           <p className="text-[12px] text-muted-foreground">
-            {!STAGES[idx + 1]
-              ? "Done for this month"
-              : STAGES[idx + 1].key === "approved"
-                ? "Next step: the Director approves it"
-                : `Next step: ${STAGES[idx + 1].label.toLowerCase()}`}
+            {run.next
+              ? `Next step: ${run.next.label.charAt(0).toLowerCase()}${run.next.label.slice(1)}`
+              : !STAGES[idx + 1]
+                ? "Done for this month"
+                : STAGES[idx + 1].key === "reviewed"
+                  ? "Next step: the Director reviews it"
+                  : STAGES[idx + 1].key === "approved"
+                    ? "Next step: the CEO approves it"
+                    : `Next step: ${STAGES[idx + 1].label.toLowerCase()}`}
           </p>
         </div>
       )}

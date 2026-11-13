@@ -91,6 +91,7 @@ export interface ApiClient {
   get: (path: string) => ReturnType<APIRequestContext['get']>;
   post: (path: string, data?: unknown) => ReturnType<APIRequestContext['post']>;
   patch: (path: string, data?: unknown) => ReturnType<APIRequestContext['patch']>;
+  put: (path: string, data?: unknown) => ReturnType<APIRequestContext['put']>;
   delete: (path: string, data?: unknown) => ReturnType<APIRequestContext['delete']>;
 }
 
@@ -121,6 +122,7 @@ export async function apiAs(playwright: Playwright, empId: string): Promise<ApiC
     get: (p) => ctx.get(rel(p)),
     post: (p, data) => ctx.post(rel(p), { headers: h(), data: data ?? {} }),
     patch: (p, data) => ctx.patch(rel(p), { headers: h(), data: data ?? {} }),
+    put: (p, data) => ctx.put(rel(p), { headers: h(), data: data ?? {} }),
     delete: (p, data) => ctx.delete(rel(p), { headers: h(), data: data ?? {} }),
   };
   clients.set(empId, client);

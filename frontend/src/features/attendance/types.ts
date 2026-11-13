@@ -34,6 +34,10 @@ export interface AttendanceCorrection {
   decidedAt?: string;
   decisionNote?: string;
   at: string;
+  /** Live (m7): who must decide now, from the server's Module 1 routing (null = nobody above). */
+  approverEmpId?: string | null;
+  /** Live (m7): the server says the viewer is that approver. */
+  canDecide?: boolean;
 }
 
 export interface LeaveType {
@@ -80,6 +84,10 @@ export interface LeaveRequest {
   status: LeaveStatus;
   chain: ApprovalStep[];
   at: string;
+  /** Live (m7): the server says the viewer must decide the current step. */
+  canDecide?: boolean;
+  /** Live (m7): the server says the viewer (the requester) may cancel it now. */
+  canCancel?: boolean;
 }
 
 export interface Holiday {

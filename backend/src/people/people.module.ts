@@ -3,7 +3,6 @@ import { ENV } from '../config/config.module';
 import type { Env } from '../config/env';
 import { FILE_STORAGE } from '../storage/file-storage';
 import { LocalFileStorage } from '../storage/local-file-storage';
-import { JobRunner } from '../jobs/job-runner.service';
 import { OrgModule } from '../org/org.module';
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
@@ -21,7 +20,6 @@ import { PeopleService } from './people.service';
     JoiningService,
     DocumentsService,
     OffboardingService,
-    JobRunner,
     // Private file storage. Today a private folder on this computer; AWS S3 or Cloudflare R2 plug in here later.
     { provide: FILE_STORAGE, inject: [ENV], useFactory: (env: Env) => new LocalFileStorage(env.FILE_STORAGE_ROOT) },
   ],

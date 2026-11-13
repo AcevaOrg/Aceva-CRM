@@ -59,6 +59,20 @@ interface SessionState {
   todayCheck: () => DayCheck | undefined;
 }
 
+/** Module 7 live? (read from the build-time switch without importing the HTTP client here). */
+function liveAttendance() {
+  const modules = (process.env.NEXT_PUBLIC_LIVE_MODULES ?? "").split(",").map((m) => m.trim().toLowerCase());
+  return process.env.NEXT_PUBLIC_API_MODE === "live" || modules.includes("m7");
+}
+
+/** Live check-in / check-out through the attendance API (loaded on demand to keep this store free of feature imports). */
+async function liveCheck(kind: "in" | "out") {
+  const [{ liveAttendanceApi }, { announceAttendanceChange }] = await Promise.all([import("@/features/attendance/live-api"), import("@/features/attendance/today")]);
+  // A refusal (already checked in, office network, locked month) shows up as the server's state on every screen.
+  await (kind === "in" ? liveAttendanceApi.checkIn() : liveAttendanceApi.checkOut()).catch(() => undefined);
+  announceAttendanceChange();
+}
+
 export const useSession = create<SessionState>()(
   persist(
     (set, get) => ({
@@ -108,11 +122,14 @@ export const useSession = create<SessionState>()(
       checkIn: () => {
         const { empId, checks } = get();
         if (!empId) return;
+        // Live (m7): the server records the check-in with its own clock; every attendance view refreshes from it.
+        if (liveAttendance()) return void liveCheck("in");
         set({ checks: { ...checks, [empId]: { date: isoDay(new Date()), in: new Date().toISOString() } } });
       },
       checkOut: () => {
         const { empId, checks } = get();
         if (!empId) return;
+        if (liveAttendance()) return void liveCheck("out");
         const cur = checks[empId];
         if (!cur?.in) return;
         set({ checks: { ...checks, [empId]: { ...cur, out: new Date().toISOString() } } });

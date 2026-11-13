@@ -13,7 +13,7 @@ export const PERMISSIONS = [
   "performance.view_own", "performance.view_team", "performance.view_all", "performance.weights",
   "attendance.self", "attendance.view_team", "attendance.approve_correction", "leave.request", "leave.approve",
   "payroll.view_own", "payroll.view", "payroll.prepare", "payroll.review", "payroll.approve", "payroll.export",
-  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.reopen", "finance.export",
+  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.close_approve", "finance.reopen", "finance.export", "finance.authority_manage",
   "statements.view", "statements.export", "sheet.view", "sheet.import", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "billing.manage", "subscriptions.view", "subscriptions.manage",
@@ -66,19 +66,29 @@ const OVERSIGHT: Permission[] = [
   "org.manage",
 ];
 
-/** L1 Owner: oversight only. */
-const OWNER: Permission[] = [...OVERSIGHT];
+/**
+ * L1 Owner: oversight, plus what the plan sends to the top: the Director's own leave and corrections (approvals move up),
+ * finance entries above the CEO's limit and all capital and loan entries (section 13), and reopening a closed month.
+ * Mirrors backend/prisma/permission-catalogue.ts (the server is the real lock).
+ */
+/** Decision D22: only the Owner changes approval limits, finance-wide security settings and the "Owner approves" rule. */
+const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen", "finance.authority_manage"];
 
-/** L2 CEO: oversight plus the Director's own leave / attendance correction, which cannot be self-approved. */
-const CEO: Permission[] = [...OVERSIGHT, "standin.manage", "auth.unlock_account", "session.force_logout", "leave.approve", "attendance.approve_correction"];
+/** L2 CEO: oversight, the Director's own leave; plan sections 12-13: approves payroll and the month close, entries up to the CEO limit, reopens months. */
+const CEO: Permission[] = [
+  ...OVERSIGHT, "standin.manage", "auth.unlock_account", "session.force_logout", "leave.approve", "attendance.approve_correction",
+  "payroll.approve", "finance.entry_approve", "finance.close_approve", "finance.reopen",
+];
 
 /** L2 Director: the approver for everything, plus HR duty, sales-manager duty and company administration. Prepares no finance items. */
 const DIRECTOR: Permission[] = [
   ...MANAGER,
   "roles.manage", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
   "activity.security", "performance.weights",
-  "payroll.view", "payroll.review", "payroll.approve", "payroll.export",
-  "finance.view", "finance.entry_approve", "finance.close", "finance.reopen", "finance.export",
+  // Plan section 12: the Director REVIEWS payroll and the CEO approves it. Section 13: the finance duty person runs the
+  // month close, the CEO approves it, and only the Owner or CEO reopen a closed month.
+  "payroll.view", "payroll.review", "payroll.export",
+  "finance.view", "finance.entry_approve", "finance.export",
   "statements.view", "statements.export", "sheet.view", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "subscriptions.view", "subscriptions.manage",
@@ -93,7 +103,11 @@ const CTO: Permission[] = [
 ];
 
 /** L4 Department Head / Team Lead (default Level 4 role): own work plus a team lead's basics. Extra duties add more. */
-const LEVEL4_DEFAULT: Permission[] = [...BASE, "standin.manage", "task.assign", "task.review", "task.view_team"];
+const LEVEL4_DEFAULT: Permission[] = [
+  ...BASE, "standin.manage", "task.assign", "task.review", "task.view_team",
+  // Plan section 11: leave goes to the team lead first, corrections to the manager; team attendance down the line.
+  "leave.approve", "attendance.approve_correction", "attendance.view_team",
+];
 
 /** L4 Sales: own leads, deals, follow-ups and daily report. */
 const SALES: Permission[] = [...BASE, "sales.own"];

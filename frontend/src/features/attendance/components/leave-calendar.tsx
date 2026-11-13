@@ -11,14 +11,14 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { formatDate, isoDay, monthKey } from "@/lib/dates";
 import { cn } from "@/lib/utils";
-import { HOLIDAYS } from "@/mocks/seed/calendar";
-import { useLeaveCalendar, useLeaveTypes } from "../hooks";
+import { useHolidayList, useLeaveCalendar, useLeaveTypes } from "../hooks";
 import { isPendingLeave } from "../logic";
 import { leaveDates } from "./leave-request-card";
 
 export function LeaveCalendar() {
   const [month, setMonth] = React.useState(() => new Date());
   const q = useLeaveCalendar(monthKey(month));
+  const holidays = useHolidayList();
   const types = useLeaveTypes();
   const lookup = useLookup();
   const color = (id: string) => types.data?.find((t) => t.id === id)?.color ?? "var(--muted-foreground)";
@@ -56,9 +56,9 @@ export function LeaveCalendar() {
               month={month}
               onMonthChange={setMonth}
               minRowHeight={96}
-              dayClassName={(_, iso) => (HOLIDAYS.some((h) => h.date === iso) ? "bg-signal/20" : undefined)}
+              dayClassName={(_, iso) => (holidays.some((h) => h.date === iso) ? "bg-signal/20" : undefined)}
               renderDay={(d, iso) => {
-                const holiday = HOLIDAYS.find((h) => h.date === iso);
+                const holiday = holidays.find((h) => h.date === iso);
                 if (d.getDay() === 0 || d.getDay() === 6) return null;
                 const on = entries.filter((e) => e.from <= iso && e.to >= iso);
                 return (

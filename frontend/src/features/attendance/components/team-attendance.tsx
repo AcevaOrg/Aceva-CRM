@@ -14,9 +14,8 @@ import { EmptyState, QueryState } from "@/components/shared/states";
 import type { BadgeTone } from "@/components/ui/badge";
 import { formatMonth, formatTime, isoDay, monthKey } from "@/lib/dates";
 import { isWorkingDay } from "@/lib/dates";
-import { HOLIDAYS, HOLIDAY_DATES } from "@/mocks/seed/calendar";
 import { cn } from "@/lib/utils";
-import { useTeamMonth, useTeamToday } from "../hooks";
+import { useHolidayList, useTeamMonth, useTeamToday } from "../hooks";
 import { minutesBetween } from "../logic";
 import type { TeamTodayRow, TodayState } from "../types";
 
@@ -48,8 +47,9 @@ function LoginGap({ r }: { r: TeamTodayRow }) {
 
 export function TeamTodayBoard({ compact }: { compact?: boolean }) {
   const q = useTeamToday();
+  const holidays = useHolidayList();
   const today = new Date();
-  const holiday = HOLIDAYS.find((h) => h.date === isoDay(today));
+  const holiday = holidays.find((h) => h.date === isoDay(today));
   return (
     <QueryState query={q} isEmpty={(d) => d.length === 0} empty={<EmptyState compact icon={<Users />} title="No team to show" description="People who report to you appear here." />}>
       {(rows) => {
@@ -64,7 +64,7 @@ export function TeamTodayBoard({ compact }: { compact?: boolean }) {
                 <StatCard label="On leave" value={count(["leave"])} icon={<Palmtree />} accent="var(--zone-finance)" hint="approved leave" />
               </div>
             )}
-            {(holiday || !isWorkingDay(today, HOLIDAY_DATES)) && (
+            {(holiday || !isWorkingDay(today, holidays.map((h) => h.date))) && (
               <p className="rounded-lg border border-signal/60 bg-signal/20 px-3 py-2 text-[12.5px]">
                 {holiday ? `Today is ${holiday.name}, a public holiday.` : "Today is a weekend."} Check-ins today are optional and nobody is marked absent.
               </p>
