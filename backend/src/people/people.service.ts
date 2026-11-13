@@ -17,7 +17,7 @@ import type { RequestInfo } from '../access/decorators';
 import { PermissionService } from '../access/permission.service';
 import { ScopeService } from '../access/scope.service';
 import { CryptoService } from '../auth/crypto.service';
-import { SessionService } from '../auth/session/session.service';
+import { StepUpService } from '../auth/step-up.service';
 import { Prisma } from '../generated/prisma/client';
 import { OrgService } from '../org/org.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -98,7 +98,7 @@ export class PeopleService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly org: OrgService,
-    private readonly sessions: SessionService,
+    private readonly stepUp: StepUpService,
   ) {}
 
   // ===================================================================== reading
@@ -502,9 +502,7 @@ export class PeopleService {
 
   /** Risky actions need the password (and code) confirmed again in this session within the last 5 minutes. */
   private async requireStepUp(actor: Actor, sessionId: string | null, action: string, empId: string, client: RequestInfo): Promise<void> {
-    if (await this.sessions.hasRecentStepUp(sessionId)) return;
-    await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: empId, outcome: 'denied', reason: 'step_up_required', details: { attempted: action }, ...client });
-    throw new ForbiddenException({ statusCode: 403, code: 'step_up_required', message: 'Confirm your password again to do this' });
+    await this.stepUp.require(actor, sessionId, action, { type: 'employee', id: empId }, client);
   }
 
   private async deny(actor: Actor, reason: string, targetEmpId: string, client: RequestInfo): Promise<never> {

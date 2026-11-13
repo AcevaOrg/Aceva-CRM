@@ -24,6 +24,7 @@ export interface Client {
   get: (url: string) => request.Test;
   post: (url: string) => request.Test;
   patch: (url: string) => request.Test;
+  put: (url: string) => request.Test;
   delete: (url: string) => request.Test;
 }
 
@@ -70,26 +71,33 @@ function clientWith(app: INestApplication, apply: (r: request.Test, method: stri
     get: (url) => apply(request(server).get(url), 'GET'),
     post: (url) => apply(request(server).post(url), 'POST'),
     patch: (url) => apply(request(server).patch(url), 'PATCH'),
+    put: (url) => apply(request(server).put(url), 'PUT'),
     delete: (url) => apply(request(server).delete(url), 'DELETE'),
   };
 }
 
 /** Starts the real application (all modules) against the aceva_test database and Redis. */
-export async function createTestApp(options: { extraControllers?: Type[] } = {}): Promise<TestApp> {
+export async function createTestApp(
+  options: { extraControllers?: Type[]; overrides?: Array<{ provide: unknown; useValue: unknown }> } = {},
+): Promise<TestApp> {
   process.env.DATABASE_URL = testDatabaseUrl();
   process.env.NODE_ENV = 'test';
-  process.env.REDIS_KEY_PREFIX = 'aceva:test:'; // tests never touch real session data
+  // Tests never touch real session data. TEST_REDIS_PREFIX lets parallel test runs (one per development track, each with its
+  // own TEST_DATABASE_URL) keep their sessions apart; the default is unchanged.
+  process.env.REDIS_KEY_PREFIX = process.env.TEST_REDIS_PREFIX ?? 'aceva:test:';
   process.env.FILE_STORAGE_ROOT = mkdtempSync(join(tmpdir(), 'aceva-private-'));
   process.env.TRUST_PROXY = '1'; // tests choose the client address with X-Forwarded-For
 
   const clock = new FakeClock();
   const mailer = new MemoryMailer();
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule], controllers: options.extraControllers ?? [] })
+  let builder = Test.createTestingModule({ imports: [AppModule], controllers: options.extraControllers ?? [] })
     .overrideProvider(Clock)
     .useValue(clock)
     .overrideProvider(Mailer)
-    .useValue(mailer)
-    .compile();
+    .useValue(mailer);
+  // A test may replace a provider (for example a fake port while the real module is still being built).
+  for (const o of options.overrides ?? []) builder = builder.overrideProvider(o.provide).useValue(o.useValue);
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();

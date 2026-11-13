@@ -17,13 +17,21 @@ describe('health contract', () => {
 });
 
 describe('outbox event contracts', () => {
-  it('defines exactly the six agreed events, all at version 1', () => {
+  it('defines exactly the agreed events, all at version 1', () => {
     expect(Object.keys(outboxEventSchemas).sort()).toEqual([
+      'attendance.correction.decided',
       'auth.login',
       'auth.login_failed',
       'auth.logout',
       'employee.offboarded',
+      'finance.period.reopened',
+      'leave.decided',
+      'leave.requested',
+      'ledger.entry.posted',
       'payroll.final_settlement.requested',
+      'payroll.run.approved',
+      'payroll.run.ready',
+      'payslip.issued',
       'task.transfer.requested',
     ]);
     for (const versions of Object.values(outboxEventSchemas)) {

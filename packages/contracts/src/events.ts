@@ -128,6 +128,70 @@ export const payrollFinalSettlementRequestedV1 = defineEvent(
   }),
 );
 
+// ---------- Modules 7, 8, 9 -> Module 12 (notifications), Module 4 and Module 6 (defined now, produced now) ----------
+// No pay figures, salary amounts or bank details in any of these payloads.
+
+const dayString = z.iso.date();
+const monthString = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/);
+
+/** M7: a leave request was made and waits for its first approver. */
+export const leaveRequestedV1 = defineEvent(
+  'leave.requested',
+  1,
+  z.object({ requestNumber: z.string(), empId: empIdSchema, approverEmpId: empIdSchema.nullable(), from: dayString, to: dayString }),
+);
+
+/** M7: an approval step on a leave request was decided, or the request was cancelled. */
+export const leaveDecidedV1 = defineEvent(
+  'leave.decided',
+  1,
+  z.object({
+    requestNumber: z.string(),
+    empId: empIdSchema,
+    decision: z.enum(['approved', 'rejected', 'cancelled', 'forwarded']),
+    byEmpId: empIdSchema,
+    nextApproverEmpId: empIdSchema.nullable(),
+  }),
+);
+
+/** M7: an attendance correction was approved or rejected. */
+export const attendanceCorrectionDecidedV1 = defineEvent(
+  'attendance.correction.decided',
+  1,
+  z.object({ correctionId: z.uuid(), empId: empIdSchema, date: dayString, decision: z.enum(['approved', 'rejected']), byEmpId: empIdSchema }),
+);
+
+/** M8: a payroll run moved to the next person (prepared -> review, reviewed -> approval). Plan event "payroll ready". */
+export const payrollRunReadyV1 = defineEvent(
+  'payroll.run.ready',
+  1,
+  z.object({ runNumber: z.string(), month: monthString, stage: z.enum(['prepared', 'reviewed']) }),
+);
+
+/** M8: a payroll run was approved (its salary entry now waits in the ledger). */
+export const payrollRunApprovedV1 = defineEvent(
+  'payroll.run.approved',
+  1,
+  z.object({ runNumber: z.string(), month: monthString, approvedByEmpId: empIdSchema }),
+);
+
+/** M8: a payslip is available to its employee. Plan event "payslip available". */
+export const payslipIssuedV1 = defineEvent('payslip.issued', 1, z.object({ empId: empIdSchema, month: monthString }));
+
+/** M9: a journal entry was posted to the ledger. */
+export const ledgerEntryPostedV1 = defineEvent(
+  'ledger.entry.posted',
+  1,
+  z.object({ entryNumber: z.string(), source: z.string(), entryDate: dayString }),
+);
+
+/** M9: a closed month was reopened (plan: logged and alerted). */
+export const financePeriodReopenedV1 = defineEvent(
+  'finance.period.reopened',
+  1,
+  z.object({ month: monthString, byEmpId: empIdSchema, reason: z.string() }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -136,6 +200,14 @@ export const outboxEventSchemas = {
   'employee.offboarded': { 1: employeeOffboardedV1 },
   'task.transfer.requested': { 1: taskTransferRequestedV1 },
   'payroll.final_settlement.requested': { 1: payrollFinalSettlementRequestedV1 },
+  'leave.requested': { 1: leaveRequestedV1 },
+  'leave.decided': { 1: leaveDecidedV1 },
+  'attendance.correction.decided': { 1: attendanceCorrectionDecidedV1 },
+  'payroll.run.ready': { 1: payrollRunReadyV1 },
+  'payroll.run.approved': { 1: payrollRunApprovedV1 },
+  'payslip.issued': { 1: payslipIssuedV1 },
+  'ledger.entry.posted': { 1: ledgerEntryPostedV1 },
+  'finance.period.reopened': { 1: financePeriodReopenedV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -147,6 +219,14 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   employeeOffboardedV1,
   taskTransferRequestedV1,
   payrollFinalSettlementRequestedV1,
+  leaveRequestedV1,
+  leaveDecidedV1,
+  attendanceCorrectionDecidedV1,
+  payrollRunReadyV1,
+  payrollRunApprovedV1,
+  payslipIssuedV1,
+  ledgerEntryPostedV1,
+  financePeriodReopenedV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

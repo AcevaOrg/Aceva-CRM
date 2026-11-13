@@ -69,6 +69,11 @@ export class AccessGuard implements CanActivate {
 
     const deny = async (reason: string, details: Record<string, string>, code = 'forbidden'): Promise<never> => {
       await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'route', targetId: route, outcome: 'denied', reason, details, ...client });
+      // Plan section 16: for anyone without finance access, finance (and payroll) links return "not found", so the
+      // screens do not even reveal that they exist. The refusal is still audited above.
+      if (financeScreen && (reason === 'missing_permission' || reason === 'out_of_scope')) {
+        throw new NotFoundException({ statusCode: 404, code: 'not_found', message: 'Not found' });
+      }
       throw new ForbiddenException({ statusCode: 403, code, message: 'You do not have access to this' });
     };
 
