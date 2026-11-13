@@ -14,6 +14,7 @@ import { MaskedValue } from "@/components/shared/masked-value";
 import { Money } from "@/components/shared/money";
 import { EmptyState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { isLive } from "@/lib/api/http";
 import { formatMoney, toNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useCanPreparePayroll, usePayslipFor } from "../hooks";
@@ -23,6 +24,15 @@ import { AdjustmentDialog } from "./adjustment-dialog";
 import { PayslipDocument } from "./payslip-document";
 
 const num = (m: { amount: string }) => toNumber(m.amount);
+
+/** Things to check on a line (server flags, live mode). Joiners and leavers are paid the full base: no pro-rata (D11). */
+const FLAG_LABEL: Record<string, string> = {
+  joined_mid_month: "Joined this month (full base, check)",
+  left_mid_month: "Left this month (full base, check)",
+  final_settlement: "Final settlement",
+  no_working_days: "No working days",
+  missed_checkouts: "Missed check-outs",
+};
 
 function VarianceCell({ line }: { line: PayrollLine }) {
   const v = variancePct(line);
@@ -74,7 +84,7 @@ function Formula({ line, run }: { line: PayrollLine; run: PayrollRun }) {
 }
 
 function PayslipViewer({ run, empId, onClose }: { run: PayrollRun; empId: string | null; onClose: () => void }) {
-  const q = usePayslipFor(run.id, empId);
+  const q = usePayslipFor(run, empId);
   return (
     <Dialog open={!!empId} onOpenChange={(o) => !o && onClose()}>
       <DialogContent size="xl" className="bg-background">
@@ -82,7 +92,7 @@ function PayslipViewer({ run, empId, onClose }: { run: PayrollRun; empId: string
           <DialogTitle>Payslip</DialogTitle>
           <DialogDescription>Opening someone else&apos;s payslip is a sensitive view and is logged.</DialogDescription>
         </DialogHeader>
-        {q.data ? <PayslipDocument slip={q.data} canRevealBank /> : <p className="py-10 text-center text-[13px] text-muted-foreground">{q.isPending ? "Loading…" : "No payslip yet."}</p>}
+        {q.data ? <PayslipDocument slip={q.data} canRevealBank={!isLive("m8")} /> : <p className="py-10 text-center text-[13px] text-muted-foreground">{q.isPending ? "Loading…" : "No payslip yet."}</p>}
       </DialogContent>
     </Dialog>
   );
@@ -226,12 +236,25 @@ export function RunLinesTable({ run, lines }: { run: PayrollRun; lines: PayrollL
                               )}
                             </div>
                             <div className="grid content-start gap-3 rounded-lg border border-border bg-card p-3 text-[12.5px]">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Paid to</p>
-                                <p>
-                                  {l.bankName} · <MaskedValue value={l.accountNumber} canReveal stepUp label="bank account number" />
-                                </p>
-                              </div>
+                              {l.accountNumber ? (
+                                <div>
+                                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Paid to</p>
+                                  <p>
+                                    {l.bankName} · <MaskedValue value={l.accountNumber} canReveal stepUp label="bank account number" />
+                                  </p>
+                                </div>
+                              ) : (
+                                <p className="text-muted-foreground">Bank details leave the system only through the logged bank transfer sheet.</p>
+                              )}
+                              {!!l.flags?.length && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {l.flags.map((f) => (
+                                    <Badge key={f} tone="warning">
+                                      {FLAG_LABEL[f] ?? f}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
                               <div className="flex flex-wrap gap-2">
                                 {hasPayslips && (
                                   <Button

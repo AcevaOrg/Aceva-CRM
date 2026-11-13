@@ -1,9 +1,11 @@
 /**
- * Module 8 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
+ * Module 8 service functions: the in-browser mock below, and the real API in live-api.ts (NEXT_PUBLIC_LIVE_MODULES contains
+ * m8). Each JSDoc names the real endpoint (spec §7.3).
  * Payroll data is highly confidential (plan §16): callers without payroll.view get 404, like the server.
- * Chain (maker-checker): Prepared (Finance, payroll.prepare) → Approved (Director, payroll.approve, step-up).
- * The CEO / Founder / Owner has payroll.view and payroll.export only: views every run, acts on none.
+ * Chain (maker-checker, plan §12): Prepared (Finance, payroll.prepare) → Reviewed (Director, payroll.review) →
+ * Approved (CEO, payroll.approve, step-up). The Owner has payroll.view and payroll.export only: views every run, acts on none.
  */
+import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
 import { employeesTable } from "@/lib/directory";
@@ -15,8 +17,12 @@ import { PAY } from "@/mocks/seed/people";
 import { buildPayslips, seedAdjustments, seedAdvances, seedPayrollLines, seedPayrollRuns } from "@/mocks/seed/payroll";
 import type { ApprovalStep } from "@/types";
 import { isTopLevelRole } from "@/types";
-import { APPROVED_LABEL, calculateLine, DEFAULT_TAX_SLABS, nextMonthKey, PAYROLL_APPROVER, PREPARED_LABEL, totalsOf, workingDaysInMonth } from "./logic";
-import type { NewAdvanceInput, PayrollAdjustment, PayrollLine, PayrollRun, Payslip, RunDetail, SalaryAdvance, TaxSlab } from "./types";
+import { livePayrollApi } from "./live-api";
+import {
+  APPROVED_LABEL, calculateLine, DEFAULT_TAX_SLABS, nextMonthKey, PAYROLL_APPROVER, PAYROLL_REVIEWER, PREPARED_LABEL, REVIEWED_LABEL, stageIndex, totalsOf,
+  workingDaysInMonth,
+} from "./logic";
+import type { NewAdvanceInput, PayrollAdjustment, PayrollBankAccount, PayrollLine, PayrollRun, Payslip, RunDetail, SalaryAdvance, TaxSlab } from "./types";
 
 export const runsTable = () => table<PayrollRun>("payroll.runs", seedPayrollRuns);
 export const linesTable = () => table<PayrollLine>("payroll.lines", seedPayrollLines);
@@ -38,9 +44,26 @@ function step(run: PayrollRun, i: number, patch: Partial<ApprovalStep>) {
   run.chain[i] = { ...run.chain[i], ...patch };
 }
 
-/** Chain positions: 0 Prepared (Finance), 1 Approved (Director). */
+/** Chain positions: 0 Prepared (Finance), 1 Reviewed (Director), 2 Approved (CEO). */
 const PREPARED = 0;
-const APPROVED = 1;
+const REVIEWED = 1;
+const APPROVED = 2;
+
+/** Seed runs were made with two steps; add the Director's review step (plan §12) so every run shows the full chain. */
+export function withReviewStep(run: PayrollRun): PayrollRun {
+  if (run.chain.length >= 3) return run;
+  const [prepared, approved] = run.chain;
+  const reviewedDone = stageIndex(run.stage) >= stageIndex("reviewed");
+  const review = {
+    label: REVIEWED_LABEL,
+    empId: run.reviewedBy ?? PAYROLL_REVIEWER,
+    state: reviewedDone ? ("done" as const) : run.stage === "prepared" ? ("waiting" as const) : ("pending" as const),
+    at: reviewedDone ? approved?.at : undefined,
+  };
+  const approvedState = stageIndex(run.stage) >= stageIndex("approved") ? ("done" as const) : run.stage === "reviewed" ? ("waiting" as const) : ("pending" as const);
+  run.chain = [prepared, review, { ...(approved ?? {}), label: APPROVED_LABEL, state: approvedState }];
+  return run;
+}
 
 /** Preparation (start, lock, prepare, payslips, posting, bank transfer, advances, adjustments) is Finance's work. */
 function canPrepare(v: ReturnType<typeof getViewer>) {
@@ -91,14 +114,21 @@ function buildLines(runId: string, month: string, workingDays: number): PayrollL
     });
 }
 
-export type RunAction = "calculate" | "prepare" | "approve" | "return" | "send_payslips" | "post" | "mark_paid";
+export type RunAction = "calculate" | "prepare" | "review" | "approve" | "return" | "send_payslips" | "post" | "mark_paid";
 
-export const payrollApi = {
+/** Options of a run action: the reason for sending back; the bank account and day of the transfer (mark paid, live). */
+export interface RunActionOptions {
+  note?: string;
+  bankAccountId?: string;
+  paidOn?: string;
+}
+
+const mockPayrollApi = {
   /** GET /payroll/runs */
   listRuns: () =>
     mock(() => {
       requireView();
-      return [...runsTable()].sort((a, b) => b.month.localeCompare(a.month));
+      return [...runsTable()].map(withReviewStep).sort((a, b) => b.month.localeCompare(a.month));
     }),
 
   /** GET /payroll/runs/:id (+ lines) */
@@ -107,7 +137,7 @@ export const payrollApi = {
       requireView();
       const run = runsTable().find((r) => r.id === id || r.number === id);
       if (!run) notFound("Payroll run");
-      return { run, lines: linesTable().filter((l) => l.runId === run.id) };
+      return { run: withReviewStep(run), lines: linesTable().filter((l) => l.runId === run.id) };
     }),
 
   /** POST /payroll/runs { month } (Finance) */
@@ -129,6 +159,7 @@ export const payrollApi = {
         headcount: lines.length,
         chain: [
           { label: PREPARED_LABEL, empId: v.employee.empId, state: "pending" },
+          { label: REVIEWED_LABEL, empId: PAYROLL_REVIEWER, state: "pending" },
           { label: APPROVED_LABEL, empId: PAYROLL_APPROVER, state: "pending" },
         ],
         createdAt: new Date().toISOString(),
@@ -139,12 +170,13 @@ export const payrollApi = {
     }),
 
   /** POST /payroll/runs/:id/{lock|calculate|prepare|approve|return|send-payslips|post|mark-paid} */
-  act: (id: string, action: RunAction, opts: { note?: string } = {}) =>
+  act: (id: string, action: RunAction, opts: RunActionOptions = {}) =>
     mock(() => {
       const v = requireView();
       const me = v.employee.empId;
-      const run = runsTable().find((r) => r.id === id);
-      if (!run) notFound("Payroll run");
+      const found = runsTable().find((r) => r.id === id);
+      if (!found) notFound("Payroll run");
+      const run = withReviewStep(found);
       const now = new Date().toISOString();
       const lines = linesTable().filter((l) => l.runId === run.id);
       const needs = (cond: boolean, msg: string) => {
@@ -164,10 +196,20 @@ export const payrollApi = {
           run.preparedAt = now;
           run.returnedNote = undefined;
           step(run, PREPARED, { empId: me, state: "done", at: now });
-          step(run, APPROVED, { empId: PAYROLL_APPROVER, state: "waiting", at: undefined, note: undefined });
+          step(run, REVIEWED, { empId: PAYROLL_REVIEWER, state: "waiting", at: undefined, note: undefined });
+          step(run, APPROVED, { empId: PAYROLL_APPROVER, state: "pending", at: undefined, note: undefined });
+          break;
+        case "review":
+          needs(run.stage === "prepared" && v.can("payroll.review"), "Only the Director reviews payroll.");
+          needs(run.preparedBy !== me, "You prepared this payroll, so you can't review it.");
+          run.stage = "reviewed";
+          run.reviewedBy = me;
+          run.reviewedAt = now;
+          step(run, REVIEWED, { empId: me, state: "done", at: now });
+          step(run, APPROVED, { state: "waiting" });
           break;
         case "approve":
-          needs(run.stage === "prepared" && v.can("payroll.approve"), "Only the Director approves payroll.");
+          needs(run.stage === "reviewed" && v.can("payroll.approve"), "Only the CEO approves payroll, after the Director's review.");
           needs(run.preparedBy !== me, "You prepared this payroll, so you can't approve it.");
           run.stage = "approved";
           run.approvedBy = me;
@@ -175,12 +217,14 @@ export const payrollApi = {
           step(run, APPROVED, { empId: me, state: "done", at: now, note: opts.note });
           break;
         case "return":
-          needs(run.stage === "prepared", "Only a run waiting for approval can be sent back.");
-          needs(v.can("payroll.approve") && run.preparedBy !== me, "Only the Director can send payroll back.");
+          needs(run.stage === "prepared" || run.stage === "reviewed", "Only a run waiting for review or approval can be sent back.");
+          needs((v.can("payroll.review") || v.can("payroll.approve")) && run.preparedBy !== me, "Only the Director or the CEO can send payroll back.");
           needs(!!opts.note, "A reason is required.");
-          step(run, APPROVED, { empId: me, state: "rejected", at: now, note: opts.note });
+          step(run, run.stage === "prepared" ? REVIEWED : APPROVED, { empId: me, state: "rejected", at: now, note: opts.note });
           run.stage = "calculated";
           run.returnedNote = opts.note;
+          run.reviewedBy = undefined;
+          run.reviewedAt = undefined;
           break;
         case "send_payslips": {
           needs(run.stage === "approved" && canPrepare(v), "Finance sends payslips after the Director approves.");
@@ -214,7 +258,7 @@ export const payrollApi = {
     }),
 
   /** POST /payroll/runs/:id/adjustments (fix after approval goes into next month) */
-  addAdjustment: (input: { runId: string; empId: string; amount: number; note: string }) =>
+  addAdjustment: (input: { runId: string; empId: string; amount: number; note: string; targetMonth?: string }) =>
     mock(() => {
       const v = requireView();
       if (!canPrepare(v)) throw new ApiError("forbidden", "Only Finance adds payroll adjustments.", 403);
@@ -223,7 +267,7 @@ export const payrollApi = {
       const adj: PayrollAdjustment = {
         id: uid("adj"),
         fromRunId: run.id,
-        toMonth: nextMonthKey(run.month),
+        toMonth: input.targetMonth ?? nextMonthKey(run.month),
         empId: input.empId,
         amount: money(input.amount),
         note: input.note,
@@ -250,12 +294,12 @@ export const payrollApi = {
       return payslipsTable().filter((p) => p.empId === target);
     }),
 
-  /** GET /payslips/:runId/:empId */
-  payslipFor: (runId: string, empId: string) =>
+  /** GET /payslips/employees/:empId, then GET /payslips/:id (live) */
+  payslipFor: (runId: string, empId: string, month?: string) =>
     mock(() => {
       const v = getViewer();
       if (empId !== v.employee.empId && !v.can("payroll.view")) notFound("Payslip");
-      return payslipsTable().find((p) => p.runId === runId && p.empId === empId) ?? null;
+      return payslipsTable().find((p) => p.runId === runId && p.empId === empId && (!month || p.month === month)) ?? null;
     }),
 
   /** GET /payroll/advances (own unless payroll.view) */
@@ -288,9 +332,27 @@ export const payrollApi = {
       return adv;
     }),
 
-  /** GET /settings/tax-slabs */
+  /** GET /settings/tax-slabs (the version in force) */
   taxSlabs: () => mock(() => taxSlabsTable(), { delay: 80 }),
+
+  /** POST /settings/tax-slabs: a new version (settings.manage). */
+  saveTaxSlabs: (slabs: TaxSlab[], version: { effectiveFrom: string; label: string }) =>
+    mock(() => {
+      void version; // the mock keeps only the slabs in force
+      if (!getViewer().can("settings.manage")) throw new ApiError("forbidden", "Only the Director changes the tax slabs.", 403);
+      setTaxSlabs(slabs);
+      return [...taxSlabsTable()];
+    }),
+
+  /** GET /bank-accounts (Module 9): accounts a salary or an advance can be paid from. */
+  bankAccounts: () => mock<PayrollBankAccount[]>(() => [{ id: "bank-pkr", code: "1100", name: "Bank: PKR current account" }], { delay: 60 }),
+
+  /** GET /payroll/runs/:id/bank-sheet (live downloads the CSV; the mock only shows the export dialog). */
+  bankSheet: (runId: string) => mock<void>(() => void runId),
 };
+
+/** Module 8 is live when NEXT_PUBLIC_LIVE_MODULES contains m8; otherwise the in-browser mock above. */
+export const payrollApi: typeof mockPayrollApi = isLive("m8") ? livePayrollApi : mockPayrollApi;
 
 /** Settings (M12) writes the tax slabs here so payroll uses the new values (mock only). */
 export function currentTaxSlabs() {

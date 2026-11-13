@@ -11,12 +11,13 @@ import { HealthModule } from './health/health.module';
 import { JobsModule } from './jobs/jobs.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { FinanceModule } from './finance/finance.module';
+import { PayrollModule } from './payroll/payroll.module';
 import { OrgModule } from './org/org.module';
 import { PeopleModule } from './people/people.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), JobsModule, AccessModule, AuthModule, HealthModule, OrgModule, PeopleModule, AttendanceModule, FinanceModule],
+  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), JobsModule, AccessModule, AuthModule, HealthModule, OrgModule, PeopleModule, AttendanceModule, FinanceModule, PayrollModule],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })
 export class AppModule {}

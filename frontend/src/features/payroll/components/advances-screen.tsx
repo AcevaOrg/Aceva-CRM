@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { HandCoins, Plus } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { NativeSelect } from "@/components/ui/controls";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Progress } from "@/components/ui/misc";
@@ -22,11 +23,21 @@ import { Money } from "@/components/shared/money";
 import { EmployeeSelect } from "@/components/shared/pickers";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { isLive } from "@/lib/api/http";
 import { formatMonthKey, monthKey } from "@/lib/dates";
 import { formatMoney, toNumber } from "@/lib/format";
-import { useAdvances, useCanPreparePayroll, useCreateAdvance } from "../hooks";
+import { useAdvances, useBankAccounts, useCanPreparePayroll, useCreateAdvance } from "../hooks";
 import { nextMonthKey } from "../logic";
 import type { SalaryAdvance } from "../types";
+
+const LIVE = isLive("m8");
+
+const STATUS: Record<SalaryAdvance["status"], { label: string; tone: "warning" | "success" | "neutral" | "info" }> = {
+  pending_payout: { label: "Waiting for payout", tone: "info" },
+  active: { label: "Active", tone: "warning" },
+  repaid: { label: "Repaid", tone: "success" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+};
 
 export function AdvancesScreen() {
   return (
@@ -63,8 +74,14 @@ function AdvancesInner() {
       />
       {!canCreate && (
         <div className="mb-4">
-          <MakerCheckerNote reason="View only. Finance records salary advances; each repayment goes through the monthly payroll the Director approves." />
+          <MakerCheckerNote reason="View only. Finance records salary advances; each repayment goes through the monthly payroll the Director reviews and the CEO approves." />
         </div>
+      )}
+      {LIVE && (
+        <p className="mb-4 text-[12.5px] text-muted-foreground">
+          An advance is paid through a ledger entry that waits for the normal ledger approval; repayments start once that entry is posted.
+          Who approves advances beyond that, and the largest advance allowed, are not decided yet.
+        </p>
       )}
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard label="Active advances" value={active.length} icon={<HandCoins />} accent="var(--zone-finance)" />
@@ -104,7 +121,7 @@ function AdvancesInner() {
               },
             },
             { key: "remaining", header: "Left", align: "right", cell: (a) => <Money value={a.remaining} className="font-semibold" />, sortValue: (a) => toNumber(a.remaining) },
-            { key: "status", header: "Status", cell: (a) => <StatusBadge label={a.status === "active" ? "Active" : "Repaid"} tone={a.status === "active" ? "warning" : "success"} />, sortValue: (a) => a.status },
+            { key: "status", header: "Status", cell: (a) => <StatusBadge label={STATUS[a.status].label} tone={STATUS[a.status].tone} />, sortValue: (a) => a.status },
             { key: "reason", header: "Reason", cell: (a) => <span className="text-muted-foreground">{a.reason}</span>, hideOnMobile: true },
           ]}
         />
@@ -120,7 +137,8 @@ const schema = z
     amount: z.string().refine((v) => Number(v) > 0, "Enter the advance amount"),
     monthly: z.string().refine((v) => Number(v) > 0, "Enter the monthly deduction"),
     startMonth: z.string().regex(/^\d{4}-\d{2}$/, "Choose the first month"),
-    reason: z.string().trim().min(3, "Write a short reason"),
+    reason: z.string().trim().min(5, "Write a short reason (at least 5 characters)"),
+    bankAccountId: z.string().optional(),
   })
   .refine((v) => Number(v.monthly) <= Number(v.amount), { path: ["monthly"], message: "Can't be more than the advance" });
 
@@ -129,10 +147,11 @@ type FormValues = z.infer<typeof schema>;
 function NewAdvanceSheet({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const create = useCreateAdvance();
   const lookup = useLookup();
+  const banks = useBankAccounts(open && LIVE);
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: "onBlur",
-    defaultValues: { empId: "", amount: "", monthly: "", startMonth: nextMonthKey(monthKey()), reason: "" },
+    defaultValues: { empId: "", amount: "", monthly: "", startMonth: nextMonthKey(monthKey()), reason: "", bankAccountId: "" },
   });
   const { register, handleSubmit, watch, setValue, formState, reset } = form;
   const amount = Number(watch("amount")) || 0;
@@ -154,8 +173,14 @@ function NewAdvanceSheet({ open, onOpenChange }: { open: boolean; onOpenChange: 
     return out;
   }, [amount, monthly, start]);
 
+  const bankAccountId = watch("bankAccountId") || banks.data?.[0]?.id || "";
   const onSubmit = handleSubmit(async (v) => {
-    await create.mutateAsync({ empId: v.empId, amount: Number(v.amount), monthlyDeduction: Number(v.monthly), startMonth: v.startMonth, reason: v.reason });
+    try {
+      await create.mutateAsync({ empId: v.empId, amount: Number(v.amount), monthlyDeduction: Number(v.monthly), startMonth: v.startMonth, reason: v.reason, bankAccountId: LIVE ? bankAccountId : undefined });
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
     toast.success("Advance recorded", { description: `${formatMoney(Number(v.amount))} for ${lookup.employee(v.empId)?.name}. Deducted from ${formatMonthKey(v.startMonth)} payroll.` });
     reset();
     onOpenChange(false);
@@ -184,6 +209,17 @@ function NewAdvanceSheet({ open, onOpenChange }: { open: boolean; onOpenChange: 
             <Field label="First deduction" htmlFor="adv-start" error={formState.errors.startMonth?.message} required>
               <Input id="adv-start" type="month" {...register("startMonth")} />
             </Field>
+            {LIVE && (
+              <Field label="Paid from" htmlFor="adv-bank" hint="The payout entry waits for the ledger approval." required>
+                <NativeSelect id="adv-bank" value={bankAccountId} onChange={(e) => setValue("bankAccountId", e.target.value)} disabled={banks.isPending}>
+                  {(banks.data ?? []).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.code} · {b.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+            )}
             <Field label="Reason" htmlFor="adv-reason" error={formState.errors.reason?.message} required>
               <Textarea id="adv-reason" placeholder="e.g. Family medical expense" {...register("reason")} />
             </Field>
