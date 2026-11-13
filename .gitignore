@@ -38,3 +38,63 @@ _cacache/
 # a Windows cache path written literally on Linux CI (the old project .npmrc said cache=E:\npm-cache)
 E:*/
 /E:*
+
+# keys, certificates and credential files
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*
+service-account*.json
+credentials*.json
+
+# local databases, dumps and backups (migrations stay tracked: *.sql is NOT ignored)
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.pgdump
+*.backup
+*.bak
+*.sql.gz
+backups/
+
+# private files written when the backend runs from backend/ (backend/src/storage/ is source code and stays tracked)
+/backend/storage/
+/backend/uploads/
+
+# downloaded payroll and finance exports (bank sheets, ledger CSVs, payslips) and real data files
+/exports/
+/private-data/
+*bank-sheet*.csv
+*HIGHLY-CONFIDENTIAL*
+ledger-*.csv
+payslip*.pdf
+
+# temporary files and debug output
+tmp/
+temp/
+.tmp/
+*.tmp
+*.swp
+*~
+
+# Playwright extras
+blob-report/
+playwright/.cache/
+
+# tool caches
+.eslintcache
+.cache/
+.turbo/
+.nyc_output/
+.vercel/
+
+# IDE and OS
+.vscode/
+.idea/
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
