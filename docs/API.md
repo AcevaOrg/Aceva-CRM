@@ -119,6 +119,39 @@ Emp-ID in URLs. A month that payroll has locked refuses every change (`409 perio
 | `GET/POST /settings/work-schedule`, `GET/POST /settings/office-networks`, `POST /settings/office-networks/:id/archive`, `GET/POST /settings/leave-entitlements` | `settings.manage` (reading the schedule: logged in) | A new schedule starts today or later; entitlements only for people below the setter, never your own |
 | `POST /leave/types`, `PATCH /leave/types/:id`, `POST /leave/types/:id/archive` | `settings.manage` | Paid or unpaid cannot change once leave of that type exists (`409 leave_type_in_use`); archive it and add a new type |
 
+## M9: finance ledger
+
+Every route is a finance screen (10-minute idle limit; a refused permission answers **404**) and needs `finance.view`
+plus the permission shown. Posted entries are never edited or deleted (database trigger): a mistake is corrected by a
+reversing entry. Debits must equal credits (`unbalanced_entry`, also checked by the database at commit). Nothing can be
+posted into a closed month (`409 period_closed`), and no new entry is made while a month waits for its close approval (`409 period_closing`). Reports are under `/ledger/reports/*` so they do not clash with
+Module 10's `/reports`.
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /journal-entries` (filters `status`, `month`, `source`, `accountId`, `partyId`, `projectId`, `awaitingMe`, `q`), `GET /journal-entries/:id` | `finance.view` | |
+| `POST /journal-entries`, `PATCH /journal-entries/:id`, `POST /journal-entries/:id/submit` | `finance.entry_create` (the maker's own draft) | |
+| `POST /journal-entries/:id/approve`, `/reject {reason}` | `finance.entry_approve` at the tier the PKR amount needs (`approval_limits`; development defaults: Director up to 50,000, CEO up to 500,000, Owner above and for every capital or loan entry) | Never the maker (`403 self_approval`); below the tier `403 approval_limit`; "confirm again" above `finance_settings.step_up_above` |
+| `POST /journal-entries/:id/reverse {reason, date?}` | `finance.entry_create` | A draft with the lines swapped, which follows normal approval. One live reversal per entry (database index); a rejected reversal does not block a new one |
+| `GET /accounts`, `POST /accounts`, `PATCH /accounts/:id` | view / `finance.entry_create` | Chart of accounts in five groups; system roles map automatic postings to accounts. New equity accounts need Owner approval by default (only the Owner may create one without it, `403 owner_only`); a sub-account of an account that needs Owner approval (for example under 2500 Loans) always needs it too (`409 owner_approval_inherited`, also enforced by the database). `PATCH` can add the rule but never remove it (`403 owner_only`) |
+| `PUT /accounts/:id/owner-approval {required, reason}` | **Owner only** (`finance.authority_manage`, decision D22) + "confirm again" | Adds or removes the "Owner approves" rule. Removing it from a sub-account whose parent needs it is refused (`409 owner_approval_inherited`). The database accepts a removal only together with the Owner's audit row in the same transaction |
+| `GET /bank-accounts`, `POST /bank-accounts`, `PUT /bank-accounts/:id/details` | view / entry_create / entry_create | Account numbers are encrypted and masked |
+| `POST /bank-accounts/:id/reveal` | `finance.view` + "confirm again" | Shows the full number once; audited without the number |
+| `GET /parties`, `GET /parties/:id`, `POST /parties`, `PATCH /parties/:id`; `GET /projects`, `POST /projects`, `PATCH /projects/:id`; `GET/POST /exchange-rates` | reads: view; changes: entry_create | Parties and projects are archived, never deleted. One USD rate per day (`409 rate_exists`) |
+| `GET /invoices`, `GET /invoices/:id`, `GET /invoices/:id/document`, `POST /invoices`; `GET /bills`, `GET /bills/:id`, `POST /bills` | reads: view; create: entry_create | Status is calculated from posted payments. The invoice document is printable HTML |
+| `POST /bills/:id/receipt`, `POST /receipts/journal-entries/:id`, `GET /receipts/:id` | attach: entry_create; download: view | A receipt is attached to a bill or to a journal entry. PDF, PNG or JPEG by real content, 10 MB, private storage; downloads audited |
+| `GET /payments`, `GET /payments/:id`, `POST /payments`; `GET/POST /transfers` | reads: view; create: entry_create | No overpayment; the payment currency must match |
+| `GET/POST /bank-statements`, `POST /bank-statements/auto-match`, `POST /bank-statements/lines/:id/match`, `/unmatch`, `/create-entry` | view / entry_create | CSV import (a file is imported once), suggestions, matching |
+| `GET /periods`, `GET /periods/:month` | view | Live checklist: entries posted, bank reconciled, payroll posted, USD revalued, trial balance |
+| `GET /periods/:month/revaluation?rate` | view | USD revaluation preview (default: the saved month-end rate) |
+| `POST /periods/:month/revaluation-preview {rate}`, `POST /periods/:month/revalue` | view + entry_create | Preview with a rate; create the month-end revaluation entry (once per month; it waits for approval) |
+| `POST /periods/:month/close`, then `/approve-close` or `/reject-close` | finance duty (`finance.close`), then the **CEO** (`finance.close_approve`), never the person who ran it | The checklist is checked again at approval |
+| `POST /periods/:month/reopen {reason}` | **Owner or CEO** (`finance.reopen`) + "confirm again" | Logged, audited and sent to the outbox |
+| `GET /settings/approval-limits`, `GET /settings/finance` | `finance.view` | |
+| `PUT /settings/approval-limits`, `PUT /settings/finance` | **Owner only** (`finance.authority_manage`, decision D22; also checked in the service) + a reason and "confirm again" (audited) | Nobody else, the Director included, can change an approval limit or the confirm-again amount (404). The unlimited tier is always the Owner (level 1), and the Owner tier is never removed (also enforced by the database) |
+| `GET /ledger/reports/{trial-balance, general-ledger, ar-aging, ap-due, profit-by-project, profit-by-client}` | `finance.view` | |
+| `GET /ledger/export?from&to` | `finance.export` + "confirm again" | CSV with a watermark line; formula injection blocked; audited |
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full

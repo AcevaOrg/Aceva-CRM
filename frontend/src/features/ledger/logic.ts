@@ -107,8 +107,8 @@ type CanFn = (p: Permission) => boolean;
 
 /** The finance person prepares entries and runs the month close. */
 export const canRunClose = (can: CanFn) => can("finance.close") && can("finance.entry_create");
-/** The Director approves (or sends back) the month close. */
-export const canApproveClose = (can: CanFn) => can("finance.close") && can("finance.entry_approve");
+/** The CEO approves (or sends back) the month close (plan section 13; permission finance.close_approve). */
+export const canApproveClose = (can: CanFn) => can("finance.close_approve");
 
 export const monthOf = (iso: string) => iso.slice(0, 7);
 
@@ -203,6 +203,8 @@ export const SOURCE_LABEL: Record<string, string> = {
   revaluation: "Revaluation",
   transfer: "Transfer",
   opening: "Opening balance",
+  payroll_payment: "Salary payment",
+  advance: "Salary advance",
 };
 
 export const STATUS_LABEL: Record<string, string> = {
@@ -210,4 +212,5 @@ export const STATUS_LABEL: Record<string, string> = {
   pending_approval: "Pending approval",
   posted: "Posted",
   reversed: "Reversed",
+  rejected: "Rejected",
 };

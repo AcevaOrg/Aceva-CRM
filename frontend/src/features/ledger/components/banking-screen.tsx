@@ -3,7 +3,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowRight, ArrowRightLeft, Check, CircleDashed, Landmark, Link2, Plus, Sparkles, Unlink, Upload, Wallet } from "lucide-react";
+import { ArrowRight, ArrowRightLeft, Check, CircleDashed, Eye, EyeOff, Landmark, Link2, Plus, Sparkles, Unlink, Upload, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,9 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Can, RequireAccess } from "@/components/shared/can";
 import { DataTable, type Column } from "@/components/shared/data-table";
+import { useStepUp } from "@/components/shared/dialogs";
 import { MaskedValue } from "@/components/shared/masked-value";
+import { isLive } from "@/lib/api/http";
 import { Money, Mono } from "@/components/shared/money";
 import { CardsSkeleton, EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
@@ -28,6 +30,7 @@ import {
   useAcceptSuggestions, useAccounts, useBankAccounts, useCreateTransfer, useEntryFromStatement, useImportStatement, useMatchLine, usePeriods,
   useRates, useReconciliation, useTransfers,
 } from "../hooks";
+import { ledgerApi } from "../api";
 import { monthKeyOf, num } from "../logic";
 import type { Account, BankStatementLine, JournalEntry, LedgerCashLine } from "../types";
 import { AccountPicker } from "./account-picker";
@@ -65,11 +68,44 @@ function Banking() {
 
 /* ---------------- Accounts ---------------- */
 
+/**
+ * Live mode: the list only ever holds the masked number ("•••• 1234"). Showing it asks for the password again and the
+ * SERVER returns the number and logs the view (plan section 16); it is hidden again after 30 seconds.
+ */
+function LiveBankNumber({ account }: { account: Account }) {
+  const stepUp = useStepUp();
+  const [value, setValue] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!value) return;
+    const t = setTimeout(() => setValue(null), 30_000);
+    return () => clearTimeout(t);
+  }, [value]);
+  const toggle = async () => {
+    if (value) return setValue(null);
+    if (!(await stepUp({ action: "Show account number", detail: `${account.name}. The number is shown for 30 seconds and the view is logged.` }))) return;
+    try {
+      setValue(await ledgerApi.revealBankNumber(account.id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't show the number.");
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="font-mono tabular">{value ?? account.bankAccountNumber}</span>
+      <button type="button" onClick={toggle} className="rounded p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" aria-label={value ? "Hide account number" : "Show account number"}>
+        {value ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+      </button>
+    </span>
+  );
+}
+
 function BankAccountsTab() {
   const q = useBankAccounts();
   const viewer = useViewer();
   const router = useRouter();
-  // Full bank account numbers: the Director and the CEO / Founder / Owner (view) only.
+  // Full bank account numbers: the Director and the CEO / Founder / Owner (view) only. Live: every finance.view holder may ask;
+  // the server checks, asks for confirmation again and logs it.
+  const live = isLive("m9");
   const canReveal = !!viewer && (isTopLevelRole(viewer.employee.role) || viewer.employee.role === "director");
   if (q.isPending) return <CardsSkeleton count={4} />;
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
@@ -101,7 +137,11 @@ function BankAccountsTab() {
                 )}
               </div>
               <div className="flex items-center justify-between gap-2 text-[12.5px]">
-                {a.bankAccountNumber ? <MaskedValue value={a.bankAccountNumber} canReveal={canReveal} stepUp label="account number" /> : <span className="text-muted-foreground">Petty cash box</span>}
+                {a.bankAccountNumber ? (
+                  live ? <LiveBankNumber account={a} /> : <MaskedValue value={a.bankAccountNumber} canReveal={canReveal} stepUp label="account number" />
+                ) : (
+                  <span className="text-muted-foreground">{live ? "No bank details saved" : "Petty cash box"}</span>
+                )}
                 {a.isBank && a.currency === "PKR" && (
                   <Button size="sm" variant="ghost" onClick={() => router.replace(`/finance/banking?tab=reconcile&account=${a.id}`, { scroll: false })}>
                     Reconcile <ArrowRight />
@@ -144,7 +184,7 @@ function TransfersTab() {
       },
     },
     { key: "amount", header: "Amount", align: "right", cell: (e) => <EntryAmount entry={e} />, sortValue: (e) => num(e.baseTotal.amount) },
-    { key: "status", header: "Status", cell: (e) => <EntryStatusBadge status={e.status} /> },
+    { key: "status", header: "Status", cell: (e) => <EntryStatusBadge status={e.status} rejected={e.rejected} /> },
   ];
   return (
     <>

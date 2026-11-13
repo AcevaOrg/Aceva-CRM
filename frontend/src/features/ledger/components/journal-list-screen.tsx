@@ -68,7 +68,7 @@ function JournalList() {
     },
     { key: "source", header: "Source", cell: (e) => <SourceBadge source={e.source} />, hideOnMobile: true },
     { key: "total", header: "Amount", align: "right", cell: (e) => <EntryAmount entry={e} />, sortValue: (e) => Number(e.baseTotal.amount) },
-    { key: "status", header: "Status", cell: (e) => <EntryStatusBadge status={e.status} />, sortValue: (e) => e.status },
+    { key: "status", header: "Status", cell: (e) => <EntryStatusBadge status={e.status} rejected={e.rejected} />, sortValue: (e) => e.status },
     { key: "maker", header: "Prepared by", cell: (e) => <EmpChip empId={e.createdBy} size="sm" showId={false} link={false} />, hideOnMobile: true },
   ];
 

@@ -13,7 +13,7 @@ export const PERMISSIONS = [
   "performance.view_own", "performance.view_team", "performance.view_all", "performance.weights",
   "attendance.self", "attendance.view_team", "attendance.approve_correction", "leave.request", "leave.approve",
   "payroll.view_own", "payroll.view", "payroll.prepare", "payroll.review", "payroll.approve", "payroll.export",
-  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.close_approve", "finance.reopen", "finance.export",
+  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.close_approve", "finance.reopen", "finance.export", "finance.authority_manage",
   "statements.view", "statements.export", "sheet.view", "sheet.import", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "billing.manage", "subscriptions.view", "subscriptions.manage",
@@ -71,7 +71,8 @@ const OVERSIGHT: Permission[] = [
  * finance entries above the CEO's limit and all capital and loan entries (section 13), and reopening a closed month.
  * Mirrors backend/prisma/permission-catalogue.ts (the server is the real lock).
  */
-const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen"];
+/** Decision D22: only the Owner changes approval limits, finance-wide security settings and the "Owner approves" rule. */
+const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen", "finance.authority_manage"];
 
 /** L2 CEO: oversight, the Director's own leave; plan sections 12-13: approves payroll and the month close, entries up to the CEO limit, reopens months. */
 const CEO: Permission[] = [

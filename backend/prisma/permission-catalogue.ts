@@ -29,6 +29,8 @@ export const PERMISSION_KEYS: string[] = [
   'sales.team', 'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve',
   'sales.export', 'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
   'auth.set_temporary_password', 'auth.reset_two_factor', 'finance.close_approve',
+  // Owner only: approval limits, finance-wide security settings, and removing the "Owner approves" rule (decision D22).
+  'finance.authority_manage',
 ];
 
 export interface RoleSeed {
@@ -59,6 +61,8 @@ const OWNER: string[] = [
   'auth.reset_two_factor',
   // Plan sections 11 and 13: approvals move up to the Owner; above PKR 500,000, capital and loans; reopening a month.
   'leave.approve', 'attendance.approve_correction', 'finance.entry_approve', 'finance.reopen',
+  // Decision D22: only the Owner changes approval limits and finance-wide security settings (with "confirm again").
+  'finance.authority_manage',
 ];
 
 const CEO: string[] = [
