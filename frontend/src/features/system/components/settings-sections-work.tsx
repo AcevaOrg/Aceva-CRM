@@ -17,7 +17,9 @@ import { useCan } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
 import { useSaveWeights, useWeightVersions } from "../hooks";
 import type { WeightsVersion } from "../types";
+import { isLive } from "@/lib/api/http";
 import { ChipsEditor, NumberInput, RecentChanges, SettingsSection } from "./settings-kit";
+import { LiveHolidaysSection, LiveLeaveTypesSection, LiveScheduleSection } from "./settings-attendance-live";
 
 /** Label + hint on the left, control on the right. */
 export function SettingRow({ label, hint, htmlFor, children, className }: { label: string; hint?: React.ReactNode; htmlFor?: string; children: React.ReactNode; className?: string }) {
@@ -80,6 +82,8 @@ type Schedule = { workingDays: string[]; startTime: string; endTime: string; gra
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function ScheduleSection() {
+  // Live (m7): the server keeps the schedule history; a change is a new schedule from a chosen day.
+  if (isLive("m7")) return <LiveScheduleSection />;
   return (
     <SettingsSection<Schedule> section="schedule">
       {(d, set, can) => (
@@ -136,6 +140,10 @@ export function ScheduleSection() {
 type Holidays = { holidays: { date: string; name: string }[] };
 
 export function HolidaysSection() {
+  return isLive("m7") ? <LiveHolidaysSection /> : <MockHolidaysSection />;
+}
+
+function MockHolidaysSection() {
   const [date, setDate] = React.useState("");
   const [name, setName] = React.useState("");
   return (
@@ -198,6 +206,7 @@ export function HolidaysSection() {
 type LeaveTypes = { types: { name: string; days: number; paid: boolean }[] };
 
 export function LeaveTypesSection() {
+  if (isLive("m7")) return <LiveLeaveTypesSection />;
   return (
     <SettingsSection<LeaveTypes> section="leave-types">
       {(d, set, can) => {

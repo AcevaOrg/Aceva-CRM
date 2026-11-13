@@ -109,8 +109,9 @@ export function CorrectionsPanel() {
             {(list) => (
               <div className="grid gap-3">
                 {list.map((c) => {
-                  const approver = correctionApprover(c.empId, lookup.employees);
-                  const canDecide = c.empId !== viewer?.employee.empId && approver?.empId === viewer?.employee.empId;
+                  // Live (m7): the server routes the correction (Module 1, stand-ins included) and says who decides.
+                  const approver = c.approverEmpId !== undefined ? (lookup.employees.find((e) => e.empId === c.approverEmpId) ?? null) : correctionApprover(c.empId, lookup.employees);
+                  const canDecide = c.canDecide ?? (c.empId !== viewer?.employee.empId && approver?.empId === viewer?.employee.empId);
                   return <CorrectionCard key={c.id} c={c} canDecide={canDecide} viewOnlyNote={canDecide ? undefined : `View only. ${approverLabel(approver)} approves it.`} />;
                 })}
               </div>

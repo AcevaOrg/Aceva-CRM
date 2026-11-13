@@ -49,11 +49,12 @@ export function LeaveRequestCard({ r, showPerson }: { r: LeaveRequest; showPerso
   const type = types.data?.find((t) => t.id === r.leaveTypeId);
   const me = viewer?.employee.empId;
   const isMine = r.empId === me;
-  const canDecide = !isMine && !!viewer?.can("leave.approve") && currentLeaveApprover(r) === me;
+  // Live (m7): the server says whether the viewer is the routed approver of the current step.
+  const canDecide = r.canDecide ?? (!isMine && !!viewer?.can("leave.approve") && currentLeaveApprover(r) === me);
   // Someone above in the reporting line (the CEO / Founder / Owner, or the Director while the CTO decides) only views it.
   const waitingStep = isPendingLeave(r.status) ? r.chain.find((s) => s.state === "waiting") : undefined;
   const viewOnlyStep = !isMine && !canDecide ? waitingStep : undefined;
-  const canCancel = isMine && (r.status === "pending_manager" || r.status === "pending_director" || (r.status === "approved" && r.from > isoDay(new Date())));
+  const canCancel = r.canCancel ?? (isMine && (r.status === "pending_manager" || r.status === "pending_director" || (r.status === "approved" && r.from > isoDay(new Date()))));
   const st = LEAVE_STATUS[r.status];
 
   const act = async (approve: boolean) => {

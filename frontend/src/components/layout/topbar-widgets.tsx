@@ -18,6 +18,7 @@ import {
 import { LevelMark } from "@/components/shared/level-mark";
 import { useMarkRead, useNotifications } from "@/features/system/hooks";
 import { NOTIFICATION_GROUP, type Notification } from "@/features/system/types";
+import { useLiveCheck, useLiveToday } from "@/features/attendance/today";
 import { useNow } from "@/hooks/use-now";
 import { API_MODE, isLive } from "@/lib/api/http";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
@@ -34,12 +35,16 @@ import { EMPLOYEES } from "@/mocks/seed/people";
 export function useTodayCheck() {
   const empId = useSession((s) => s.empId);
   const checks = useSession((s) => s.checks);
+  // Live (m7): the server's record of today is the only source; the browser store is the mock-mode demo.
+  const live = useLiveToday();
+  const server = live.data;
   return React.useMemo(() => {
+    if (isLive("m7")) return server?.checkIn ? { date: server.date, in: server.checkIn, out: server.checkOut ?? undefined } : undefined;
     const c = empId ? checks[empId] : undefined;
     const today = new Date();
     const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     return c && c.date === iso ? c : undefined;
-  }, [empId, checks]);
+  }, [empId, checks, server]);
 }
 
 /** Work schedule from Settings (mock): 09:00 start, 15 min grace. */
@@ -47,19 +52,50 @@ export const WORK_START = { hour: 9, minute: 0, graceMin: 15, endHour: 18 };
 
 export function CheckInPill() {
   const check = useTodayCheck();
-  const checkIn = useSession((s) => s.checkIn);
-  const checkOut = useSession((s) => s.checkOut);
+  const mockCheckIn = useSession((s) => s.checkIn);
+  const mockCheckOut = useSession((s) => s.checkOut);
+  const today = useLiveToday();
+  const liveCheck = useLiveCheck();
   const now = useNow(30_000);
+  const live = isLive("m7");
+
+  const checkIn = async () => {
+    if (!live) {
+      mockCheckIn();
+      toast.success(`Checked in at ${formatTime(new Date())}`, { description: "Time comes from the server clock." });
+      return;
+    }
+    try {
+      const res = await liveCheck.checkIn.mutateAsync();
+      toast.success(`Checked in at ${formatTime(res.checkIn!)}`, { description: res.lateMinutes ? `${res.lateMinutes} min after ${res.schedule?.graceEnd ?? "the grace period"}. It is marked late.` : "Time comes from the server clock." });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+  const checkOut = async () => {
+    if (!live) {
+      mockCheckOut();
+      toast.success(`Checked out at ${formatTime(new Date())}`);
+      return;
+    }
+    try {
+      const res = await liveCheck.checkOut.mutateAsync();
+      toast.success(`Checked out at ${formatTime(res.checkOut!)}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   if (!check?.in) {
+    const blocked = live && !!today.data && !today.data.checkInAllowedHere;
     return (
       <Button
         size="sm"
         variant="signal"
-        onClick={() => {
-          checkIn();
-          toast.success(`Checked in at ${formatTime(new Date())}`, { description: "Time comes from the server clock." });
-        }}
+        loading={liveCheck.checkIn.isPending}
+        disabled={blocked}
+        title={blocked ? "Check-in is only allowed from the office network." : undefined}
+        onClick={() => void checkIn()}
       >
         <LogIn /> <span className="hidden sm:inline">Check in</span>
       </Button>
@@ -89,10 +125,8 @@ export function CheckInPill() {
           <Button
             className="mt-3 w-full"
             variant="outline"
-            onClick={() => {
-              checkOut();
-              toast.success(`Checked out at ${formatTime(new Date())}`);
-            }}
+            loading={liveCheck.checkOut.isPending}
+            onClick={() => void checkOut()}
           >
             <LogOut /> Check out
           </Button>

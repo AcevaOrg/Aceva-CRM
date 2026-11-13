@@ -107,7 +107,7 @@ function LeaveApprovals() {
       />
       <QueryState query={q}>
         {(list) => {
-          const mine = list.filter((r) => currentLeaveApprover(r) === viewer?.employee.empId);
+          const mine = list.filter((r) => r.canDecide ?? currentLeaveApprover(r) === viewer?.employee.empId);
           return mine.length ? (
             <div className="grid gap-3">
               {mine.map((r) => (

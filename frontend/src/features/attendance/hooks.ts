@@ -2,8 +2,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth/session";
 import { useTodayCheck } from "@/components/layout/topbar-widgets";
+import { isLive } from "@/lib/api/http";
 import { attendanceApi } from "./api";
-import type { NewCorrectionInput, NewLeaveInput } from "./types";
+import { liveAttendanceApi } from "./live-api";
+import { HOLIDAYS as MOCK_HOLIDAYS } from "@/mocks/seed/calendar";
+import type { Holiday, NewCorrectionInput, NewLeaveInput } from "./types";
 
 export const attendanceKeys = {
   all: ["attendance"] as const,
@@ -58,6 +61,12 @@ export function useAttendanceHolidays() {
   return useQuery({ queryKey: ["attendance", "holidays"], queryFn: attendanceApi.holidays, staleTime: Infinity });
 }
 
+/** The company holiday calendar for the screens: the server's in live mode (m7), the demo seed otherwise. */
+export function useHolidayList(): Holiday[] {
+  const q = useAttendanceHolidays();
+  return isLive("m7") ? (q.data ?? []) : MOCK_HOLIDAYS;
+}
+
 /**
  * Leave balances (defaults to the viewer).
  * Returns LeaveBalanceView[]: { leaveTypeId, leaveType: { name, color, yearlyDays, paid }, total, used, pending, remaining: number | null }
@@ -81,6 +90,20 @@ export function useLeaveCalendar(month: string) {
 export function useLeaveClashes(from: string, to: string) {
   const me = useSession((s) => s.empId);
   return useQuery({ queryKey: ["attendance", "clashes", me, from, to], queryFn: () => attendanceApi.clashes(from, to), enabled: !!me && !!from && !!to && to >= from });
+}
+
+/**
+ * Live (m7): the server's own count of a planned leave, the balance after it and who would approve it (Module 1 routing).
+ * Errors (no working days, past month...) are left to the form; the server answers again when the request is sent.
+ */
+export function useLeavePreview(leaveTypeId: string, from: string, to: string, halfDay: boolean) {
+  const me = useSession((s) => s.empId);
+  return useQuery({
+    queryKey: ["attendance", "leave-preview", me, leaveTypeId, from, to, halfDay],
+    queryFn: () => liveAttendanceApi.preview(leaveTypeId, from, to, halfDay),
+    enabled: isLive("m7") && !!me && !!leaveTypeId && !!from && !!to && to >= from,
+    retry: false,
+  });
 }
 
 function useInvalidate() {

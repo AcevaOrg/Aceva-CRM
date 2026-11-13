@@ -99,6 +99,26 @@ stand-in cover, clears a department head, writes the history, and queues the eve
 `task.transfer.requested` and `payroll.final_settlement.requested`. **Reporting lines are not changed**: the leaver's direct
 reports are listed until the Owner or CEO assign a new manager. The record is never deleted.
 
+## M7: attendance and leave
+
+Times always come from the server clock (Pakistan time, UTC+5); a time sent by the browser is ignored. People are named by
+Emp-ID in URLs. A month that payroll has locked refuses every change (`409 period_locked`, also enforced by the database).
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /attendance/today` | `attendance.self` | Server time, schedule, own check-in/out, `checkInAllowedHere` |
+| `POST /attendance/check-in`, `POST /attendance/check-out` | `attendance.self` | Once per day each (`409 already_checked_in` / `already_checked_out` / `not_checked_in`). Late after start + grace. Office-only rule when management turns it on (`403 outside_office_network`) |
+| `GET /attendance/me?month=`, `GET /attendance/employees/:empId?month=` | self; others need `attendance.view_team` and the person below the caller | Month view: on time, late, missed check-out, leave, holiday, absent |
+| `GET /attendance/team?date=`, `GET /attendance/team/summary?month=` | `attendance.view_team` | People below the caller only |
+| `GET/POST /attendance/corrections`, `GET /attendance/corrections/:id` | `attendance.self` (`?scope=team` needs view_team or approve_correction) | Ask for a correction of a past day; one pending per day. The original times are always kept |
+| `POST /attendance/corrections/:id/approve`, `/reject`, `/cancel` | the routed approver (`attendance.approve_correction`); cancel by the requester | Never your own (`403 self_approval`); a stand-in may decide |
+| `GET /leave/types`, `GET /leave/balances/:empId?year=`, `GET /leave/preview`, `GET /leave/calendar?month=` | logged in / `leave.request`, self or below | Balance = entitlement - approved - pending. The preview shows the day count and the approval chain |
+| `GET/POST /leave/requests`, `GET /leave/requests/:id` | `leave.request` | Working days only (weekends and holidays are not counted); half days; inside one leave year; never more than the balance; no overlap |
+| `POST /leave/requests/:id/approve`, `/reject`, `/cancel` | the routed approver of the current step (`leave.approve`); cancel by the requester before the first day | Team lead, then the Director, one level at a time (plan s.11); the Director's own leave goes to the CEO |
+| `GET /holidays`, `POST/PATCH /holidays`, `POST /holidays/:id/archive` | read: logged in; change: `settings.manage` | One holiday calendar for every module |
+| `GET/POST /settings/work-schedule`, `GET/POST /settings/office-networks`, `POST /settings/office-networks/:id/archive`, `GET/POST /settings/leave-entitlements` | `settings.manage` (reading the schedule: logged in) | A new schedule starts today or later; entitlements only for people below the setter, never your own |
+| `POST /leave/types`, `PATCH /leave/types/:id`, `POST /leave/types/:id/archive` | `settings.manage` | Paid or unpaid cannot change once leave of that type exists (`409 leave_type_in_use`); archive it and add a new type |
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full

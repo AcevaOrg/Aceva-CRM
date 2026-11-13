@@ -17,7 +17,9 @@ import { formatDate, isoDay } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { HOLIDAYS } from "@/mocks/seed/calendar";
 import { attendanceApi } from "../api";
-import { useLeaveBalances, useLeaveClashes, useRequestLeave } from "../hooks";
+import { isLive } from "@/lib/api/http";
+import { useAttendanceHolidays, useLeaveBalances, useLeaveClashes, useLeavePreview, useRequestLeave } from "../hooks";
+import { mapStep } from "../live-api";
 import { buildLeaveChain } from "../logic";
 
 const today = () => isoDay(new Date());
@@ -30,7 +32,8 @@ const schema = z
     halfDay: z.boolean(),
     reason: z.string().trim().min(3, "Add a short reason."),
   })
-  .refine((v) => v.from >= today(), { message: "Leave can't start in the past.", path: ["from"] })
+  // Live (m7): the server also takes past days of the current month (for example sick leave yesterday) and decides.
+  .refine((v) => v.from >= (isLive("m7") ? `${today().slice(0, 8)}01` : today()), { message: isLive("m7") ? "Leave can start this month at the earliest." : "Leave can't start in the past.", path: ["from"] })
   .refine((v) => !v.to || v.to >= v.from, { message: "The last day must be on or after the first day.", path: ["to"] });
 
 type FormValues = z.infer<typeof schema>;
@@ -42,18 +45,24 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
   const request = useRequestLeave();
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { leaveTypeId: "lt-casual", from: "", to: "", halfDay: false, reason: "" },
+    defaultValues: { leaveTypeId: isLive("m7") ? "" : "lt-casual", from: "", to: "", halfDay: false, reason: "" },
   });
   const v = useWatch({ control: form.control });
   const from = v.from ?? "";
   const to = v.to || from;
   const single = !!from && from === to;
-  const days = from && to >= from ? attendanceApi.countDays(from, to, !!v.halfDay && single) : 0;
+  const live = isLive("m7");
+  // Live (m7): the count, the balance after the request and the approval chain come from the server (GET /leave/preview).
+  const preview = useLeavePreview(v.leaveTypeId ?? "", from, to, !!v.halfDay && single);
+  const liveHolidays = useAttendanceHolidays();
+  const estimate = from && to >= from ? attendanceApi.countDays(from, to, !!v.halfDay && single) : 0;
+  const days = live ? (preview.data?.days ?? (preview.isError ? 0 : estimate)) : estimate;
   const bal = balances.data?.find((b) => b.leaveTypeId === v.leaveTypeId);
-  const after = bal && bal.remaining !== null ? bal.remaining - days : null;
+  const after = live && preview.data ? preview.data.remainingAfter : bal && bal.remaining !== null ? bal.remaining - days : null;
   const clashes = useLeaveClashes(from, to);
-  const holidaysIn = from && to >= from ? HOLIDAYS.filter((h) => h.date >= from && h.date <= to) : [];
-  const chain = viewer ? buildLeaveChain(viewer.employee.empId, lookup.employees) : [];
+  const holidayList = live ? (liveHolidays.data ?? []) : HOLIDAYS;
+  const holidaysIn = from && to >= from ? holidayList.filter((h) => h.date >= from && h.date <= to) : [];
+  const chain = live ? (preview.data?.chain.map(mapStep) ?? []) : viewer ? buildLeaveChain(viewer.employee.empId, lookup.employees) : [];
 
   React.useEffect(() => {
     if (!open) form.reset();
@@ -76,7 +85,9 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
           <SheetTitle>Request leave</SheetTitle>
           <SheetDescription>
             Weekends and public holidays aren&apos;t counted.{" "}
-            {chain.length === 0
+            {live && !preview.data
+              ? "Pick the dates to see who approves it."
+              : chain.length === 0
               ? "As CEO / Founder / Owner there is no one above you, so your leave is recorded straight away."
               : chain.length > 1
                 ? `Your manager (${chain[0].label}) approves first, then the Director.`
