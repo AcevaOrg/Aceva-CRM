@@ -32,17 +32,8 @@ const toastText = (page: Page, text: RegExp | string) => page.locator('[data-son
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
-/** A real authenticator code (each code works once; wait for the next 30-second window when two were just used). */
-async function freshCode(empId: string): Promise<string> {
-  for (let i = 0; i < 40; i++) {
-    try {
-      return nextCode(empId);
-    } catch {
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
-  throw new Error('No authenticator code available');
-}
+/** A real authenticator code (each code works once; nextCode waits for the next 30-second window when two were just used). */
+const freshCode = (empId: string): Promise<string> => nextCode(empId);
 
 /** The "confirm it's you" dialog: the SERVER checks the password and the code. */
 async function stepUp(page: Page, empId: string) {
@@ -469,12 +460,17 @@ test('the Director resets the authenticator in the dialog: the person is signed 
 });
 
 test('HR sets the last working day in the dialog; access ends the next day, and the CEO sees who needs a new manager', async ({ browser, playwright }) => {
-  // an employee reporting to Finance, who is about to leave
+  // A dedicated manager who will leave, with two people reporting to them. Test-only people, so no shared demo
+  // account (such as Finance, used by the M7 to M9 specs) is ever disabled by this test.
   const owner = await apiAs(playwright, OWNER);
-  const orphan = await (
-    await owner.post('employees', { name: 'E2E Orphan', designation: 'Analyst', departmentId: 'dep-fin', officeId: 'off-khi', officialEmail: 'e2e.orphan@acevatech.com', level: 5, reportsToEmpId: FINANCE, joiningDate: '2026-11-01', type: 'full_time' })
-  ).json();
-  expect(orphan.status).toBe('created');
+  const hire = async (body: Record<string, unknown>) => {
+    const res = (await (await owner.post('employees', { departmentId: 'dep-fin', officeId: 'off-khi', joiningDate: '2026-11-01', type: 'full_time', ...body })).json()) as { status: string; empId: string };
+    expect(res.status, `create ${String(body.name)}`).toBe('created');
+    return res;
+  };
+  const leaver = await hire({ name: 'E2E Leaving Manager', designation: 'Finance Lead', officialEmail: 'e2e.leaving.manager@acevatech.com', level: 4, reportsToEmpId: DIRECTOR });
+  const orphan = await hire({ name: 'E2E Orphan', designation: 'Analyst', officialEmail: 'e2e.orphan@acevatech.com', level: 5, reportsToEmpId: leaver.empId });
+  await hire({ name: 'E2E Second Report', designation: 'Analyst', officialEmail: 'e2e.second.report@acevatech.com', level: 5, reportsToEmpId: leaver.empId });
 
   // 1) today as the last working day: still working, scheduled for the next day
   const hr = await openAs(browser, HR, `/people/${hireId}`);
@@ -494,16 +490,16 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   expect((await (await ctx.post('auth/login', { data: { empId: hireId, password: NEW_PASSWORD } })).json()).status).not.toBe('invalid'); // can still sign in
   await hr.context.close();
 
-  // 2) the Director sets yesterday for Finance: processed now; the report is listed, not moved
-  const finance = await openAs(browser, DIRECTOR, `/people/${FINANCE}`);
-  await finance.page.getByRole('button', { name: 'More actions' }).click();
-  await finance.page.getByRole('menuitem', { name: 'Set last working day' }).click();
+  // 2) the Director sets yesterday for the leaving manager: processed now; their reports are listed, not moved
+  const leaving = await openAs(browser, DIRECTOR, `/people/${leaver.empId}`);
+  await leaving.page.getByRole('button', { name: 'More actions' }).click();
+  await leaving.page.getByRole('menuitem', { name: 'Set last working day' }).click();
   const yesterday = new Date(today.getTime() - 86_400_000);
-  await finance.page.locator('#ob-date').fill(iso(yesterday));
-  await finance.page.locator('#ob-reason').fill('Resigned and served notice');
-  await finance.page.getByRole('button', { name: 'Set last working day' }).last().click();
-  await expect(toastText(finance.page, /Last working day set/)).toBeVisible();
-  await finance.context.close();
+  await leaving.page.locator('#ob-date').fill(iso(yesterday));
+  await leaving.page.locator('#ob-reason').fill('Resigned and served notice');
+  await leaving.page.getByRole('button', { name: 'Set last working day' }).last().click();
+  await expect(toastText(leaving.page, /Last working day set/)).toBeVisible();
+  await leaving.context.close();
 
   const ceo = await openAs(browser, CEO, '/people');
   const panel = ceo.page.getByTestId('unresolved-reports');
@@ -511,14 +507,14 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   await expect(panel.getByRole('link', { name: 'Assign manager' }).first()).toBeVisible();
   const cApi = await apiAs(playwright, CEO);
   const orphanRow = (await (await cApi.get('employees/unresolved-reports')).json()) as Array<{ empId: string; name: string }>;
-  expect((await (await cApi.get(`employees/${orphan.empId}`)).json()).job.reportsTo).toBe(FINANCE); // not moved automatically
+  expect((await (await cApi.get(`employees/${orphan.empId}`)).json()).job.reportsTo).toBe(leaver.empId); // not moved automatically
   // only the Owner or CEO reassign (the Director may not)
   expect((await dir.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Director cannot reassign' })).status()).toBe(403);
   expect((await cApi.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Finance lead left' })).status()).toBe(200);
   await ceo.page.reload();
-  // the reassigned person leaves the list; the demo roster's other person who reported to Finance is still waiting
+  // the reassigned person leaves the list; the leaver's other report is still waiting
   await expect(ceo.page.getByTestId('unresolved-reports')).not.toContainText('E2E Orphan');
-  await expect(ceo.page.getByTestId('unresolved-reports')).toContainText('Danish Iqbal');
+  await expect(ceo.page.getByTestId('unresolved-reports')).toContainText('E2E Second Report');
   void orphanRow;
   await ceo.context.close();
 });

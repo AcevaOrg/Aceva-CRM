@@ -25,6 +25,6 @@ export async function screenLoadsFromServer(page: Page, path: string, endpoint: 
 
 /** "Confirm again" through the real API for a person's API session (password, and the authenticator code when they use one). */
 export async function stepUpApi(client: ApiClient, empId: string): Promise<void> {
-  const res = await client.post('/auth/step-up', { password: PASSWORD, ...(hasSecret(empId) ? { code: nextCode(empId) } : {}) });
+  const res = await client.post('/auth/step-up', { password: PASSWORD, ...(hasSecret(empId) ? { code: await nextCode(empId) } : {}) });
   expect(res.status(), `step-up for ${empId}`).toBe(200);
 }
