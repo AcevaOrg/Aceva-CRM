@@ -23,7 +23,9 @@ const day = (d: Date): string => d.toISOString().slice(0, 10);
 /**
  * The joining workflow (plan section 7, with decision M3-3):
  *  1. Director or HR fill in the profile. This only STARTS the hire (a request at Level 4 or 5).
- *  2. The Owner or CEO authorize the level and reporting line (and may correct them). Owner/CEO can also hire directly.
+ *  2. The Director authorizes the level and reporting line (and may correct them); a request the Director made is decided
+ *     by the CEO, and the Owner may decide any request (decision D25, replacing "the Owner or CEO"). Owner/CEO can also
+ *     hire directly (org.manage).
  *  3. On approval the system generates the Emp-ID, creates the login (Module 2) with a temporary password and emails it.
  *  4. The employee must change the temporary password at first login (Module 2 enforces it).
  * No Emp-ID, login or employee record exists before step 2.
@@ -125,11 +127,12 @@ export class JoiningService {
     }));
   }
 
-  /** The Owner or CEO authorize the level and reporting line; only now does the employee come into existence. */
+  /** The Director (D25) authorizes the level and reporting line; only now does the employee come into existence. */
   async approve(actor: Actor, requestId: string, body: ApproveHireRequest, client: RequestInfo): Promise<ApproveHireResponse> {
     const row = await this.prisma.hireRequest.findUnique({ where: { id: requestId } });
     if (!row) throw new NotFoundException('Hire request not found');
     if (row.status !== 'pending') throw new ConflictException({ statusCode: 409, code: 'already_decided', message: `This request was already ${row.status}` });
+    await this.assertMayDecide(actor, row.requestedBy, body.level ?? row.proposedLevel, client);
     const extra: Sensitive = row.sensitiveEncrypted ? (JSON.parse(this.crypto.decrypt(row.sensitiveEncrypted)) as Sensitive) : {};
     const dto: CreateEmployeeRequest = {
       name: row.name,
@@ -149,6 +152,9 @@ export class JoiningService {
   }
 
   async reject(actor: Actor, requestId: string, reason: string, client: RequestInfo): Promise<{ ok: true }> {
+    const row = await this.prisma.hireRequest.findUnique({ where: { id: requestId }, select: { requestedBy: true } });
+    if (!row) throw new NotFoundException('Hire request not found');
+    await this.assertMayDecide(actor, row.requestedBy, null, client);
     const { count } = await this.prisma.hireRequest.updateMany({ where: { id: requestId, status: 'pending' }, data: { status: 'rejected', decidedBy: actor.id, decidedAt: new Date(), decisionReason: reason } });
     if (count === 0) {
       if (!(await this.prisma.hireRequest.findUnique({ where: { id: requestId }, select: { id: true } }))) throw new NotFoundException('Hire request not found');
@@ -156,6 +162,27 @@ export class JoiningService {
     }
     await this.audit.record({ actorId: actor.id, action: 'hire.rejected', targetType: 'hire_request', targetId: requestId, reason, ...client });
     return { ok: true };
+  }
+
+  /**
+   * Decision D25: the Director decides hire requests (people.approve_hire). Nobody decides their own request, so one the
+   * Director made goes to the CEO; the CEO decides only those. The Owner may decide any request. An approver below the
+   * CEO never places a new hire at their own level or above.
+   */
+  private async assertMayDecide(actor: Actor, requestedBy: string, level: number | null, client: RequestInfo): Promise<void> {
+    const deny = async (reason: string, message: string): Promise<never> => {
+      await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'hire_request', targetId: null, outcome: 'denied', reason, ...client });
+      throw new ForbiddenException({ statusCode: 403, code: reason, message });
+    };
+    if (requestedBy === actor.id) await deny('self_approval', 'You made this hire request; a different person decides it');
+    if (actor.levelNumber === 1) return;
+    const requester = await this.prisma.employee.findUnique({ where: { id: requestedBy }, select: { role: { select: { key: true } } } });
+    if (actor.roleKey === 'ceo' && requester?.role.key !== 'director') {
+      await deny('director_approves', 'The Director decides hire requests; the CEO decides only the ones the Director made');
+    }
+    if (actor.levelNumber > 2 && level !== null && level <= actor.levelNumber) {
+      await deny('level_not_allowed', 'A hire at your own level or above is authorized by the Owner or CEO');
+    }
   }
 
   // ===================================================================== creating the employee

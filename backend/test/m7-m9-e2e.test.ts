@@ -10,12 +10,13 @@ import { setPay, TEST_SLABS } from './m8-support';
 
 /**
  * Cycle 3 end to end, through the real HTTP API and the real modules (no fake ports):
- *   attendance (M7: check-in/out, a late day, a two-step unpaid leave)
+ *   attendance (M7: check-in/out, a late day, an unpaid leave the Director approves in one step, decision D24)
  *   -> the month summary Module 7 gives payroll
- *   -> payroll calculation, preparation, review and approval with "confirm again" (M8)
+ *   -> payroll calculation, preparation and the Director's approval with "confirm again" (M8, one step since D25)
  *   -> one balanced salary entry that waits for, and gets, ledger approval at the right tier (M9)
  *   -> payment recorded through a second ledger entry; salary payable back to zero
- *   -> the month is closed (finance runs it, the CEO approves) and nothing more can be posted into it.
+ *   -> the month is closed (finance runs it, the Director approves, D25) and nothing more can be posted into it.
+ * The CEO only views throughout (D25).
  * February 2027: 1 February is a Monday. Development schedule 09:00 to 18:00, 15 minutes grace.
  */
 const API = '/api/v1';
@@ -56,14 +57,14 @@ afterAll(async () => {
 }, 120000);
 
 describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> month close', () => {
-  it('M7: people check in and out on the server clock, and an unpaid leave goes team lead -> Director', async () => {
+  it('M7: people check in and out on the server clock, and an unpaid leave goes straight to the Director (D24)', async () => {
     const unpaid = (await prisma.leaveType.findUniqueOrThrow({ where: { key: 'unpaid' } })).id;
 
     pkAt(t, '2027-02-01', '08:00');
     const asked = (await (await m7as(DEV1)).post(`${API}/leave/requests`).send({ leaveTypeId: unpaid, from: '2027-02-10', to: '2027-02-10', reason: 'Family matter' }).expect(201)).body;
     expect(asked.status).toBe('pending_manager');
     await (await m7as(DEV1)).post(`${API}/leave/requests/${asked.id}/approve`).send({}).expect((r) => expect([403, 404]).toContain(r.status)); // never your own
-    expect((await (await m7as(CTO)).post(`${API}/leave/requests/${asked.id}/approve`).send({}).expect(200)).body.status).toBe('pending_director');
+    await (await m7as(CTO)).post(`${API}/leave/requests/${asked.id}/approve`).send({}).expect(403); // the team lead only sees it (D24)
     expect((await (await m7as(DIRECTOR)).post(`${API}/leave/requests/${asked.id}/approve`).send({}).expect(200)).body.status).toBe('approved');
 
     pkAt(t, '2027-02-01', '09:05');
@@ -121,13 +122,13 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     ).rejects.toThrow(/period_locked/);
   }, 120_000); // signs every test person in again for March
 
-  it('M8: Finance prepares, the Director reviews, the CEO approves only after confirming again', async () => {
+  it('M8: Finance prepares, the Director approves only after confirming again; the CEO only views (D25)', async () => {
     await t.as(FINANCE).post(`${API}/payroll/runs/${runId}/prepare`).expect(200);
-    await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(404); // the Director reviews, never approves (P1)
-    await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/review`).expect(200);
-    expect((await t.as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(403)).body.code).toBe('step_up_required');
-    await t.stepUp(CEO);
-    const approved = (await t.as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(200)).body;
+    await t.as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(404); // D25: the CEO only views payroll
+    await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/review`).expect(404); // no separate review step since D25
+    expect((await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(403)).body.code).toBe('step_up_required');
+    await t.stepUp(DIRECTOR);
+    const approved = (await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(200)).body;
     totals = approved.totals;
     expect(approved.stage).toBe('approved');
     expect(approved.salaryEntry.status).toBe('pending_approval'); // P7 / D5: waits for normal ledger approval
@@ -150,11 +151,10 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     expect(byRole('tax_payable')).toBe(totals.tax);
     expect(byRole('salary_payable')).toBe(totals.net);
 
-    // the maker never approves; an approver below the tier is refused
+    // the maker never approves; the CEO only views (D25: the CEO approves only entries the Director made)
     await t.as(FINANCE).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(404);
-    if ((entry.requiredLevel ?? 3) < 3) {
-      expect((await t.as(DIRECTOR).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(403)).body.code).toBe('approval_limit');
-    }
+    expect(entry.requiredLevel).toBe(3); // the Director's tier
+    expect((await t.as(CEO).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(403)).body.code).toBe('approval_limit');
     const approver = approverFor(entry.requiredLevel);
     await t.stepUp(approver); // the total is above the "confirm again" amount
     await t.as(approver).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(200);
@@ -187,11 +187,12 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     expect(balance((_c, role) => role === 'tax_payable').toFixed(2)).toBe(dec(totals.tax).negated().toFixed(2));
   });
 
-  it('M9: Finance closes February, the CEO approves, and nothing more can be posted into it', async () => {
+  it('M9: Finance closes February, the Director approves (D25), and nothing more can be posted into it', async () => {
     const asked = await t.as(FINANCE).post(`${API}/periods/${MONTH}/close`);
     expect(asked.status, JSON.stringify(asked.body)).toBe(200);
     await t.as(FINANCE).post(`${API}/periods/${MONTH}/approve-close`).expect(404); // not the person who ran it, and not their duty
-    expect((await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(200)).body.status).toBe('closed');
+    await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(404); // the CEO only views
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/approve-close`).expect(200)).body.status).toBe('closed');
 
     const accounts = Object.fromEntries((await prisma.ledgerAccount.findMany()).map((a) => [a.code, a.id]));
     const late = await t.as(FINANCE).post(`${API}/journal-entries`).send({ date: '2027-02-20', description: 'Late office bill', lines: [{ accountId: accounts['5200'], debit: '10' }, { accountId: accounts['1100'], credit: '10' }] });
@@ -211,9 +212,11 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     await expect(prisma.journalEntry.create({ data: { entryDate: new Date('2027-03-03'), description: 'Direct posted', makerId: maker, status: 'posted' } })).rejects.toThrow(/starts as a draft/);
     const draft = await prisma.journalEntry.create({ data: { entryDate: new Date('2027-03-03'), description: 'Direct draft', makerId: maker } });
     await expect(prisma.journalEntry.update({ where: { id: draft.id }, data: { status: 'posted', approvedBy: maker } })).rejects.toThrow(/cannot go from draft to posted/);
-    // the reviewer of the run can never also be its approver
+    // one Director step (D25): no reviewer, and the preparer is never the approver (also a database rule)
     const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } });
-    expect(run.reviewedBy).not.toBe(run.approvedBy);
+    expect(run.reviewedBy).toBeNull();
+    expect(run.approvedBy).not.toBeNull();
+    expect(run.approvedBy).not.toBe(run.preparedBy);
   });
 
   it('no salary figure or bank number reached the audit log or the outbox', async () => {

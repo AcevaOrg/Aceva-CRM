@@ -96,12 +96,12 @@ export class JournalService {
   /**
    * A closed month takes no entries (the database refuses them too). A month waiting for its close approval takes none
    * either: the checklist was complete when the close was asked for, and a new entry would be stranded in a closed month
-   * (security review, finding 7). The CEO rejects the close to reopen it for entries.
+   * (security review, finding 7). The Director rejects the close to reopen it for entries (D25).
    */
   async assertOpen(db: Db, day: string): Promise<void> {
     const month = monthOf(day);
     const period = await db.financePeriod.findUnique({ where: { month }, select: { status: true } });
-    if (period?.status === 'closed') throw conflict('period_closed', `${month} is closed. Ask the Owner or CEO to reopen it.`);
+    if (period?.status === 'closed') throw conflict('period_closed', `${month} is closed. Ask the Director to reopen it.`);
     if (period?.status === 'closing') throw conflict('period_closing', `${month} is waiting for its close approval. New entries wait until the close is approved or rejected.`);
   }
 
@@ -475,7 +475,8 @@ export class JournalService {
     if (q.awaitingMe === 'true') {
       const canApprove = await this.permissions.can(actor.id, 'finance.entry_approve');
       if (!canApprove) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
-      and.push({ status: 'pending_approval', makerId: { not: actor.id }, requiredLevel: { gte: actor.levelNumber } });
+      // The same rule as levelCovers (D25): exactly the actor's level, or any level for the Owner.
+      and.push({ status: 'pending_approval', makerId: { not: actor.id }, requiredLevel: actor.levelNumber === 1 ? { gte: 1 } : actor.levelNumber });
     }
     if (and.length) where.AND = and;
     const [total, rows] = await Promise.all([

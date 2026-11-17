@@ -107,7 +107,7 @@ type CanFn = (p: Permission) => boolean;
 
 /** The finance person prepares entries and runs the month close. */
 export const canRunClose = (can: CanFn) => can("finance.close") && can("finance.entry_create");
-/** The CEO approves (or sends back) the month close (plan section 13; permission finance.close_approve). */
+/** The Director approves (or sends back) the month close (decision D25; permission finance.close_approve). */
 export const canApproveClose = (can: CanFn) => can("finance.close_approve");
 
 export const monthOf = (iso: string) => iso.slice(0, 7);

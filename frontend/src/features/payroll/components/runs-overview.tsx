@@ -31,14 +31,14 @@ function waitingText(run: PayrollRun, name: (id?: string) => string) {
     case "calculated":
       return run.returnedNote ? `Sent back: “${run.returnedNote}”. Finance fixes and prepares it again.` : "Calculated. Waiting for Finance to prepare it.";
     case "prepared":
-      return `Prepared by ${name(run.preparedBy)} (Finance). Waiting for the Director to review it.`;
+      return `Prepared by ${name(run.preparedBy)} (Finance). Waiting for the Director to approve it.`;
     case "reviewed":
-      return `Reviewed by ${name(run.reviewedBy)} (Director). Waiting for the CEO to approve it.`;
+      return `Reviewed by ${name(run.reviewedBy)} before D25. Waiting for the Director to approve it.`;
     case "approved":
-      return "Approved by the CEO. Finance sends the payslips.";
+      return "Approved by the Director. Finance sends the payslips.";
     case "payslips_sent":
       return isLive("m8")
-        ? `Approved by ${name(run.approvedBy)} (CEO); payslips issued. Salary entry ${run.salaryEntry?.number ?? ""} waits for the ledger approval.`
+        ? `Approved by ${name(run.approvedBy)} (Director); payslips issued. Salary entry ${run.salaryEntry?.number ?? ""} waits for the ledger approval.`
         : "Payslips sent. Finance posts it to the ledger.";
     case "posted":
       return "Posted to the ledger. Waiting for Finance to record the bank transfer.";
@@ -54,9 +54,8 @@ export function RunsOverview() {
   const start = useStartRun();
   const canPrepare = useCanPreparePayroll();
   const canApprove = useCan("payroll.approve");
-  const canReview = useCan("payroll.review");
-  // Oversight only (the Owner): every run is visible, no action is offered.
-  const viewOnly = !canPrepare && !canApprove && !canReview;
+  // Oversight only (the CEO and the Owner, decision D25): every run is visible, no action is offered.
+  const viewOnly = !canPrepare && !canApprove;
   const lookup = useLookup();
   const name = (id?: string) => lookup.employee(id)?.name ?? id ?? "—";
 
@@ -105,7 +104,7 @@ export function RunsOverview() {
     <>
       <PageHeader
         title="Payroll"
-        description="Monthly salaries from profiles and attendance: prepared by Finance, reviewed by the Director, approved by the CEO, then posted to the ledger."
+        description="Monthly salaries from profiles and attendance: prepared by Finance, approved by the Director, then posted to the ledger."
         seal="highly"
         actions={
           <>
@@ -168,7 +167,7 @@ export function RunsOverview() {
               <CardContent className="grid gap-5 pt-5">
                 <StagePipeline stage={current.stage} />
                 <ApprovalRelay steps={current.chain} />
-                {viewOnly && current.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll, the Director reviews it and the CEO approves it." />}
+                {viewOnly && current.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll and the Director approves it." />}
               </CardContent>
             </Card>
           )}

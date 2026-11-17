@@ -42,7 +42,7 @@ test('a journal entry made through the API opens on its detail screen', async ({
 });
 
 test('approval limits: the settings come from the server, and only the Owner may change them (D22)', async ({ playwright }) => {
-  const next = { reason: 'Browser test: same limits again', limits: [{ approverLevel: 3, maxAmount: '50000', label: 'Director' }, { approverLevel: 2, maxAmount: '500000', label: 'CEO' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] };
+  const next = { reason: 'Browser test: same limits again', limits: [{ approverLevel: 3, maxAmount: '5000000', label: 'Director' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] }; // D25 defaults: no CEO tier
   // the Director cannot change approval limits, even after confirming again (they would be raising their own limit)
   const director = await apiAs(playwright, DIRECTOR);
   await stepUpApi(director, DIRECTOR);

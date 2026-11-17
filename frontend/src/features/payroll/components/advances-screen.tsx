@@ -74,7 +74,7 @@ function AdvancesInner() {
       />
       {!canCreate && (
         <div className="mb-4">
-          <MakerCheckerNote reason="View only. Finance records salary advances; each repayment goes through the monthly payroll the Director reviews and the CEO approves." />
+          <MakerCheckerNote reason="View only. Finance records salary advances; each repayment goes through the monthly payroll the Director approves." />
         </div>
       )}
       {LIVE && (

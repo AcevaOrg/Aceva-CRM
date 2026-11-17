@@ -46,17 +46,17 @@ export class HireRequestsController {
   }
 
   @Post(':id/approve')
-  @RequirePermission('org.manage')
+  @RequirePermission('people.approve_hire')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Owner or CEO authorize the level and reporting line (they may correct them); the employee is created now' })
+  @ApiOperation({ summary: 'The Director authorizes the level and reporting line (and may correct them); the CEO only a request the Director made, the Owner any (D25). The employee is created now' })
   approve(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: ApproveHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.approve(actor, id, body, client);
   }
 
   @Post(':id/reject')
-  @RequirePermission('org.manage')
+  @RequirePermission('people.approve_hire')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Owner or CEO reject a hire request' })
+  @ApiOperation({ summary: 'Reject a hire request (the same people who may approve it, D25)' })
   reject(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: RejectHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.reject(actor, id, body.reason, client);
   }

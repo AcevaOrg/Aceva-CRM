@@ -392,7 +392,7 @@ export class MasterDataService {
     if (new Set(limits.map((l) => l.approverLevel)).size !== limits.length) throw badRequest('invalid_limits', 'One tier per level');
     const unlimited = limits.filter((l) => l.maxAmount === null);
     if (unlimited.length !== 1 || unlimited[0] !== limits[limits.length - 1]) throw badRequest('invalid_limits', 'Exactly one tier has no upper limit, and it is the most senior level');
-    // Plan s.13: the Owner approves above the CEO limit. The unlimited tier is always level 1, so nobody below the Owner can
+    // Plan s.13: the Owner approves above the highest limit below the Owner (since D25 the Director's). The unlimited tier is always level 1, so nobody below the Owner can
     // be given unlimited approval (security review, finding 2).
     if (unlimited[0].approverLevel !== 1) throw badRequest('invalid_limits', 'The tier without an upper limit is the Owner (level 1)');
     for (let i = 1; i < limits.length - 1; i++) {

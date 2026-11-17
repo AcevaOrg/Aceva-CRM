@@ -74,7 +74,7 @@ describe('M7 corrections: asking', () => {
     expect(bad.body.code).toBe('invalid_times'); // after the original check-out
     const res = await correction(DEV1, { date: '2027-04-05', checkIn: '09:05', reason: 'The gate reader was down' }, 201);
     dev1Correction = res.body.id;
-    expect(res.body).toMatchObject({ empId: DEV1, date: '2027-04-05', status: 'pending', approverEmpId: CTO, canDecide: false });
+    expect(res.body).toMatchObject({ empId: DEV1, date: '2027-04-05', status: 'pending', approverEmpId: DIRECTOR, canDecide: false }); // D23: the Director, not the CTO
     expect(res.body.original.checkIn.startsWith('2027-04-05T04:40')).toBe(true); // 09:40 Pakistan time
     expect(res.body.requested.checkIn).toBe('2027-04-05T04:05:00.000Z');
     const dup = await correction(DEV1, { date: '2027-04-05', checkOut: '18:30', reason: 'The gate reader was down' }, 409);
@@ -99,23 +99,26 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
     await (await as(SALES1)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(403); // no permission
     const self = await (await as(CTO)).post(`${API}/attendance/corrections/${ctoCorrection}/approve`).send({}).expect(403);
     expect(self.body.code).toBe('self_approval');
-    for (const who of [DIRECTOR, FINANCE, OWNER]) {
+    // D23: the person's own manager (the CTO) and the levels above the Director are not the approver either
+    for (const who of [CTO, FINANCE, CEO, OWNER]) {
       const res = await (await as(who)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(403);
       expect(res.body.code).toBe('not_routed_approver');
     }
   });
 
-  it('the manager sees it in the team list and approves: corrected time applied, lateness recomputed, original kept', async () => {
+  it('the manager sees it view only; the Director sees it in the team list and approves: corrected time applied, lateness recomputed, original kept', async () => {
     const list = await (await as(CTO)).get(`${API}/attendance/corrections?scope=team&status=pending`).expect(200);
     const item = list.body.items.find((c: { id: string }) => c.id === dev1Correction);
-    expect(item).toMatchObject({ canDecide: true, approverEmpId: CTO });
+    expect(item).toMatchObject({ canDecide: false, approverEmpId: DIRECTOR });
     expect(list.body.items.some((c: { empId: string }) => c.empId === CTO)).toBe(false);
+    const directorList = await (await as(DIRECTOR)).get(`${API}/attendance/corrections?scope=team&status=pending`).expect(200);
+    expect(directorList.body.items.find((c: { id: string }) => c.id === dev1Correction)).toMatchObject({ canDecide: true, approverEmpId: DIRECTOR });
     await (await as(DEV1)).get(`${API}/attendance/corrections?scope=team`).expect(403);
     const mine = await (await as(DEV1)).get(`${API}/attendance/corrections`).expect(200);
     expect(mine.body.items.map((c: { id: string }) => c.id)).toEqual([dev1Correction]);
 
-    const res = await (await as(CTO)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({ note: 'Gate log confirms' }).expect(200);
-    expect(res.body).toMatchObject({ status: 'approved', decidedBy: CTO, decisionNote: 'Gate log confirms' });
+    const res = await (await as(DIRECTOR)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({ note: 'Gate log confirms' }).expect(200);
+    expect(res.body).toMatchObject({ status: 'approved', decidedBy: DIRECTOR, decisionNote: 'Gate log confirms' });
     const record = await recordOf(DEV1, '2027-04-05');
     expect(record!.checkInAt!.toISOString()).toBe(res.body.original.checkIn); // the original is unchanged
     expect(record!.correctedCheckInAt!.toISOString()).toBe('2027-04-05T04:05:00.000Z');
@@ -126,7 +129,7 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
     expect(day).toMatchObject({ status: 'on_time', checkIn: '2027-04-05T04:05:00.000Z', lateMinutes: 0, correctionId: dev1Correction, correctionStatus: 'approved' });
     expect(day.original.checkIn).toBe(record!.checkInAt!.toISOString());
 
-    const again = await (await as(CTO)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(409);
+    const again = await (await as(DIRECTOR)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(409);
     expect(again.body.code).toBe('invalid_transition');
   });
 
@@ -138,7 +141,7 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
   });
 
   it('a correction for a day without a record creates one with no original times', async () => {
-    await (await as(CTO)).post(`${API}/attendance/corrections/${dev2Correction}/approve`).send({}).expect(200);
+    await (await as(DIRECTOR)).post(`${API}/attendance/corrections/${dev2Correction}/approve`).send({}).expect(200);
     const record = await recordOf(DEV2, '2027-04-02');
     expect(record).toMatchObject({ checkInAt: null, checkOutAt: null, lateMinutes: 0 });
     expect(record!.correctedCheckInAt!.toISOString()).toBe('2027-04-02T04:00:00.000Z');
@@ -165,17 +168,19 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
     await (await as(CEO)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(200);
   });
 
-  it('a stand-in decides while the manager is away; the away manager cannot', async () => {
-    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(CTO), standInId: await idOf(FINANCE), startsOn: new Date('2027-04-06T00:00:00.000Z'), endsOn: new Date('2027-04-09T00:00:00.000Z'), reason: 'CTO on leave' } });
+  it("the Director's stand-in decides while the Director is away; the away Director and the person's manager cannot", async () => {
+    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(FINANCE), startsOn: new Date('2027-04-06T00:00:00.000Z'), endsOn: new Date('2027-04-09T00:00:00.000Z'), reason: 'Director on leave' } });
     const res = await correction(DEV3, { date: '2027-04-05', checkIn: '09:00', reason: 'Worked from a cafe, VPN down' }, 201);
     expect(res.body.approverEmpId).toBe(FINANCE);
-    const awayManager = await (await as(CTO)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(403);
-    expect(awayManager.body.code).toBe('not_routed_approver');
+    for (const who of [DIRECTOR, CTO]) {
+      const refused = await (await as(who)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(403);
+      expect(refused.body.code).toBe('not_routed_approver');
+    }
     const list = await (await as(FINANCE)).get(`${API}/attendance/corrections?scope=team`).expect(200);
     expect(list.body.items.map((c: { id: string }) => c.id)).toEqual([res.body.id]); // only what is routed to them
     const decided = await (await as(FINANCE)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(200);
     expect(decided.body).toMatchObject({ status: 'approved', decidedBy: FINANCE });
-    await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } }); // the CTO is back
+    await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } }); // the Director is back
   });
 });
 
@@ -201,6 +206,20 @@ describe('M7 attendance views: hierarchy scope', () => {
     expect(director.body.rows.map((r: { empId: string }) => r.empId)).toContain(SALES1);
     expect(director.body.rows.map((r: { empId: string }) => r.empId)).not.toContain(DIRECTOR);
   });
+
+  it('the CEO sees everyone below them, the Director included (view only: corrections are decided by the Director)', async () => {
+    const team = await (await as(CEO)).get(`${API}/attendance/team?date=2027-04-05`).expect(200);
+    const rows = (team.body.rows as Array<{ empId: string }>).map((r) => r.empId);
+    for (const who of [DIRECTOR, CTO, DEV1, SALES1, FINANCE]) expect(rows).toContain(who);
+    expect(rows).not.toContain(CEO);
+    expect(rows).not.toContain(OWNER);
+    const summary = await (await as(CEO)).get(`${API}/attendance/team/summary?month=2027-04`).expect(200);
+    expect(summary.body.rows.map((r: { empId: string }) => r.empId)).toContain(DEV1);
+    await (await as(CEO)).get(`${API}/attendance/employees/${DEV1}?month=2027-04`).expect(200);
+    const corrections = await (await as(CEO)).get(`${API}/attendance/corrections?scope=team`).expect(200);
+    const dev1 = corrections.body.items.find((c: { id: string }) => c.id === dev1Correction);
+    expect(dev1).toMatchObject({ empId: DEV1, canDecide: false });
+  });
 });
 
 describe('M7 corrections in a locked month', () => {
@@ -211,7 +230,7 @@ describe('M7 corrections in a locked month', () => {
     await t.app.get(PrismaService).$transaction(async (tx) => port.lockMonth('2027-04', await idOf(DIRECTOR), tx));
     const ask = await correction(DEV2, { date: '2027-04-05', checkIn: '09:00', reason: 'Forgot to check in' }, 409);
     expect(ask.body.code).toBe('period_locked');
-    const approve = await (await as(CTO)).post(`${API}/attendance/corrections/${sqaCorrection}/approve`).send({}).expect(409);
+    const approve = await (await as(DIRECTOR)).post(`${API}/attendance/corrections/${sqaCorrection}/approve`).send({}).expect(409);
     expect(approve.body.code).toBe('period_locked');
     const cancel = await (await as(SQA1)).post(`${API}/attendance/corrections/${sqaCorrection}/cancel`).send({}).expect(409);
     expect(cancel.body.code).toBe('period_locked');
@@ -236,6 +255,6 @@ describe('M7 corrections: audit and events', () => {
       const text = JSON.stringify(e.payload) + e.actor;
       for (const id of employeeIds) expect(text).not.toContain(id);
     }
-    expect(events.find((e) => (e.payload as { correctionId: string }).correctionId === dev1Correction)!.payload).toMatchObject({ empId: DEV1, decision: 'approved', byEmpId: CTO, date: '2027-04-05' });
+    expect(events.find((e) => (e.payload as { correctionId: string }).correctionId === dev1Correction)!.payload).toMatchObject({ empId: DEV1, decision: 'approved', byEmpId: DIRECTOR, date: '2027-04-05' });
   });
 });

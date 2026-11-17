@@ -6,7 +6,7 @@ import { screenLoadsFromServer, stepUpApi } from './live-screen';
 /**
  * Cross-module flow through the real API, checked on the real screens:
  *   pay on file (M3) -> payroll calculated for September, which locks the attendance month (M7 -> M8)
- *   -> prepared by Finance, reviewed by the Director, approved by the CEO after confirming again (M8)
+ *   -> prepared by Finance, approved by the Director after confirming again (M8, one step since D25; the CEO only views)
  *   -> a balanced salary entry waiting in the ledger, approved at its tier (M9)
  *   -> the run screen and the ledger screen show the same entry; the employee sees their payslip.
  */
@@ -32,7 +32,9 @@ test.describe.configure({ mode: 'serial' });
 
 let entryId = '';
 
-test('M3 -> M7 -> M8: pay on file, the run is calculated (locking the attendance month), prepared, reviewed and approved', async ({ playwright }) => {
+test('M3 -> M7 -> M8: pay on file, the run is calculated (locking the attendance month), prepared and approved by the Director', async ({ playwright }) => {
+  // Real timing: two "confirm again" steps by the Director, each waiting for a fresh authenticator code (never reused).
+  test.setTimeout(120_000);
   const director = await apiAs(playwright, DIRECTOR);
   await stepUpApi(director, DIRECTOR);
   for (const [empId, base, account] of [[DEV1, 100000, 'PK36SCBL0000001123456702'], [DEV2, 60000, 'PK36SCBL0000001123456703']] as const) {
@@ -50,14 +52,13 @@ test('M3 -> M7 -> M8: pay on file, the run is calculated (locking the attendance
   const correction = await dev1.post('/attendance/corrections', { date: `${MONTH}-15`, checkIn: '09:00', reason: 'Forgot to check in (browser test)' });
   expect([400, 409]).toContain(correction.status());
   expect((await fin.post(`/payroll/runs/${RUN}/prepare`)).status()).toBe(200);
-  expect((await fin.post(`/payroll/runs/${RUN}/review`)).status()).toBe(404); // the preparer never reviews (Finance has no review permission: a finance screen answers 404)
-  expect((await director.post(`/payroll/runs/${RUN}/review`)).status()).toBe(200);
-  expect((await director.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(404); // the Director reviews, the CEO approves
-
+  expect((await fin.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(404); // the preparer never approves (no permission: a finance screen answers 404)
+  expect((await director.post(`/payroll/runs/${RUN}/review`)).status()).toBe(404); // no separate review step since D25
   const ceo = await apiAs(playwright, FIXTURE_CEO);
-  expect((await ceo.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(403); // "confirm again" first
-  await stepUpApi(ceo, FIXTURE_CEO);
-  const approved = await ceo.post(`/payroll/runs/${RUN}/approve`);
+  expect((await ceo.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(404); // D25: the CEO only views payroll
+
+  await stepUpApi(director, DIRECTOR); // a fresh "confirm again" for the approval
+  const approved = await director.post(`/payroll/runs/${RUN}/approve`);
   expect(approved.status(), await approved.text()).toBe(200);
   const run = await approved.json();
   expect(run.salaryEntry.status).toBe('pending_approval');

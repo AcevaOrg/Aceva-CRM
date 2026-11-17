@@ -9,7 +9,6 @@ import type { RequestInfo } from '../access/decorators';
 import { HierarchyCache } from '../access/hierarchy.service';
 import { PermissionService } from '../access/permission.service';
 import { ScopeService } from '../access/scope.service';
-import { ApprovalsService } from '../approvals/approvals.service';
 import { Clock } from '../common/clock';
 import { withDbRules } from '../common/db-rules';
 import { dec, Decimal, sum } from '../common/money';
@@ -29,27 +28,28 @@ export function leaveTypeView(t: LeaveType): LeaveTypeView {
   return { id: t.id, key: t.key, name: t.name, yearlyDays: t.yearlyDays === null ? null : num(t.yearlyDays), paid: t.paid, color: t.color, archived: t.archivedAt !== null };
 }
 
-/** Who decides a request now and whether the Director signs off after step 1 (plan: "team lead, then the Director"). */
+/**
+ * Who decides a request (decision D24: one step, the Director, for everyone below the Director; see
+ * RoutingHelper.directorRoute). `needsDirector` is always false now: there is no second step. It stays in the preview
+ * response and the audit details so the contract does not change.
+ */
 interface RoutePlan {
   step1: ApprovalRouteStep;
-  /** True when the Director sits ABOVE the step-1 seat in the requester's reporting chain. */
-  needsDirector: boolean;
-  /** The seat just below the Director in the requester's chain (route step 2 from here, so a Director's stand-in also works). */
-  belowDirectorEmpId: string | null;
+  needsDirector: false;
 }
 
 type RequestRow = Prisma.LeaveRequestGetPayload<{ include: { employee: { select: { id: true; empId: true; fullName: true } }; leaveType: true; decisions: true } }>;
 
 /**
- * Leave (plan section 11): types and yearly balances, requests, the two-step approval chain (the person's Module 1 routed
- * approver, then the Director when the Director is above that step), the team calendar.
+ * Leave (plan section 11): types and yearly balances, requests, the approval (decision D24: one step, the Director, for
+ * everyone below the Director; the Director's own and those above go to their routed manager), the team calendar.
+ * Requests made before D24 may still wait at step 2 (`pending_director`); the Director decides those too.
  */
 @Injectable()
 export class LeaveService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calendar: WorkCalendarService,
-    private readonly approvals: ApprovalsService,
     private readonly routing: RoutingHelper,
     private readonly hierarchy: HierarchyCache,
     private readonly scope: ScopeService,
@@ -114,36 +114,16 @@ export class LeaveService {
 
   // ------------------------------------------------------------------ routing
 
-  private async director(): Promise<{ id: string; empId: string } | null> {
-    return this.prisma.employee.findFirst({ where: { role: { key: 'director' }, status: { not: 'left' } }, orderBy: { empId: 'asc' }, select: { id: true, empId: true } });
-  }
-
   async plan(requester: { id: string; empId: string }, day: string): Promise<RoutePlan> {
-    const step1 = await this.approvals.route(requester.empId, day);
-    const director = await this.director();
-    if (!step1.seat || !director || director.id === requester.id) return { step1, needsDirector: false, belowDirectorEmpId: null };
-    const chain = await this.hierarchy.getChain(requester.id);
-    const seat = await this.prisma.employee.findUnique({ where: { empId: step1.seat }, select: { id: true } });
-    const seatIndex = seat ? chain.indexOf(seat.id) : -1;
-    const directorIndex = chain.indexOf(director.id);
-    if (seatIndex < 0 || directorIndex <= seatIndex) return { step1, needsDirector: false, belowDirectorEmpId: null };
-    const below = await this.prisma.employee.findUniqueOrThrow({ where: { id: chain[directorIndex - 1] }, select: { empId: true } });
-    return { step1, needsDirector: true, belowDirectorEmpId: below.empId };
-  }
-
-  /** The approver of step 2 (the Director, or the Director's stand-in, or further up when the Director is away without one). */
-  private async directorStep(requesterEmpId: string, day: string, plan: RoutePlan): Promise<ApprovalRouteStep | null> {
-    if (!plan.needsDirector || !plan.belowDirectorEmpId) return null;
-    return this.approvals.route(requesterEmpId, day, plan.belowDirectorEmpId);
+    return { step1: await this.routing.directorRoute(requester.empId, day), needsDirector: false };
   }
 
   /** Who must decide the request now (null when it is not pending or nobody can). */
   private async currentStep(row: { status: LeaveRequestStatus; employee: { id: string; empId: string } }, day: string) {
     if (!PENDING.includes(row.status)) return null;
     const plan = await this.plan(row.employee, day);
-    if (row.status === 'pending_manager') return { step: 1, route: plan.step1, plan };
-    const step2 = await this.directorStep(row.employee.empId, day, plan);
-    return { step: 2, route: step2 ?? { approver: null, seat: null, via: null, skipped: [] }, plan };
+    // A request made before D24 that already passed step 1 waits at step 2: the same Director route decides it.
+    return { step: row.status === 'pending_manager' ? 1 : 2, route: plan.step1, plan };
   }
 
   // ------------------------------------------------------------------ views
@@ -156,15 +136,9 @@ export class LeaveService {
     const peopleIds = new Set<string>();
     rows.forEach((r) => r.decisions.forEach((d) => peopleIds.add(d.decidedBy)));
     const plans = new Map<string, Awaited<ReturnType<LeaveService['currentStep']>>>();
-    const predicted = new Map<string, ApprovalRouteStep | null>();
-    for (const r of rows) {
-      const current = await this.currentStep(r, today);
-      plans.set(r.id, current);
-      if (r.status === 'pending_manager' && current?.plan.needsDirector) predicted.set(r.id, await this.directorStep(r.employee.empId, today, current.plan));
-    }
+    for (const r of rows) plans.set(r.id, await this.currentStep(r, today));
     const empIds = new Set<string>();
     for (const c of plans.values()) if (c?.route.approver) empIds.add(c.route.approver);
-    for (const p of predicted.values()) if (p?.approver) empIds.add(p.approver);
     const people = await this.prisma.employee.findMany({
       where: { OR: [{ id: { in: [...peopleIds] } }, { empId: { in: [...empIds] } }] },
       select: { id: true, empId: true, fullName: true, role: { select: { name: true } } },
@@ -191,7 +165,6 @@ export class LeaveService {
       else if (r.status === 'pending_manager') chain.push(fromRoute(1, current!.route, 'waiting', 'Manager'));
       if (d2) chain.push(fromDecision(2, d2, 'Director'));
       else if (r.status === 'pending_director') chain.push(fromRoute(2, current!.route, 'waiting', 'Director'));
-      else if (r.status === 'pending_manager' && predicted.get(r.id)) chain.push(fromRoute(2, predicted.get(r.id)!, 'pending', 'Director'));
       if (r.status === 'cancelled') {
         for (const s of chain) if (s.state === 'waiting' || s.state === 'pending') s.state = 'skipped';
       }
@@ -303,8 +276,7 @@ export class LeaveService {
     const remaining = total === null ? null : total.minus(used).minus(pending);
     const today = this.today();
     const plan = await this.plan(actor, today);
-    const step2 = await this.directorStep(actor.empId, today, plan);
-    const routes = [plan.step1, ...(step2 ? [step2] : [])].filter((r) => r.approver);
+    const routes = [plan.step1].filter((r) => r.approver);
     const people = await this.prisma.employee.findMany({ where: { empId: { in: routes.map((r) => r.approver!) } }, select: { empId: true, fullName: true, role: { select: { name: true } } } });
     const chain: LeaveChainStep[] = routes.map((r, i) => {
       const who = people.find((p) => p.empId === r.approver);
@@ -397,26 +369,23 @@ export class LeaveService {
     const row = await this.load(id);
     const current = await this.assertDecider(actor, row);
     await this.lockedFor(row);
-    const today = this.today();
-    const forward = current.step === 1 && current.plan.needsDirector;
-    const next = forward ? await this.directorStep(row.employee.empId, today, current.plan) : null;
     await withDbRules(() =>
       this.prisma.$transaction(async (tx) => {
-        await this.move(tx, row.id, row.status, forward ? 'pending_director' : 'approved', actor.id);
+        await this.move(tx, row.id, row.status, 'approved', actor.id); // D24: one step, nothing is forwarded
         await tx.leaveDecision.create({ data: { requestId: row.id, step: current.step, decision: 'approved', decidedBy: actor.id, via: current.route.via, note: note ?? null } });
         await this.audit.record({
           actorId: actor.id,
-          action: forward ? 'leave.forwarded' : 'leave.approved',
+          action: 'leave.approved',
           targetType: 'leave_request',
           targetId: row.number,
           reason: note ?? null,
-          details: { empId: row.employee.empId, step: current.step, via: current.route.via, next: next?.approver ?? null },
+          details: { empId: row.employee.empId, step: current.step, via: current.route.via, next: null },
           ...client,
         }, tx);
         await this.outbox.emit({
           type: 'leave.decided',
           actor: actor.empId,
-          payload: { requestNumber: row.number, empId: row.employee.empId, decision: forward ? 'forwarded' : 'approved', byEmpId: actor.empId, nextApproverEmpId: next?.approver ?? null },
+          payload: { requestNumber: row.number, empId: row.employee.empId, decision: 'approved', byEmpId: actor.empId, nextApproverEmpId: null },
         }, tx);
       }),
     );

@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { STAGES, stageIndex, stageLabel } from "../logic";
 import type { PayrollStage } from "../types";
 
-/** The payroll stages as a stepper (spec §9.8): Prepared (Finance) → Reviewed (Director) → Approved (CEO), then payslips, ledger, paid. */
+/** The payroll stages as a stepper (spec §9.8): Prepared (Finance) → Approved (Director, decision D25), then payslips, ledger, paid. */
 export function StagePipeline({ stage, compact, className }: { stage: PayrollStage; compact?: boolean; className?: string }) {
   const current = stageIndex(stage);
   if (compact) {

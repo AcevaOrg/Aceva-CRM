@@ -5,7 +5,6 @@ import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
 import { HierarchyCache } from '../access/hierarchy.service';
 import { PermissionService } from '../access/permission.service';
-import { ApprovalsService } from '../approvals/approvals.service';
 import { Clock } from '../common/clock';
 import { isUniqueViolation, withDbRules } from '../common/db-rules';
 import { dayOf, dbDate, monthOf, pkDate, pkInstant, pkMinuteOfDay } from '../common/pakistan-time';
@@ -23,16 +22,16 @@ type CorrectionRow = AttendanceCorrection & {
 };
 
 /**
- * Attendance corrections (plan section 11): the employee asks their manager to fix a wrong or missed entry, with a reason.
+ * Attendance corrections (plan section 11): the employee asks to fix a wrong or missed entry, with a reason.
  * The original record is never changed: an approval fills corrected_check_in_at / corrected_check_out_at.
- * The approver is the person's Module 1 routed approver (stand-ins and leavers handled there), never the person themselves.
+ * The approver is the Director for everyone below the Director (decision D23), otherwise the routed manager; both are
+ * Module 1 routed steps (stand-ins and leavers handled there), never the person themselves. See RoutingHelper.directorRoute.
  */
 @Injectable()
 export class CorrectionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calendar: WorkCalendarService,
-    private readonly approvals: ApprovalsService,
     private readonly routing: RoutingHelper,
     private readonly hierarchy: HierarchyCache,
     private readonly permissions: PermissionService,
@@ -55,7 +54,7 @@ export class CorrectionsService {
     for (const r of rows) {
       let approver: string | null = null;
       if (r.status === 'pending') {
-        if (!deciders.has(r.employee.empId)) deciders.set(r.employee.empId, (await this.approvals.route(r.employee.empId, today)).approver);
+        if (!deciders.has(r.employee.empId)) deciders.set(r.employee.empId, (await this.routing.directorRoute(r.employee.empId, today)).approver);
         approver = deciders.get(r.employee.empId) ?? null;
       }
       out.push({
@@ -129,7 +128,7 @@ export class CorrectionsService {
 
     const pending = await this.prisma.attendanceCorrection.count({ where: { employeeId: actor.id, workDate: dbDate(dto.date), status: 'pending' } });
     if (pending) throw conflict('correction_pending', 'There is already a pending correction for this day');
-    const route = await this.approvals.route(actor.empId, today);
+    const route = await this.routing.directorRoute(actor.empId, today);
     if (!route.approver) throw badRequest('no_approver', 'There is nobody above you to approve a correction');
 
     let id: string;
@@ -170,7 +169,7 @@ export class CorrectionsService {
   /** The checks every decision makes: still pending, not the requester, the currently routed approver, month not locked. */
   private async assertDecider(actor: Actor, row: { status: string; workDate: Date; employee: { empId: string } }) {
     if (row.employee.empId === actor.empId) throw forbidden('self_approval', 'You cannot decide your own correction');
-    const route = await this.approvals.route(row.employee.empId, this.today());
+    const route = await this.routing.directorRoute(row.employee.empId, this.today());
     if (route.approver !== actor.empId) throw forbidden('not_routed_approver', "Only the person's routed approver can decide this correction");
     if (row.status !== 'pending') throw conflict('invalid_transition', 'This correction was already decided');
     const month = monthOf(dayOf(row.workDate));

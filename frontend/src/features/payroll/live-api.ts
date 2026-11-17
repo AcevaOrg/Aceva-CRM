@@ -46,8 +46,9 @@ function chainOf(v: PayrollRunView): ApprovalStep[] {
   const state = (done: boolean, turn: boolean): ApprovalStep["state"] => (done ? "done" : turn ? "waiting" : "pending");
   return [
     { label: PREPARED_LABEL, empId: v.preparedBy?.empId, state: state(!!v.preparedBy, v.stage === "calculated"), at: v.preparedAt ?? undefined },
-    { label: REVIEWED_LABEL, empId: v.reviewedBy?.empId, state: state(!!v.reviewedBy, v.stage === "prepared"), at: v.reviewedAt ?? undefined },
-    { label: APPROVED_LABEL, empId: v.approvedBy?.empId, state: state(!!v.approvedBy, v.stage === "reviewed"), at: v.approvedAt ?? undefined },
+    // A run reviewed before decision D25 keeps its reviewer on record; since D25 the Director approves in one step.
+    ...(v.reviewedBy ? [{ label: REVIEWED_LABEL, empId: v.reviewedBy.empId, state: "done" as const, at: v.reviewedAt ?? undefined }] : []),
+    { label: APPROVED_LABEL, empId: v.approvedBy?.empId, state: state(!!v.approvedBy, v.stage === "prepared" || v.stage === "reviewed"), at: v.approvedAt ?? undefined },
   ];
 }
 
@@ -203,7 +204,7 @@ async function runAction(id: string, action: RunAction, opts: RunActionOptions =
     default:
       throw new ApiError(
         "not_available",
-        "Payslips are issued when the CEO approves the run, and the salary entry is posted through the ledger approval.",
+        "Payslips are issued when the Director approves the run, and the salary entry is posted through the ledger approval.",
         409,
       );
   }

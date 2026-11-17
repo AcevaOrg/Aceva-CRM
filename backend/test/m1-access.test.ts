@@ -67,10 +67,11 @@ describe('M1 five levels and role mapping', () => {
     expect(perms('owner')).toContain('org.manage');
     expect(perms('ceo')).toContain('org.manage');
     expect(perms('director')).not.toContain('org.manage');
-    // Plan section 12: the Director reviews payroll and the CEO approves it (docs/M7-M9-DECISIONS.md, P1).
-    expect(perms('director')).toContain('payroll.review');
-    expect(perms('director')).not.toContain('payroll.approve');
-    expect(perms('ceo')).toContain('payroll.approve');
+    // Decision D25 (docs/M7-M9-DECISIONS.md): the Director approves payroll in one step, the month close and reopening, and
+    // hire requests; the CEO only views them (and decides only what the Director asked for).
+    for (const p of ['payroll.approve', 'finance.close_approve', 'finance.reopen', 'people.approve_hire']) expect(perms('director')).toContain(p);
+    expect(perms('director')).not.toContain('payroll.review');
+    for (const p of ['payroll.approve', 'payroll.review', 'finance.close_approve', 'finance.reopen']) expect(perms('ceo')).not.toContain(p);
     expect(perms('employee')).not.toContain('org.manage');
     expect(perms('employee')).not.toContain('finance.view');
     expect(perms('sales')).toContain('sales.own'); // a named Level 4 role

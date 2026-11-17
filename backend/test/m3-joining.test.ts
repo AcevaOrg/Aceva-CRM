@@ -47,15 +47,18 @@ const newHire = (overrides: Record<string, unknown> = {}) => {
 const passwordFrom = (mail: string) => mail.match(/Temporary password: (\S+)/)![1];
 const employeeCount = () => prisma.employee.count();
 
-/** Director or HR start the hire; the CEO authorizes it. Returns the new Emp-ID. */
+/**
+ * Director or HR start the hire. Decision D25: the Director authorizes it; a request the Director made goes to the CEO.
+ * Returns the new Emp-ID.
+ */
 async function hire(body: ReturnType<typeof newHire>, starter = DIRECTOR, approvalBody: Record<string, unknown> = {}) {
   const started = await t.as(starter).post('/api/v1/employees').send(body).expect(201);
   expect(started.body.status).toBe('pending_approval');
-  const approved = await t.as(CEO).post(`/api/v1/hire-requests/${started.body.requestId}/approve`).send(approvalBody).expect(200);
+  const approved = await t.as(starter === DIRECTOR ? CEO : DIRECTOR).post(`/api/v1/hire-requests/${started.body.requestId}/approve`).send(approvalBody).expect(200);
   return { empId: approved.body.empId as string, requestId: started.body.requestId as string };
 }
 
-describe('M3 joining: Director or HR start the hire, the Owner or CEO authorize it', () => {
+describe('M3 joining: Director or HR start the hire, the Director authorizes it (the CEO only requests the Director made, D25)', () => {
   it('starting a hire creates only a request: no employee, no Emp-ID, no login, no email', async () => {
     const before = await employeeCount();
     const body = newHire();
@@ -68,13 +71,24 @@ describe('M3 joining: Director or HR start the hire, the Owner or CEO authorize 
     expect(await prisma.auditLog.count({ where: { action: 'hire.requested', targetId: res.body.requestId } })).toBe(1);
   });
 
-  it('only the Owner or CEO approve or reject; Director, HR and others cannot, even for their own request', async () => {
+  it('the Director decides; the CEO only a request the Director made; HR and others never; nobody their own request', async () => {
     const started = (await t.as(HR).post('/api/v1/employees').send(newHire()).expect(201)).body;
-    for (const who of [DIRECTOR, HR, CTO, DEV1, FINANCE]) {
+    for (const who of [HR, CTO, DEV1, FINANCE]) {
       await t.as(who).post(`/api/v1/hire-requests/${started.requestId}/approve`).send({}).expect(403);
       await t.as(who).post(`/api/v1/hire-requests/${started.requestId}/reject`).send({ reason: 'not allowed to decide' }).expect(403);
     }
+    // D25: the CEO only views requests the Director did not make
+    expect((await t.as(CEO).post(`/api/v1/hire-requests/${started.requestId}/approve`).send({}).expect(403)).body.code).toBe('director_approves');
+    expect((await t.as(CEO).post(`/api/v1/hire-requests/${started.requestId}/reject`).send({ reason: 'CEO tries to decide' }).expect(403)).body.code).toBe('director_approves');
+    // the Director never places a hire at their own level or above (the Owner or CEO hire Level 3 directly)
+    expect((await t.as(DIRECTOR).post(`/api/v1/hire-requests/${started.requestId}/approve`).send({ level: 3 }).expect(403)).body.code).toBe('level_not_allowed');
     expect((await prisma.hireRequest.findUniqueOrThrow({ where: { id: started.requestId } })).status).toBe('pending');
+    // a request the Director made is decided by the CEO, never by the Director
+    const own = (await t.as(DIRECTOR).post('/api/v1/employees').send(newHire()).expect(201)).body;
+    expect((await t.as(DIRECTOR).post(`/api/v1/hire-requests/${own.requestId}/approve`).send({}).expect(403)).body.code).toBe('self_approval');
+    expect((await t.as(DIRECTOR).post(`/api/v1/hire-requests/${own.requestId}/reject`).send({ reason: 'Director rejects own' }).expect(403)).body.code).toBe('self_approval');
+    expect((await prisma.hireRequest.findUniqueOrThrow({ where: { id: own.requestId } })).status).toBe('pending');
+    expect(await prisma.auditLog.count({ where: { action: 'access.denied', reason: { in: ['director_approves', 'self_approval', 'level_not_allowed'] } } })).toBe(5);
     await t.anonymous().post(`/api/v1/hire-requests/${started.requestId}/approve`).send({}).expect(401);
   });
 
@@ -93,7 +107,13 @@ describe('M3 joining: Director or HR start the hire, the Owner or CEO authorize 
     expect(credential.mustChangePassword).toBe(true);
     expect(JSON.stringify(await prisma.auditLog.findMany({ where: { action: 'hire.approved' } }))).not.toContain(passwordFrom(mail.text));
     const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'hire.approved', targetId: empId }, include: { actor: true } });
-    expect(audit.actor?.empId).toBe(CEO); // the authorizer is on record
+    expect(audit.actor?.empId).toBe(CEO); // the authorizer is on record (the CEO: the Director made this request)
+  });
+
+  it('the Director authorizes a request HR started, and is on record as the authorizer', async () => {
+    const { empId } = await hire(newHire(), HR);
+    const audit = await prisma.auditLog.findFirstOrThrow({ where: { action: 'hire.approved', targetId: empId }, include: { actor: true } });
+    expect(audit.actor?.empId).toBe(DIRECTOR);
   });
 
   it('is integrated with M2: the temporary password works once and must be changed at first login', async () => {

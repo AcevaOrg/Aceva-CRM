@@ -14,8 +14,8 @@ export const payrollKeys = {
 };
 
 /**
- * True for the person who prepares payroll: Finance (payroll.prepare). The Director reviews and the CEO approves; the
- * person who prepared a run never reviews or approves it (the server enforces this). The Owner only views.
+ * True for the person who prepares payroll: Finance (payroll.prepare). The Director approves (decision D25); the person who
+ * prepared a run never approves it (the server enforces this). The CEO and the Owner only view.
  */
 export function useCanPreparePayroll() {
   return useCan("payroll.prepare");

@@ -8,7 +8,7 @@ import { createTestApp, type SignedIn, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
-/** M9 month close (checklist, run by finance, approved by the CEO, reopened only by the Owner or CEO) and USD revaluation. */
+/** M9 month close (checklist, run by finance, approved by the Director, reopened only by the Director or the Owner: D25) and USD revaluation. */
 const OWNER = 'ACV-0001';
 const DIRECTOR = 'ACV-0003';
 const FINANCE = 'ACV-0010';
@@ -82,7 +82,9 @@ describe('M9 month close checklist and USD revaluation', () => {
     const usd = (await fin().post(`${API}/journal-entries`).send({ date: '2026-08-05', description: 'USD received', currency: 'USD', exchangeRate: '278', submit: true, lines: [{ accountId: acc['1110'], debit: '1000.00' }, { accountId: acc['3300'], credit: '1000.00' }] }).expect(201)).body;
     expect(usd.totalBase).toBe('278000.00');
     await t.stepUp(CEO);
-    await approve(usd.id, CEO).expect(200);
+    expect((await approve(usd.id, CEO).expect(403)).body.code).toBe('approval_limit'); // D25: the CEO only views
+    await t.stepUp(DIRECTOR);
+    await approve(usd.id).expect(200); // PKR 278,000: within the Director's limit
     expect(item(await period(), 'usd_revalued').done).toBe(false);
 
     expect((await fin().post(`${API}/periods/${MONTH}/revaluation-preview`).send({}).expect(400)).body.code).toBe('rate_missing');
@@ -104,7 +106,7 @@ describe('M9 month close checklist and USD revaluation', () => {
     expect((await fin().post(`${API}/periods/${MONTH}/revaluation-preview`).send({}).expect(200)).body.total).toBe('0.00');
   });
 
-  it('runs the close (finance), and only the CEO approves it; the month is then locked', async () => {
+  it('runs the close (finance), and only the Director approves it (D25); the month is then locked', async () => {
     await approve(pendingId).expect(200);
     const ready = await period();
     expect(ready.checklist.every((c: { done: boolean }) => c.done)).toBe(true);
@@ -113,11 +115,12 @@ describe('M9 month close checklist and USD revaluation', () => {
     expect(closing).toMatchObject({ status: 'closing', closeRequestedByEmpId: FINANCE });
     expect((await fin().post(`${API}/periods/${MONTH}/close`).expect(409)).body.code).toBe('invalid_transition');
     await fin().post(`${API}/periods/${MONTH}/approve-close`).expect(404);
-    await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/approve-close`).expect(404); // plan: the CEO approves the close
-    expect((await t.as(CEO).get(`${API}/periods/${MONTH}`).expect(200)).body.canApproveClose).toBe(true);
-    const closed = (await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(200)).body;
-    expect(closed).toMatchObject({ status: 'closed', closedByEmpId: CEO });
-    expect((await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(409)).body.code).toBe('invalid_transition');
+    await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(404); // D25: the CEO only views
+    expect((await t.as(CEO).get(`${API}/periods/${MONTH}`).expect(200)).body.canApproveClose).toBe(false);
+    expect((await t.as(DIRECTOR).get(`${API}/periods/${MONTH}`).expect(200)).body.canApproveClose).toBe(true);
+    const closed = (await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/approve-close`).expect(200)).body;
+    expect(closed).toMatchObject({ status: 'closed', closedByEmpId: DIRECTOR });
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/approve-close`).expect(409)).body.code).toBe('invalid_transition');
     expect(await prisma.financePeriodEvent.count({ where: { month: MONTH } })).toBe(2);
   });
 
@@ -133,8 +136,8 @@ describe('M9 month close checklist and USD revaluation', () => {
     await expect(prisma.journalEntry.create({ data: { entryDate: new Date('2026-08-21'), description: 'Direct', makerId: maker.id } })).rejects.toThrow(/period_closed/);
   });
 
-  it('only the Owner or CEO reopen, with a reason and "confirm again"; it is logged and alerted', async () => {
-    await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Director tries to reopen' }).expect(404);
+  it('only the Director or the Owner reopen (D25), with a reason and "confirm again"; it is logged and alerted', async () => {
+    await t.as(CEO).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'CEO tries to reopen' }).expect(404); // D25: the CEO only views
     await fin().post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Finance tries to reopen' }).expect(404);
     await t.as(OWNER).post(`${API}/periods/${MONTH}/reopen`).send({}).expect(400);
     expect((await t.as(OWNER).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Missing supplier invoice' }).expect(403)).body.code).toBe('step_up_required');
@@ -149,7 +152,7 @@ describe('M9 month close checklist and USD revaluation', () => {
     await fin().post(`${API}/journal-entries`).send({ date: '2026-08-20', description: 'Late', lines: [{ accountId: acc['5200'], debit: '10' }, { accountId: acc['1100'], credit: '10' }] }).expect(201);
   });
 
-  it('the CEO can send a close back with a reason, and can also reopen', async () => {
+  it('the Director can send a close back with a reason, and can also reopen; the CEO cannot', async () => {
     // the draft made above must be submitted and posted first
     const drafts = await prisma.journalEntry.findMany({ where: { entryDate: { gte: new Date('2026-08-01'), lte: new Date('2026-08-31') }, status: 'draft' } });
     for (const d of drafts) {
@@ -157,12 +160,15 @@ describe('M9 month close checklist and USD revaluation', () => {
       await approve(d.id).expect(200);
     }
     await fin().post(`${API}/periods/${MONTH}/close`).expect(200);
-    await t.as(CEO).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'no' }).expect(400);
-    expect((await t.as(CEO).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'Check the August rent again' }).expect(200)).body.status).toBe('reopened');
+    await t.as(CEO).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'CEO sends it back' }).expect(404);
+    await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'no' }).expect(400);
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'Check the August rent again' }).expect(200)).body.status).toBe('reopened');
     await fin().post(`${API}/periods/${MONTH}/close`).expect(200);
-    await t.as(CEO).post(`${API}/periods/${MONTH}/approve-close`).expect(200);
-    await t.stepUp(CEO);
-    expect((await t.as(CEO).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Auditor adjustment' }).expect(200)).body.status).toBe('reopened');
+    await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/approve-close`).expect(200);
+    t.clock.advance(6 * 60_000);
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Auditor adjustment' }).expect(403)).body.code).toBe('step_up_required');
+    await t.stepUp(DIRECTOR);
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Auditor adjustment' }).expect(200)).body.status).toBe('reopened');
     const list = (await fin().get(`${API}/periods`).expect(200)).body;
     expect(list.map((p: { month: string }) => p.month)).toContain(MONTH);
   });
@@ -172,11 +178,10 @@ describe('M9 approval limits and finance settings (temporary home until Module 1
   it('everyone in finance reads them; only the Owner changes them (D22), with a reason and "confirm again", validated and logged', async () => {
     const limits = (await fin().get(`${API}/settings/approval-limits`).expect(200)).body;
     expect(limits.map((l: { approverLevel: number; maxAmount: string | null }) => [l.approverLevel, l.maxAmount])).toEqual([
-      [3, '50000.00'],
-      [2, '500000.00'],
+      [3, '5000000.00'], // D25: the Director approves up to PKR 5,000,000; there is no CEO tier
       [1, null],
     ]);
-    const next = { reason: 'Management raised the Director limit', limits: [{ approverLevel: 3, maxAmount: '100000.00', label: 'Director' }, { approverLevel: 2, maxAmount: '500000.00', label: 'CEO' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] };
+    const next = { reason: 'Management raised the Director limit', limits: [{ approverLevel: 3, maxAmount: '6000000.00', label: 'Director' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] };
     // nobody but the Owner reaches the change, the Director included (they would be raising their own limit)
     await put(FINANCE, `${API}/settings/approval-limits`).send(next).expect(404);
     await t.stepUp(DIRECTOR);

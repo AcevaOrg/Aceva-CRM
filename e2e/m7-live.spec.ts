@@ -37,7 +37,7 @@ test('checking in on the attendance screen is recorded by the server, with the s
   await context.close();
 });
 
-test('a leave request sent through the API waits for the team lead, who sees it in the real data', async ({ playwright }) => {
+test('a leave request sent through the API is stored and listed for the requester (it waits for the Director, D24)', async ({ playwright }) => {
   const dev = await apiAs(playwright, DEV);
   const types: Array<{ id: string; key: string }> = await (await dev.get('/leave/types')).json();
   const unpaid = types.find((x) => x.key === 'unpaid')!;

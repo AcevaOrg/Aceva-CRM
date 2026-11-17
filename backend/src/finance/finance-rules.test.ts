@@ -11,7 +11,7 @@ import {
   reverseEntrySchema,
 } from '@aceva/contracts';
 import { dec } from '../common/money';
-import { requiredApprovalLevel, type Tier } from './approval-tier';
+import { labelFor, levelCovers, requiredApprovalLevel, type Tier } from './approval-tier';
 import { csvCell } from './finance-export.service';
 import { parseCsv, parseStatement } from './statement-csv';
 
@@ -45,6 +45,36 @@ describe('approval tier (plan section 13)', () => {
   it('without a tier covering the amount there is no approver', () => {
     expect(requiredApprovalLevel(dec('100'), TIERS.slice(0, 1), false, 4)).toMatchObject({ level: 3 });
     expect(requiredApprovalLevel(dec('60000'), TIERS.slice(0, 1), false, 4)).toEqual({ ok: false, reason: 'no_tier' });
+  });
+});
+
+describe('decision D25: the Director approves, the CEO only what the Director made', () => {
+  const D25: Tier[] = [
+    { approverLevel: 3, maxAmount: dec(5000000), label: 'Director (default limit, D25)' },
+    { approverLevel: 1, maxAmount: null, label: 'Owner (above the Director limit; all capital and loan entries)' },
+  ];
+
+  it('the Director approves up to the limit, the Owner above it and capital and loans', () => {
+    expect(requiredApprovalLevel(dec('5000000.00'), D25, false, 4)).toEqual({ ok: true, level: 3, label: 'Director' });
+    expect(requiredApprovalLevel(dec('5000000.01'), D25, false, 4)).toEqual({ ok: true, level: 1, label: 'Owner' });
+    expect(requiredApprovalLevel(dec('10'), D25, true, 4)).toMatchObject({ level: 1 });
+  });
+
+  it('an entry the Director made needs the CEO (level 2, which has no tier of its own)', () => {
+    expect(requiredApprovalLevel(dec('100'), D25, false, 3)).toEqual({ ok: true, level: 2, label: 'CEO' });
+    expect(requiredApprovalLevel(dec('6000000'), D25, false, 3)).toMatchObject({ level: 1 });
+    expect(labelFor(2, D25)).toBe('CEO');
+  });
+
+  it('an entry is approved at exactly its level, or by the Owner; the CEO never takes over the approvals of the Director', () => {
+    expect(levelCovers(3, 3)).toBe(true); // the Director
+    expect(levelCovers(2, 3)).toBe(false); // the CEO only views these
+    expect(levelCovers(2, 2)).toBe(true); // an entry the Director made
+    expect(levelCovers(3, 2)).toBe(false);
+    expect(levelCovers(2, 1)).toBe(false);
+    expect(levelCovers(1, 3)).toBe(true); // the Owner may approve any entry
+    expect(levelCovers(1, 2)).toBe(true);
+    expect(levelCovers(1, 1)).toBe(true);
   });
 });
 

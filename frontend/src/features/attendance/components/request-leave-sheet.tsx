@@ -89,9 +89,7 @@ export function RequestLeaveSheet({ open, onOpenChange }: { open: boolean; onOpe
               ? "Pick the dates to see who approves it."
               : chain.length === 0
               ? "As CEO / Founder / Owner there is no one above you, so your leave is recorded straight away."
-              : chain.length > 1
-                ? `Your manager (${chain[0].label}) approves first, then the Director.`
-                : `Your manager (${chain[0].label}) approves it.`}
+              : `The ${chain[0].label} approves it.`}
           </SheetDescription>
         </SheetHeader>
         <SheetBody>

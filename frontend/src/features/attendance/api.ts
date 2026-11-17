@@ -280,7 +280,7 @@ export const mockAttendanceApi = {
       const me = getViewer().employee.empId;
       if (input.date >= isoDay(new Date())) throw new ApiError("validation", "You can only correct past days.");
       if (!correctionApprover(me, employeesTable()))
-        throw new ApiError("validation", "Corrections are approved by your manager. As CEO / Founder / Owner there is no one above you, so this record can't be corrected here.");
+        throw new ApiError("validation", "Corrections are approved by the Director (the Director's own by the person above). As CEO / Founder / Owner there is no one above you, so this record can't be corrected here.");
       if (correctionsTable().some((c) => c.empId === me && c.date === input.date && c.status === "pending"))
         throw new ApiError("validation", "There is already a pending correction for this day.");
       const rec = attendanceTable().find((d) => d.empId === me && d.date === input.date);
@@ -305,10 +305,10 @@ export const mockAttendanceApi = {
       const me = viewer.employee.empId;
       const c = correctionsTable().find((x) => x.id === id);
       if (!c) notFound("Correction");
-      if (!viewer.can("attendance.approve_correction")) throw new ApiError("forbidden", "View only. The person's manager approves corrections.", 403);
+      if (!viewer.can("attendance.approve_correction")) throw new ApiError("forbidden", "View only. The Director approves attendance corrections.", 403);
       if (c.empId === me) throw new ApiError("forbidden", "You can't approve your own correction.", 403);
       if (c.status !== "pending") throw new ApiError("validation", "This correction was already decided.");
-      if (correctionApprover(c.empId, employeesTable())?.empId !== me) throw new ApiError("forbidden", "Only this person's manager approves the correction.", 403);
+      if (correctionApprover(c.empId, employeesTable())?.empId !== me) throw new ApiError("forbidden", "Only the Director (for the Director's own, the person above) approves this correction.", 403);
       applyCorrectionDecision(c, approve, me, note);
     }),
 
@@ -391,7 +391,7 @@ export const mockAttendanceApi = {
       const me = viewer.employee.empId;
       const r = leaveRequestsTable().find((x) => x.id === id);
       if (!r) notFound("Leave request");
-      if (!viewer.can("leave.approve")) throw new ApiError("forbidden", "View only. The person's manager and the Director approve leave.", 403);
+      if (!viewer.can("leave.approve")) throw new ApiError("forbidden", "View only. The Director approves leave.", 403);
       if (r.empId === me) throw new ApiError("forbidden", "You can't approve your own leave.", 403);
       if (currentLeaveApprover(r) !== me) throw new ApiError("forbidden", "This request is waiting for someone else.", 403);
       applyLeaveDecision(r, approve, me, note);

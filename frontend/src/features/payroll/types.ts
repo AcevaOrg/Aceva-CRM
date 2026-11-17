@@ -53,7 +53,7 @@ export interface PayrollRun {
   returnedNote?: string;
   chain: ApprovalStep[];
   createdAt: string;
-  /** Live: the salary entry (waits for the ledger approval after the CEO approves the run) and the payment entry. */
+  /** Live: the salary entry (waits for the ledger approval after the Director approves the run) and the payment entry. */
   salaryEntry?: LedgerEntryRef;
   paymentEntry?: LedgerEntryRef;
   /** Live: what happens next, decided by the server. */

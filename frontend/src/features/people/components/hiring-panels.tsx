@@ -9,15 +9,19 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useReason } from "@/components/shared/dialogs";
 import { http, isLive } from "@/lib/api/http";
-import { useCan } from "@/lib/auth/viewer";
+import { useCan, useViewer } from "@/lib/auth/viewer";
+import { useLookup } from "@/hooks/use-directory";
 import { formatDate } from "@/lib/dates";
 
 /**
- * Hire requests: Director or HR start a hire; only the Owner or CEO authorize the level and reporting line.
- * Shown to people who can start or authorize hires (live mode only).
+ * Hire requests: Director or HR start a hire. Decision D25: the Director authorizes the level and reporting line; a
+ * request the Director made is decided by the CEO, and the Owner may decide any. Nobody decides their own request.
+ * Shown to people who can start or authorize hires (live mode only). The server checks all of this again.
  */
 export function HireRequestsPanel() {
-  const authorize = useCan("org.manage");
+  const authorize = useCan("people.approve_hire");
+  const viewer = useViewer();
+  const lookup = useLookup();
   const manage = useCan("people.manage");
   const qc = useQueryClient();
   const askReason = useReason();
@@ -33,6 +37,11 @@ export function HireRequestsPanel() {
   });
 
   const rows = query.data ?? [];
+  const mayDecide = (r: HireRequestView) => {
+    if (!authorize || !viewer || r.requestedBy === viewer.employee.empId) return false;
+    if (viewer.employee.role === "ceo") return lookup.employee(r.requestedBy)?.role === "director";
+    return true;
+  };
   if (!isLive("m3") || !(authorize || manage) || rows.length === 0) return null;
 
   return (
@@ -41,7 +50,9 @@ export function HireRequestsPanel() {
         <UserCheck className="size-4" /> Hires waiting for approval ({rows.length})
       </p>
       <p className="mb-3 text-[12.5px] text-muted-foreground">
-        {authorize ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve." : "The Owner or CEO authorize the level and reporting line. The Emp-ID and welcome email follow after that."}
+        {rows.some(mayDecide)
+          ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve."
+          : "The Director authorizes the level and reporting line (the CEO, for a request the Director made). The Emp-ID and welcome email follow after that."}
       </p>
       <ul className="grid gap-2">
         {rows.map((r) => (
@@ -52,7 +63,7 @@ export function HireRequestsPanel() {
                 Requested by {r.requestedBy} on {formatDate(r.requestedAt)} · joins {formatDate(r.joiningDate)}
               </span>
             </span>
-            {authorize && (
+            {mayDecide(r) && (
               <span className="flex gap-2">
                 <Button
                   size="sm"

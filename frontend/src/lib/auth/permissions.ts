@@ -6,7 +6,7 @@ import type { Duty, RoleKey } from "@/types";
 
 export const PERMISSIONS = [
   "org.view", "org.manage", "roles.manage", "standin.manage",
-  "people.view_directory", "people.view_job", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
+  "people.view_directory", "people.view_job", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay", "people.approve_hire",
   "auth.unlock_account", "session.force_logout",
   "activity.view_own", "activity.view_team", "activity.view_all", "activity.security",
   "task.view_own", "task.assign", "task.review", "task.view_team",
@@ -27,14 +27,16 @@ export type Permission = (typeof PERMISSIONS)[number];
 /*
  * Aceva structure (development plan §5, five levels):
  *   L1 Owner      — oversight: sees everything (all activity, all data) but approves nothing. Changes levels and reporting lines.
- *   L2 CEO        — oversight plus the sign-off of the Director's own leave. Changes levels and reporting lines.
+ *   L2 CEO        — oversight; signs off only what the Director asked for (decision D25): the Director's own leave and
+ *                   corrections, entries the Director made, hire requests the Director made. Changes levels and reporting lines.
  *   L3 Director   — the single approver for the whole company, plus HR duty. Gives extra duties.
  *   L3 CTO        — runs development (assigns and reviews development work, first step of developers' leave).
  *   L4 Heads/Leads — Sales, Finance (finance duty) and HR (HR duty) people: prepare, never approve company items.
  *   L5 Employees  — own work.
  * Maker-checker: the finance person (or anyone) prepares, the Director approves. The Director never
  * prepares finance items, so there is always a second person. The only thing that goes above the
- * Director is the Director's own leave or attendance correction, which the CEO / Founder / Owner signs off.
+ * Director is what the Director asked for themselves (leave, corrections, entries, hire requests), which the CEO signs off.
+ * Decision D25 (17 Nov 2026) made this the rule for payroll, the month close and hiring too.
  */
 
 /** Everyone: their own work, their own data, the directory and messages. */
@@ -72,12 +74,16 @@ const OVERSIGHT: Permission[] = [
  * Mirrors backend/prisma/permission-catalogue.ts (the server is the real lock).
  */
 /** Decision D22: only the Owner changes approval limits, finance-wide security settings and the "Owner approves" rule. */
-const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen", "finance.authority_manage"];
+const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen", "finance.authority_manage", "people.approve_hire"];
 
-/** L2 CEO: oversight, the Director's own leave; plan sections 12-13: approves payroll and the month close, entries up to the CEO limit, reopens months. */
+/**
+ * L2 CEO (decision D25): oversight. The approvals kept are only for what the Director asked for: the Director's leave and
+ * corrections (routed by the server), entries the Director made (level 2) and hire requests the Director made. Payroll, the
+ * month close and reopening a month are the Director's.
+ */
 const CEO: Permission[] = [
   ...OVERSIGHT, "standin.manage", "auth.unlock_account", "session.force_logout", "leave.approve", "attendance.approve_correction",
-  "payroll.approve", "finance.entry_approve", "finance.close_approve", "finance.reopen",
+  "finance.entry_approve", "people.approve_hire",
 ];
 
 /** L2 Director: the approver for everything, plus HR duty, sales-manager duty and company administration. Prepares no finance items. */
@@ -85,10 +91,11 @@ const DIRECTOR: Permission[] = [
   ...MANAGER,
   "roles.manage", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
   "activity.security", "performance.weights",
-  // Plan section 12: the Director REVIEWS payroll and the CEO approves it. Section 13: the finance duty person runs the
-  // month close, the CEO approves it, and only the Owner or CEO reopen a closed month.
-  "payroll.view", "payroll.review", "payroll.export",
-  "finance.view", "finance.entry_approve", "finance.export",
+  // Decision D25: the Director approves payroll in one step (Finance prepares), approves the month close the finance duty
+  // person runs, reopens a closed month, and decides hire requests.
+  "payroll.view", "payroll.approve", "payroll.export",
+  "finance.view", "finance.entry_approve", "finance.close_approve", "finance.reopen", "finance.export",
+  "people.approve_hire",
   "statements.view", "statements.export", "sheet.view", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "subscriptions.view", "subscriptions.manage",

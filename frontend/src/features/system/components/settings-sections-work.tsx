@@ -248,7 +248,7 @@ export function LeaveTypesSection() {
               </table>
             </div>
             <p className="text-[12px] text-muted-foreground">
-              Who approves: Development → the CTO, then the Director. The CTO, Sales and Finance → the Director. The Director&apos;s own leave → the CEO / Founder / Owner. Nobody approves their own leave.
+              Who approves: the Director, in one step, for everyone (Development, the CTO, Sales and Finance). The Director&apos;s own leave → the CEO / Founder / Owner. Nobody approves their own leave.
             </p>
             <p className="text-[12px] text-muted-foreground">Unpaid leave days are passed to payroll at month end and deducted as base ÷ working days × unpaid days.</p>
             {can && (

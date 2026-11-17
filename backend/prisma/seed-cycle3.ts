@@ -62,9 +62,10 @@ export async function seedCycle3Defaults(tx: Tx): Promise<void> {
   }
 
   const limits = [
-    { approverLevel: 3, maxAmount: '50000', label: 'Director (plan example limit)' },
-    { approverLevel: 2, maxAmount: '500000', label: 'CEO (plan example limit)' },
-    { approverLevel: 1, maxAmount: null, label: 'Owner (above the CEO limit; all capital and loan entries)' },
+    // Decision D25: the Director approves every entry up to this limit (the Owner sets the real one); there is no CEO tier,
+    // the CEO approves only entries the Director made (level 2).
+    { approverLevel: 3, maxAmount: '5000000', label: 'Director (default limit, D25)' },
+    { approverLevel: 1, maxAmount: null, label: 'Owner (above the Director limit; all capital and loan entries)' },
   ];
   for (const l of limits) {
     await tx.approvalLimit.upsert({ where: { approverLevel: l.approverLevel }, update: {}, create: l });

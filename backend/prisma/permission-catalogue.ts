@@ -7,6 +7,7 @@
  *   duty.assign        may give or end extra duties such as Finance or HR (Director)
  *   auth.set_temporary_password  Director and HR set a temporary password when someone has no official email
  *   auth.reset_two_factor        reset a lost authenticator (Owner, CEO, Director, HR duty), with limits
+ *   people.approve_hire          approve or reject a hire request (the Director; the CEO only for the Director's own, D25)
  * (Finance duty also sees pay information: plan section 7)
  * Roles belong to levels (plan section 5). Finance and HR are DUTIES, not roles. Duty permissions are kept
  * separate from role permissions. To add a permission for a future module, add a row to this catalogue
@@ -15,7 +16,7 @@
 
 export const PERMISSION_KEYS: string[] = [
   'org.view', 'org.manage', 'roles.manage', 'standin.manage', 'people.view_directory',
-  'people.view_job', 'people.view_personal', 'people.view_pay', 'people.manage', 'people.manage_pay',
+  'people.view_job', 'people.view_personal', 'people.view_pay', 'people.manage', 'people.manage_pay', 'people.approve_hire',
   'auth.unlock_account', 'session.force_logout', 'activity.view_own', 'activity.view_team',
   'activity.view_all', 'activity.security', 'task.view_own', 'task.assign', 'task.review',
   'task.view_team', 'performance.view_own', 'performance.view_team', 'performance.view_all',
@@ -57,7 +58,7 @@ const OWNER: string[] = [
   'statements.view', 'statements.export', 'sheet.view', 'insights.view', 'audit.view',
   'settings.view', 'backup.view', 'billing.view', 'subscriptions.view', 'sales.own', 'sales.team',
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
-  'org.manage',
+  'org.manage', 'people.approve_hire',
   'auth.reset_two_factor',
   // Plan sections 11 and 13: approvals move up to the Owner; above PKR 500,000, capital and loans; reopening a month.
   'leave.approve', 'attendance.approve_correction', 'finance.entry_approve', 'finance.reopen',
@@ -77,8 +78,10 @@ const CEO: string[] = [
   'org.manage', 'standin.manage', 'auth.unlock_account', 'session.force_logout', 'leave.approve',
   'attendance.approve_correction', 'approval.approve',
   'auth.reset_two_factor',
-  // Plan sections 12, 13: the CEO approves payroll and the month close, approves entries up to their limit, reopens months.
-  'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen',
+  // Decision D25: the CEO only views. The approvals kept here are for the Director's own requests: the Director's leave and
+  // corrections (routed), journal entries the Director made (level 2) and hire requests the Director made. Payroll approval,
+  // the month close and reopening a month moved to the Director.
+  'finance.entry_approve', 'people.approve_hire',
 ];
 
 const LEVEL3_DEFAULT: string[] = [
@@ -99,7 +102,7 @@ const DIRECTOR: string[] = [
   'attendance.approve_correction', 'leave.approve', 'auth.unlock_account', 'session.force_logout',
   'comms.admin', 'announcements.publish', 'roles.manage', 'people.view_personal', 'people.view_pay',
   'people.manage', 'people.manage_pay', 'activity.security', 'performance.weights', 'payroll.view',
-  'payroll.review', 'payroll.export', 'finance.view', 'finance.entry_approve',
+  'payroll.export', 'finance.view', 'finance.entry_approve',
   'finance.export', 'statements.view', 'statements.export',
   'sheet.view', 'insights.view', 'audit.view', 'settings.view', 'settings.manage', 'backup.view',
   'billing.view', 'subscriptions.view', 'subscriptions.manage', 'sales.own', 'sales.team',
@@ -107,6 +110,9 @@ const DIRECTOR: string[] = [
   'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
   'auth.set_temporary_password',
   'auth.reset_two_factor',
+  // Decision D25: the Director approves everything below the Owner: payroll in one step (Finance prepares; the separate
+  // review step and payroll.review are gone), the month close and reopening a month, hire requests.
+  'payroll.approve', 'finance.close_approve', 'finance.reopen', 'people.approve_hire',
 ];
 
 const CTO: string[] = [

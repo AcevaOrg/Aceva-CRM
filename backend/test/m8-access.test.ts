@@ -33,9 +33,9 @@ async function approvedRun(month: string): Promise<string> {
   const id = (await as(FINANCE).post(`${API}/payroll/runs`).send({ month }).expect(201)).body.id;
   await as(FINANCE).post(`${API}/payroll/runs/${id}/calculate`).expect(200);
   await as(FINANCE).post(`${API}/payroll/runs/${id}/prepare`).expect(200);
-  await as(DIRECTOR).post(`${API}/payroll/runs/${id}/review`).expect(200);
-  await t.stepUp(CEO);
-  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(200);
+  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(404); // D25: the CEO only views payroll
+  await t.stepUp(DIRECTOR);
+  await as(DIRECTOR).post(`${API}/payroll/runs/${id}/approve`).expect(200); // one Director step (D25)
   return id;
 }
 

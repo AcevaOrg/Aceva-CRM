@@ -2,8 +2,8 @@
  * Module 8 service functions: the in-browser mock below, and the real API in live-api.ts (NEXT_PUBLIC_LIVE_MODULES contains
  * m8). Each JSDoc names the real endpoint (spec §7.3).
  * Payroll data is highly confidential (plan §16): callers without payroll.view get 404, like the server.
- * Chain (maker-checker, plan §12): Prepared (Finance, payroll.prepare) → Reviewed (Director, payroll.review) →
- * Approved (CEO, payroll.approve, step-up). The Owner has payroll.view and payroll.export only: views every run, acts on none.
+ * Chain (maker-checker, decision D25): Prepared (Finance, payroll.prepare) → Approved (Director, payroll.approve, step-up),
+ * one step. The CEO and the Owner have payroll.view and payroll.export only: they view every run and act on none.
  */
 import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
@@ -19,7 +19,7 @@ import type { ApprovalStep } from "@/types";
 import { isTopLevelRole } from "@/types";
 import { livePayrollApi } from "./live-api";
 import {
-  APPROVED_LABEL, calculateLine, DEFAULT_TAX_SLABS, nextMonthKey, PAYROLL_APPROVER, PAYROLL_REVIEWER, PREPARED_LABEL, REVIEWED_LABEL, stageIndex, totalsOf,
+  APPROVED_LABEL, calculateLine, DEFAULT_TAX_SLABS, nextMonthKey, PAYROLL_APPROVER, PREPARED_LABEL, stageIndex, totalsOf,
   workingDaysInMonth,
 } from "./logic";
 import type { NewAdvanceInput, PayrollAdjustment, PayrollBankAccount, PayrollLine, PayrollRun, Payslip, RunDetail, SalaryAdvance, TaxSlab } from "./types";
@@ -44,24 +44,21 @@ function step(run: PayrollRun, i: number, patch: Partial<ApprovalStep>) {
   run.chain[i] = { ...run.chain[i], ...patch };
 }
 
-/** Chain positions: 0 Prepared (Finance), 1 Reviewed (Director), 2 Approved (CEO). */
+/** Chain positions: 0 Prepared (Finance), 1 Approved (Director). */
 const PREPARED = 0;
-const REVIEWED = 1;
-const APPROVED = 2;
+const APPROVED = 1;
 
-/** Seed runs were made with two steps; add the Director's review step (plan §12) so every run shows the full chain. */
-export function withReviewStep(run: PayrollRun): PayrollRun {
-  if (run.chain.length >= 3) return run;
-  const [prepared, approved] = run.chain;
-  const reviewedDone = stageIndex(run.stage) >= stageIndex("reviewed");
-  const review = {
-    label: REVIEWED_LABEL,
-    empId: run.reviewedBy ?? PAYROLL_REVIEWER,
-    state: reviewedDone ? ("done" as const) : run.stage === "prepared" ? ("waiting" as const) : ("pending" as const),
-    at: reviewedDone ? approved?.at : undefined,
-  };
-  const approvedState = stageIndex(run.stage) >= stageIndex("approved") ? ("done" as const) : run.stage === "reviewed" ? ("waiting" as const) : ("pending" as const);
-  run.chain = [prepared, review, { ...(approved ?? {}), label: APPROVED_LABEL, state: approvedState }];
+/**
+ * Decision D25: two steps, Prepared (Finance) → Approved (Director). Runs saved in this browser before D25 had a third,
+ * "Reviewed (Director)", step in the middle; it is dropped so every run shows the same chain.
+ */
+export function withApprovalChain(run: PayrollRun): PayrollRun {
+  const prepared = run.chain[PREPARED];
+  const approved = run.chain[run.chain.length - 1];
+  const waiting = run.stage === "prepared" || run.stage === "reviewed";
+  const approvedState =
+    stageIndex(run.stage) >= stageIndex("approved") ? ("done" as const) : waiting ? ("waiting" as const) : approved?.state === "rejected" ? ("rejected" as const) : ("pending" as const);
+  run.chain = [prepared, { ...(approved ?? {}), label: APPROVED_LABEL, empId: approved?.empId ?? PAYROLL_APPROVER, state: approvedState }];
   return run;
 }
 
@@ -128,7 +125,7 @@ const mockPayrollApi = {
   listRuns: () =>
     mock(() => {
       requireView();
-      return [...runsTable()].map(withReviewStep).sort((a, b) => b.month.localeCompare(a.month));
+      return [...runsTable()].map(withApprovalChain).sort((a, b) => b.month.localeCompare(a.month));
     }),
 
   /** GET /payroll/runs/:id (+ lines) */
@@ -137,7 +134,7 @@ const mockPayrollApi = {
       requireView();
       const run = runsTable().find((r) => r.id === id || r.number === id);
       if (!run) notFound("Payroll run");
-      return { run: withReviewStep(run), lines: linesTable().filter((l) => l.runId === run.id) };
+      return { run: withApprovalChain(run), lines: linesTable().filter((l) => l.runId === run.id) };
     }),
 
   /** POST /payroll/runs { month } (Finance) */
@@ -159,7 +156,6 @@ const mockPayrollApi = {
         headcount: lines.length,
         chain: [
           { label: PREPARED_LABEL, empId: v.employee.empId, state: "pending" },
-          { label: REVIEWED_LABEL, empId: PAYROLL_REVIEWER, state: "pending" },
           { label: APPROVED_LABEL, empId: PAYROLL_APPROVER, state: "pending" },
         ],
         createdAt: new Date().toISOString(),
@@ -176,7 +172,7 @@ const mockPayrollApi = {
       const me = v.employee.empId;
       const found = runsTable().find((r) => r.id === id);
       if (!found) notFound("Payroll run");
-      const run = withReviewStep(found);
+      const run = withApprovalChain(found);
       const now = new Date().toISOString();
       const lines = linesTable().filter((l) => l.runId === run.id);
       const needs = (cond: boolean, msg: string) => {
@@ -196,31 +192,25 @@ const mockPayrollApi = {
           run.preparedAt = now;
           run.returnedNote = undefined;
           step(run, PREPARED, { empId: me, state: "done", at: now });
-          step(run, REVIEWED, { empId: PAYROLL_REVIEWER, state: "waiting", at: undefined, note: undefined });
-          step(run, APPROVED, { empId: PAYROLL_APPROVER, state: "pending", at: undefined, note: undefined });
+          step(run, APPROVED, { empId: PAYROLL_APPROVER, state: "waiting", at: undefined, note: undefined });
           break;
         case "review":
-          needs(run.stage === "prepared" && v.can("payroll.review"), "Only the Director reviews payroll.");
-          needs(run.preparedBy !== me, "You prepared this payroll, so you can't review it.");
-          run.stage = "reviewed";
-          run.reviewedBy = me;
-          run.reviewedAt = now;
-          step(run, REVIEWED, { empId: me, state: "done", at: now });
-          step(run, APPROVED, { state: "waiting" });
+          needs(false, "Payroll has no separate review step; the Director approves it (decision D25).");
           break;
         case "approve":
-          needs(run.stage === "reviewed" && v.can("payroll.approve"), "Only the CEO approves payroll, after the Director's review.");
+          needs((run.stage === "prepared" || run.stage === "reviewed") && v.can("payroll.approve"), "Only the Director approves payroll.");
           needs(run.preparedBy !== me, "You prepared this payroll, so you can't approve it.");
+          needs(run.reviewedBy !== me, "You reviewed this payroll, so a different person approves it.");
           run.stage = "approved";
           run.approvedBy = me;
           run.approvedAt = now;
           step(run, APPROVED, { empId: me, state: "done", at: now, note: opts.note });
           break;
         case "return":
-          needs(run.stage === "prepared" || run.stage === "reviewed", "Only a run waiting for review or approval can be sent back.");
-          needs((v.can("payroll.review") || v.can("payroll.approve")) && run.preparedBy !== me, "Only the Director or the CEO can send payroll back.");
+          needs(run.stage === "prepared" || run.stage === "reviewed", "Only a run waiting for approval can be sent back.");
+          needs(v.can("payroll.approve") && run.preparedBy !== me, "Only the Director can send payroll back.");
           needs(!!opts.note, "A reason is required.");
-          step(run, run.stage === "prepared" ? REVIEWED : APPROVED, { empId: me, state: "rejected", at: now, note: opts.note });
+          step(run, APPROVED, { empId: me, state: "rejected", at: now, note: opts.note });
           run.stage = "calculated";
           run.returnedNote = opts.note;
           run.reviewedBy = undefined;

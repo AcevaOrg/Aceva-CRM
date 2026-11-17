@@ -156,40 +156,35 @@ describe('M8 calculating a run', () => {
   });
 });
 
-describe('M8 prepare, review and approve (maker-checker and confirm-again)', () => {
-  it('only Finance prepares; the Director reviews; nobody else can act (404 for non-finance people)', async () => {
+describe('M8 prepare and approve (maker-checker and confirm-again; one Director step, decision D25)', () => {
+  it('only Finance prepares; nobody reviews any more; the CEO only views (404 for people without the permission)', async () => {
     await act(DIRECTOR, october, 'prepare').expect(404); // no payroll.prepare
     await act(DEV1, october, 'prepare').expect(404);
     const prepared = (await act(FINANCE, october, 'prepare').expect(200)).body;
-    expect(prepared).toMatchObject({ stage: 'prepared', preparedBy: { empId: FINANCE }, next: { action: 'review' } });
+    expect(prepared).toMatchObject({ stage: 'prepared', preparedBy: { empId: FINANCE }, next: { action: 'approve', label: 'The Director approves it (confirming their password again)' } });
     expect((await act(FINANCE, october, 'prepare').expect(409)).body.code).toBe('invalid_transition'); // twice
     expect((await act(FINANCE, october, 'calculate').expect(409)).body.code).toBe('invalid_transition'); // no recalculation once prepared
     expect((await as(FINANCE).post(`${API}/payroll/runs/${october}/items`).send({ empId: DEV1, kind: 'bonus', label: 'Late', amount: '1' }).expect(409)).body.code).toBe('invalid_transition');
-    await act(FINANCE, october, 'review').expect(404); // Finance has no payroll.review
-    await act(CEO, october, 'review').expect(404); // nor the CEO
-    expect((await act(CEO, october, 'approve').expect(409)).body.code).toBe('invalid_transition'); // not reviewed yet
+    await act(FINANCE, october, 'review').expect(404); // nobody holds payroll.review since D25
+    await act(DIRECTOR, october, 'review').expect(404);
+    await act(CEO, october, 'review').expect(404);
+    await act(FINANCE, october, 'approve').expect(404);
+    await act(CEO, october, 'approve').expect(404); // D25: the CEO only views payroll
   });
 
   it('the database refuses line changes once prepared', async () => {
     await expect(prisma.payrollLine.updateMany({ where: { runId: october }, data: { net: '1.00' } })).rejects.toThrow(/cannot change once the run is prepared/);
   });
 
-  it('the Director reviews; the Director can never approve', async () => {
-    const reviewed = (await act(DIRECTOR, october, 'review').expect(200)).body;
-    expect(reviewed).toMatchObject({ stage: 'reviewed', reviewedBy: { empId: DIRECTOR }, next: { action: 'approve' } });
-    expect((await act(DIRECTOR, october, 'review').expect(409)).body.code).toBe('invalid_transition');
-    await act(DIRECTOR, october, 'approve').expect(404); // no payroll.approve
-    expect(await prisma.outboxEvent.count({ where: { type: 'payroll.run.ready' } })).toBe(2);
-  });
-
-  it('the CEO approves only after confirming again', async () => {
-    const refused = await act(CEO, october, 'approve').expect(403);
+  it('the Director approves a prepared run, only after confirming again', async () => {
+    const refused = await act(DIRECTOR, october, 'approve').expect(403);
     expect(refused.body.code).toBe('step_up_required');
     expect(await prisma.payslip.count()).toBe(0);
-    await t.stepUp(CEO);
-    const approved = (await act(CEO, october, 'approve').expect(200)).body;
-    expect(approved).toMatchObject({ stage: 'approved', approvedBy: { empId: CEO }, salaryEntry: { status: 'pending_approval' }, next: { action: 'mark_paid' } });
-    expect((await act(CEO, october, 'approve').expect(409)).body.code).toBe('invalid_transition'); // no double approval
+    await t.stepUp(DIRECTOR);
+    const approved = (await act(DIRECTOR, october, 'approve').expect(200)).body;
+    expect(approved).toMatchObject({ stage: 'approved', approvedBy: { empId: DIRECTOR }, reviewedBy: null, salaryEntry: { status: 'pending_approval' }, next: { action: 'mark_paid' } });
+    expect((await act(DIRECTOR, october, 'approve').expect(409)).body.code).toBe('invalid_transition'); // no double approval
+    expect(await prisma.outboxEvent.count({ where: { type: 'payroll.run.ready' } })).toBe(1); // prepared; there is no review step
   });
 
   it('approval creates the salary entry exactly once, balanced, made by the preparer, waiting for ledger approval', async () => {
@@ -246,27 +241,33 @@ describe('M8 sending back, and maker-checker when one person holds two duties', 
     await prisma.employeeDuty.updateMany({ where: { id: { in: [directorDuty, ceoDuty] } }, data: { endedAt: new Date() } });
   });
 
-  it('the person who prepared a run cannot review it (API and database)', async () => {
+  it('the person who prepared a run cannot approve it (API and database)', async () => {
     await act(DIRECTOR, september, 'prepare').expect(200);
-    expect((await act(DIRECTOR, september, 'review').expect(403)).body.code).toBe('maker_checker');
+    await t.stepUp(DIRECTOR);
+    expect((await act(DIRECTOR, september, 'approve').expect(403)).body.code).toBe('maker_checker');
     const director = await prisma.employee.findUniqueOrThrow({ where: { empId: DIRECTOR } });
-    await expect(prisma.payrollRun.update({ where: { id: september }, data: { stage: 'reviewed', reviewedBy: director.id } })).rejects.toThrow(/maker_checker|check constraint/i);
+    await expect(prisma.payrollRun.update({ where: { id: september }, data: { approvedBy: director.id } })).rejects.toThrow(/maker_checker|check constraint/i);
+    expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: september } })).stage).toBe('prepared');
   });
 
-  it('a run can be sent back with a reason (validated), then recalculated', async () => {
-    await act(FINANCE, september, 'return', { reason: 'no' }).expect(400);
-    await act(FINANCE, september, 'return', { reason: 'Wrong month' }).expect(403); // Finance neither reviews nor approves
-    const back = (await act(CEO, september, 'return', { reason: 'Please check the bonus lines' }).expect(200)).body;
+  it('a run can be sent back with a reason (validated) by the Director, never by Finance or the CEO, then recalculated', async () => {
+    await act(DIRECTOR, september, 'return', { reason: 'no' }).expect(400);
+    await act(FINANCE, september, 'return', { reason: 'Wrong month' }).expect(403); // Finance does not approve
+    await act(CEO, september, 'return', { reason: 'Wrong month' }).expect(403); // D25: the CEO only views (even on finance duty)
+    const back = (await act(DIRECTOR, september, 'return', { reason: 'Please check the bonus lines' }).expect(200)).body;
     expect(back).toMatchObject({ stage: 'calculated', returnedNote: 'Please check the bonus lines', preparedBy: null });
-    expect((await act(CEO, september, 'return', { reason: 'Again please' }).expect(409)).body.code).toBe('invalid_transition');
+    expect((await act(DIRECTOR, september, 'return', { reason: 'Again please' }).expect(409)).body.code).toBe('invalid_transition');
     await act(FINANCE, september, 'calculate').expect(200);
   });
 
-  it('the person who prepared a run cannot approve it', async () => {
-    await act(CEO, september, 'prepare').expect(200);
-    await act(DIRECTOR, september, 'review').expect(200);
+  it('a run reviewed before D25 is approved by someone other than its reviewer', async () => {
+    await act(CEO, september, 'prepare').expect(200); // the CEO holds the finance duty in this test
+    const director = await prisma.employee.findUniqueOrThrow({ where: { empId: DIRECTOR } });
+    await prisma.payrollRun.update({ where: { id: september }, data: { stage: 'reviewed', reviewedBy: director.id, reviewedAt: new Date() } });
+    await t.stepUp(DIRECTOR);
+    expect((await act(DIRECTOR, september, 'approve').expect(403)).body.code).toBe('maker_checker');
     await t.stepUp(CEO);
-    expect((await act(CEO, september, 'approve').expect(403)).body.code).toBe('maker_checker');
+    await act(CEO, september, 'approve').expect(404); // and the CEO has no payroll.approve
     expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: september } })).stage).toBe('reviewed');
   });
 });

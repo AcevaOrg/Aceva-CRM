@@ -28,7 +28,7 @@ row) and to new databases by `backend/prisma/permission-catalogue.ts`.
 | Office-only check-in | Off; no office networks configured | Management (spec open question 2) |
 | Leave types and yearly days | Casual 10, Sick 8, Annual 14, Unpaid (no limit, unpaid) | Management |
 | Leave year | Calendar year | Management |
-| Approval limits | Director up to PKR 50,000; CEO up to PKR 500,000; Owner above (plan's example table) | Management |
+| Approval limits | Director up to PKR 5,000,000; Owner above and all capital and loan entries; no CEO tier (decision D25, replacing the plan's example table) | The Owner (D22) |
 | "Large entry" needing confirm-again | Above PKR 50,000 | Management |
 | Finance year | Starts in July (Pakistan's normal tax year, plan s.14) | Accountant |
 | Chart of accounts | A development chart in the five groups with system roles (salary expense, salary payable, tax payable, payroll deductions, employee advances, receivable, payable, FX gain/loss) | **Accountant (blocking for real data)** |
@@ -136,6 +136,9 @@ Kept as a documented development default: the Owner's own leave is recorded with
 | # | Decision | Current behaviour until decided |
 |---|---|---|
 | D22 | Who changes approval limits, finance settings and the "Owner approves" account flag? | **Resolved (Owner only).** See section 8 |
+| D23 | Who approves attendance corrections, and does the CEO see attendance and leave? | **Resolved (management decision, 17 Nov 2026).** See section 9 |
+| D24 | Who approves leave while the company has no managers or team leads? | **Resolved (management decision, 17 Nov 2026).** See section 10 |
+| D25 | Who approves payroll, journal entries, the month close and hire requests, now that the CEO only views? | **Resolved (management decision, 17 Nov 2026).** See section 11 |
 
 ## 8. Decision D22 implemented: the Owner holds finance authority
 
@@ -150,3 +153,58 @@ Limits of the database rule: a person with direct write access to the database c
 access is outside the application (it is the database administrator's) and the audit log itself is insert-only.
 The Owner has no screen yet for the Owner-approval rule on accounts (the API route exists); the approval-limits settings
 page is editable by the Owner only.
+
+## 9. Decision D23 implemented: the Director approves attendance corrections; the CEO sees attendance and leave
+
+Management changed plan section 11 ("corrections go to the manager"): corrections now go to the Director, like the final step of leave.
+
+| Rule | Where it is enforced |
+|---|---|
+| A correction of anyone below the Director is decided by the Director, whatever their own manager (the CTO, a team lead). The manager sees it in the team list, view only | `RoutingHelper.directorRoute` (Module 1 route from the seat just below the Director), used when the request is made, listed and decided (`403 not_routed_approver` for anyone else) |
+| While the Director is away, the Director's stand-in decides; away without a stand-in, it moves up to the CEO | Module 1 routing (`ApprovalsService.route`), the same as step 2 of leave |
+| The Director's own correction goes to the CEO; the CEO's goes to the Owner; nobody decides their own | Unchanged Module 1 routing for people not below the Director |
+| With no active Director, corrections go to the person's routed manager again | `correctionRoute` falls back to the plain route |
+| Leave: see decision D24 (section 10), the same single Director step | `LeaveService.plan` |
+| The CEO sees, from their own account, everyone below them (the Director and the whole company under the Director): who is in or late today, each month's attendance, the leave calendar (who is on leave and when), leave requests and balances, and team corrections (view only). The CEO keeps approving only the Director's own leave and corrections, and anything that moves up to them | Existing permissions (`attendance.view_team`, `leave.approve`, `attendance.approve_correction`) and the reporting-line scope; no permission or schema change. Covered by `m7-corrections.test.ts` and `m7-leave.test.ts` |
+
+No migration: this is routing logic only. The frontend mock (`correctionApprover`) follows the same rule; it does not model stand-ins.
+
+## 10. Decision D24 implemented: the Director approves all leave directly
+
+Management: "For now we do not have any manager, so the Director approves leave", the CTO's team included. This replaces
+plan section 11 ("team lead, then the Director") and row P4: leave is one step, decided by the same person as an
+attendance correction (D23).
+
+| Rule | Where it is enforced |
+|---|---|
+| Leave of anyone below the Director (Development under the CTO, the CTO, Sales, Finance) is decided by the Director in one step. Their own manager sees it, view only | `LeaveService.plan` uses `RoutingHelper.directorRoute`; `needsDirector` is always false, so nothing is forwarded (`leave.forwarded` is no longer written; `leave.decided` keeps its fields, with `nextApproverEmpId: null`) |
+| While the Director is away, the Director's stand-in decides; away without a stand-in, it moves up to the CEO | Module 1 routing |
+| The Director's own leave goes to the CEO; the CEO's goes to the Owner; the Owner's is recorded without an approver (unchanged development default) | Module 1 routing for people not below the Director |
+| A request made before D24 that already passed step 1 (`pending_director`) is decided by the Director as step 2 | `LeaveService.currentStep` |
+| The CEO keeps seeing all leave (calendar, requests, balances) and approves only the Director's own | Unchanged permissions and scope (D23) |
+
+No schema, permission or contract change and no migration: `pending_director` and the `forwarded` event value stay in the
+schema for requests made before D24. To bring a manager step back later (when team leads exist), `LeaveService.plan` would
+route step 1 to the manager again; that is a code change, not a setting.
+
+## 11. Decision D25 implemented: the Director approves everything; the CEO only views
+
+Management: "Any kind of approval should be accepted by the approval of the Director. The CEO can just view the
+activities." The CEO still signs off what the Director asked for themselves, since nobody approves their own request.
+This replaces plan section 12 ("the Director reviews, the CEO approves" payroll, decision P1), the CEO's part of
+section 13 (month close, reopening, the CEO approval tier) and decision M3-3 ("the Owner or CEO authorize a hire").
+
+| Rule | Where it is enforced |
+|---|---|
+| Payroll: Finance prepares, the Director approves in one step, with "confirm again". Nobody holds `payroll.review`; the preparer never approves. A run reviewed before D25 is approved by someone other than its reviewer (database rule) or sent back | `PayrollRunsService.approve` (from `prepared`, or `reviewed`); role permissions |
+| Journal entries: the Director approves up to PKR 5,000,000 (default; the Owner sets it), the Owner above that and every capital or loan entry. No CEO tier. An entry the Director made goes one level up to the CEO, the only entries the CEO approves. Unlimited approval stays with the Owner (security review, finding 2) | `approval_limits` (seed, migration); `levelCovers`: exactly the required level or the Owner; the "waiting for me" list uses the same rule |
+| Month close: the finance duty person runs it, the Director approves or sends it back. A closed month is reopened by the Director or the Owner, with "confirm again" | `finance.close_approve`, `finance.reopen` moved from the CEO to the Director |
+| Hire requests: the Director decides (new permission `people.approve_hire`); a request the Director made is decided by the CEO; the Owner may decide any; nobody decides their own; the Director never places a hire at Level 3 or above | `JoiningService.assertMayDecide` |
+| Leave and attendance corrections: unchanged from D23 and D24 (the Director; the Director's own go to the CEO) | `RoutingHelper.directorRoute` |
+| Not approvals, so unchanged: the CEO and the Owner still hire directly and change levels and reporting lines (`org.manage`), manage stand-ins, unlock accounts, sign people out and reset authenticators | Role permissions |
+
+Migration `20261117090000_d25_director_approves` is data only (no table, constraint or trigger change): it adds the
+permission, moves the role permissions, and replaces the approval limits only while they are still the plan's example
+values (an Owner-set value is never overwritten); entries waiting at the old CEO tier move to the Director unless the
+Director made them. On aceva_dev it moves the role permissions only (it has no limits, entries, runs or hire requests
+yet). The payroll stage `reviewed` and the `/review` endpoint stay for runs reviewed before D25.

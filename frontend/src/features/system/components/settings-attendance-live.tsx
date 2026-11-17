@@ -347,7 +347,7 @@ export function LiveLeaveTypesSection() {
           </div>
         )}
         <p className="text-[12px] text-muted-foreground">
-          Who approves: the person&apos;s manager (or their stand-in), then the Director when the Director is above that manager. The Director&apos;s own leave goes to the CEO. Nobody approves their own leave.
+          Who approves: the Director, in one step, for everyone below the Director (the Director&apos;s stand-in while the Director is away). The Director&apos;s own leave goes to the CEO. Nobody approves their own leave.
         </p>
         <p className="text-[12px] text-muted-foreground">Unpaid leave days are passed to payroll at month end. Archived types stay on old requests but cannot be requested.</p>
       </CardContent>

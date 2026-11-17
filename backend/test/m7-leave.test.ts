@@ -9,7 +9,8 @@ import { resetTestDatabase } from './helpers/reset-db';
 import { API, m7Personas, pkAt } from './m7-support';
 
 /**
- * M7 leave (plan section 11: "The request goes to the team lead, then to the Director"), May 2027 (3 May 2027 is a Monday).
+ * M7 leave, May 2027 (3 May 2027 is a Monday). Decision D24 replaced plan section 11 ("the team lead, then the Director"):
+ * one step, the Director, for everyone below the Director; the Director's own goes to the CEO.
  * A test holiday on Wednesday 5 May. Seeded development leave types: casual 10, sick 8, annual 14, unpaid (no limit).
  */
 const OWNER = 'ACV-0001';
@@ -65,23 +66,22 @@ describe('M7 leave: types, holidays and day counting', () => {
   it('counts working days only: weekends and holidays are excluded', async () => {
     await (await as(DIRECTOR)).post(`${API}/holidays`).send({ date: '2027-05-05', name: 'Test Holiday', reason: 'Announced by management' }).expect(201);
     const res = await (await as(DEV1)).get(`${API}/leave/preview?leaveTypeId=${type.casual}&from=2027-05-04&to=2027-05-07`).expect(200);
-    expect(res.body).toMatchObject({ days: 3, remaining: 10, remainingAfter: 7, firstApproverEmpId: CTO, needsDirector: true });
-    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: CTO, state: 'waiting' }, { step: 2, approverEmpId: DIRECTOR, state: 'pending' }]);
+    expect(res.body).toMatchObject({ days: 3, remaining: 10, remainingAfter: 7, firstApproverEmpId: DIRECTOR, needsDirector: false });
+    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: DIRECTOR, state: 'waiting' }]);
+    expect(res.body.chain).toHaveLength(1);
     const week = await (await as(DEV1)).get(`${API}/leave/preview?leaveTypeId=${type.casual}&from=2027-05-03&to=2027-05-16`).expect(200);
     expect(week.body.days).toBe(9); // 10 weekdays minus the holiday
   });
 });
 
 describe('M7 leave: asking', () => {
-  it('a developer asks: two steps, the CTO then the Director', async () => {
+  it("a developer asks: one step, the Director (D24), not the developer's manager (the CTO)", async () => {
     const res = await ask(DEV1, 'casual', '2027-05-04', '2027-05-07', 201);
     req.dev1 = res.body.id;
     expect(res.body).toMatchObject({ empId: DEV1, days: 3, status: 'pending_manager', canCancel: true, canDecide: false });
     expect(res.body.number).toMatch(/^LV-\d{4}-\d{4}$/);
-    expect(res.body.chain).toMatchObject([
-      { step: 1, approverEmpId: CTO, state: 'waiting', label: 'CTO' },
-      { step: 2, approverEmpId: DIRECTOR, state: 'pending', label: 'Director' },
-    ]);
+    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: DIRECTOR, state: 'waiting', label: 'Director' }]);
+    expect(res.body.chain).toHaveLength(1);
   });
 
   it('refuses bad requests with clear codes', async () => {
@@ -114,27 +114,23 @@ describe('M7 leave: asking', () => {
 });
 
 describe('M7 leave: deciding (only the routed approver of the current step, never yourself)', () => {
-  it('step 1: the CTO approves and it moves to the Director', async () => {
+  it("the developer's manager (the CTO) sees it view only; the CEO and others are not the approver either", async () => {
     await (await as(DEV2)).post(`${API}/leave/requests/${req.dev1}/approve`).send({}).expect(403); // no permission
-    for (const who of [DIRECTOR, FINANCE, OWNER]) expect((await decide(who, req.dev1, 'approve', 403)).body.code).toBe('not_routed_approver');
+    for (const who of [CTO, FINANCE, CEO, OWNER]) expect((await decide(who, req.dev1, 'approve', 403)).body.code).toBe('not_routed_approver');
     const team = await (await as(CTO)).get(`${API}/leave/requests?scope=team&status=pending`).expect(200);
-    expect(team.body.items.find((r: { id: string }) => r.id === req.dev1)).toMatchObject({ canDecide: true });
-    const res = await decide(CTO, req.dev1, 'approve', 200, { note: 'Fine by me' });
-    expect(res.body.status).toBe('pending_director');
-    expect(res.body.chain).toMatchObject([
-      { step: 1, approverEmpId: CTO, state: 'done', via: 'manager', note: 'Fine by me' },
-      { step: 2, approverEmpId: DIRECTOR, state: 'waiting' },
-    ]);
-    expect((await decide(CTO, req.dev1, 'approve', 403)).body.code).toBe('not_routed_approver');
+    expect(team.body.items.find((r: { id: string }) => r.id === req.dev1)).toMatchObject({ canDecide: false });
   });
 
-  it('step 2: the Director approves; the balance updates', async () => {
-    const res = await decide(DIRECTOR, req.dev1, 'approve', 200);
+  it('the Director approves in one step; the balance updates', async () => {
+    const team = await (await as(DIRECTOR)).get(`${API}/leave/requests?scope=team&status=pending`).expect(200);
+    expect(team.body.items.find((r: { id: string }) => r.id === req.dev1)).toMatchObject({ canDecide: true });
+    const res = await decide(DIRECTOR, req.dev1, 'approve', 200, { note: 'Fine by me' });
     expect(res.body.status).toBe('approved');
-    expect(res.body.chain.map((s: { state: string }) => s.state)).toEqual(['done', 'done']);
+    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: DIRECTOR, state: 'done', note: 'Fine by me' }]);
+    expect(res.body.chain).toHaveLength(1);
     expect(await balance(DEV1, DEV1, 'casual')).toMatchObject({ used: 3, pending: 0, remaining: 7 });
     expect((await decide(DIRECTOR, req.dev1, 'approve', 409)).body.code).toBe('invalid_transition');
-    expect(await prisma.leaveDecision.count({ where: { requestId: req.dev1 } })).toBe(2);
+    expect(await prisma.leaveDecision.count({ where: { requestId: req.dev1 } })).toBe(1);
   });
 
   it('sales: one step, the Director', async () => {
@@ -196,38 +192,39 @@ describe('M7 leave: deciding (only the routed approver of the current step, neve
 });
 
 describe('M7 leave: stand-ins (Module 1 routing)', () => {
-  it("routes step 1 to the CTO's stand-in and step 2 to the Director's stand-in", async () => {
-    const standIns = await prisma.standIn.createManyAndReturn({
-      data: [
-        { managerId: await idOf(CTO), standInId: await idOf(FINANCE), startsOn: new Date('2027-05-04T00:00:00.000Z'), endsOn: new Date('2027-05-31T00:00:00.000Z'), reason: 'CTO away' },
-        { managerId: await idOf(DIRECTOR), standInId: await idOf(CTO), startsOn: new Date('2027-05-04T00:00:00.000Z'), endsOn: new Date('2027-05-31T00:00:00.000Z'), reason: 'Director away' },
-      ],
-    });
+  it("while the Director is away, the Director's stand-in decides; the away Director and the developer's manager cannot", async () => {
+    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(FINANCE), startsOn: new Date('2027-05-04T00:00:00.000Z'), endsOn: new Date('2027-05-31T00:00:00.000Z'), reason: 'Director away' } });
     const res = await ask(DEV3, 'casual', '2027-05-17', '2027-05-17', 201);
-    expect(res.body.chain).toMatchObject([
-      { step: 1, approverEmpId: FINANCE, state: 'waiting', via: 'stand_in' },
-      { step: 2, approverEmpId: CTO, state: 'pending', via: 'stand_in' },
-    ]);
+    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: FINANCE, state: 'waiting', via: 'stand_in' }]);
+    expect(res.body.chain).toHaveLength(1);
     const list = await (await as(FINANCE)).get(`${API}/leave/requests?scope=team`).expect(200);
     // The stand-in sees only what is routed to them now (nobody reports to them).
     expect(list.body.items.map((r: { id: string }) => r.id)).toContain(res.body.id);
     expect(list.body.items.every((r: { canDecide: boolean }) => r.canDecide)).toBe(true);
-    expect((await decide(CTO, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
-    const step1 = await decide(FINANCE, res.body.id, 'approve', 200);
-    expect(step1.body.status).toBe('pending_director');
-    expect((await decide(DIRECTOR, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
-    const step2 = await decide(CTO, res.body.id, 'approve', 200);
-    expect(step2.body.status).toBe('approved');
+    for (const who of [DIRECTOR, CTO]) expect((await decide(who, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
+    const decided = await decide(FINANCE, res.body.id, 'approve', 200);
+    expect(decided.body.status).toBe('approved');
     const decisions = await prisma.leaveDecision.findMany({ where: { requestId: res.body.id }, orderBy: { step: 'asc' } });
-    expect(decisions.map((d) => [d.step, d.decision, d.via])).toEqual([[1, 'approved', 'stand_in'], [2, 'approved', 'stand_in']]);
-    await prisma.standIn.updateMany({ where: { id: { in: standIns.map((s) => s.id) } }, data: { revokedAt: new Date() } });
+    expect(decisions.map((d) => [d.step, d.decision, d.via])).toEqual([[1, 'approved', 'stand_in']]);
+    await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } });
+  });
+
+  it('a request made before D24 that is already waiting at step 2 is decided by the Director', async () => {
+    const res = await ask(SQA1, 'casual', '2027-05-20', '2027-05-20', 201);
+    await prisma.leaveRequest.update({ where: { id: res.body.id }, data: { status: 'pending_director' } }); // as the old two-step flow left it
+    const before = (await (await as(SQA1)).get(`${API}/leave/requests/${res.body.id}`).expect(200)).body;
+    expect(before.chain).toMatchObject([{ step: 2, approverEmpId: DIRECTOR, state: 'waiting' }]);
+    expect((await decide(CTO, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
+    const decided = await decide(DIRECTOR, res.body.id, 'approve', 200);
+    expect(decided.body.status).toBe('approved');
+    expect((await prisma.leaveDecision.findFirstOrThrow({ where: { requestId: res.body.id } })).step).toBe(2);
   });
 });
 
 describe('M7 leave: calendar, balances and lists follow the hierarchy', () => {
   it('the leave calendar shows waiting and approved leave of the caller and everyone below', async () => {
     const cto = (await (await as(CTO)).get(`${API}/leave/calendar?month=2027-05`).expect(200)).body as Array<{ empId: string; status: string }>;
-    expect(new Set(cto.map((e) => e.empId))).toEqual(new Set([DEV1, DEV2, DEV3]));
+    expect(new Set(cto.map((e) => e.empId))).toEqual(new Set([DEV1, DEV2, DEV3, SQA1])); // SQA1 (below the CTO) asked for 20 May above
     expect(cto.every((e) => ['approved', 'pending_manager', 'pending_director'].includes(e.status))).toBe(true);
     const dev = (await (await as(DEV1)).get(`${API}/leave/calendar?month=2027-05`).expect(200)).body as Array<{ empId: string }>;
     expect(new Set(dev.map((e) => e.empId))).toEqual(new Set([DEV1]));
@@ -235,6 +232,17 @@ describe('M7 leave: calendar, balances and lists follow the hierarchy', () => {
     expect(director.map((e) => e.empId)).toContain(DIRECTOR);
     expect(director.map((e) => e.empId)).toContain(DEV1);
     await (await as(DEV1)).get(`${API}/leave/calendar?month=May`).expect(400);
+  });
+
+  it('the CEO sees who is on leave and when, across the company below them, and every leave request', async () => {
+    const ceo = (await (await as(CEO)).get(`${API}/leave/calendar?month=2027-05`).expect(200)).body as Array<{ empId: string; from: string; to: string }>;
+    const people = new Set(ceo.map((e) => e.empId));
+    for (const who of [DIRECTOR, DEV1, DEV2, DEV3]) expect(people.has(who)).toBe(true);
+    expect(ceo.every((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.from) && /^\d{4}-\d{2}-\d{2}$/.test(e.to))).toBe(true);
+    const team = (await (await as(CEO)).get(`${API}/leave/requests?scope=team&pageSize=100`).expect(200)).body.items as Array<{ id: string }>;
+    expect(team.map((r) => r.id)).toContain(req.dev1);
+    await (await as(CEO)).get(`${API}/leave/requests/${req.dev1}`).expect(200);
+    await (await as(CEO)).get(`${API}/leave/balances/${DEV1}`).expect(200);
   });
 
   it('balances: yourself or people below you only', async () => {
@@ -255,7 +263,7 @@ describe('M7 leave: locked months and database rules', () => {
     const port = t.app.get(AttendancePayrollPort);
     await t.app.get(PrismaService).$transaction(async (tx) => port.lockMonth('2027-06', await idOf(DIRECTOR), tx));
     expect((await ask(SQA1, 'casual', '2027-06-02', '2027-06-02', 409)).body.code).toBe('period_locked');
-    expect((await decide(CTO, june.body.id, 'approve', 409)).body.code).toBe('period_locked');
+    expect((await decide(DIRECTOR, june.body.id, 'approve', 409)).body.code).toBe('period_locked');
   });
 
   it('the database refuses changing dates, deleting requests or rewriting decisions', async () => {
@@ -270,8 +278,8 @@ describe('M7 leave: locked months and database rules', () => {
 describe('M7 leave: audit and events', () => {
   it('audits requests and decisions', async () => {
     expect(await prisma.auditLog.count({ where: { action: 'leave.requested' } })).toBeGreaterThanOrEqual(9);
-    expect(await prisma.auditLog.count({ where: { action: 'leave.forwarded' } })).toBe(2);
-    expect(await prisma.auditLog.count({ where: { action: 'leave.approved' } })).toBe(4);
+    expect(await prisma.auditLog.count({ where: { action: 'leave.forwarded' } })).toBe(0); // D24: one step, nothing is forwarded
+    expect(await prisma.auditLog.count({ where: { action: 'leave.approved' } })).toBe(5);
     expect(await prisma.auditLog.count({ where: { action: 'leave.rejected' } })).toBe(1);
     expect(await prisma.auditLog.count({ where: { action: 'leave.cancelled' } })).toBe(2);
     expect(await prisma.auditLog.count({ where: { action: 'settings.holiday.created' } })).toBe(1);
@@ -289,8 +297,7 @@ describe('M7 leave: audit and events', () => {
     const number = (await prisma.leaveRequest.findUniqueOrThrow({ where: { id: req.dev1 } })).number;
     const mine = events.filter((e) => (e.payload as { requestNumber: string }).requestNumber === number).map((e) => ({ type: e.type, ...(e.payload as object) }));
     expect(mine).toMatchObject([
-      { type: 'leave.requested', empId: DEV1, approverEmpId: CTO, from: '2027-05-04', to: '2027-05-07' },
-      { type: 'leave.decided', decision: 'forwarded', byEmpId: CTO, nextApproverEmpId: DIRECTOR },
+      { type: 'leave.requested', empId: DEV1, approverEmpId: DIRECTOR, from: '2027-05-04', to: '2027-05-07' },
       { type: 'leave.decided', decision: 'approved', byEmpId: DIRECTOR, nextApproverEmpId: null },
     ]);
   });

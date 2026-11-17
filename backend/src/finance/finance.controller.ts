@@ -497,7 +497,7 @@ export class PeriodsController {
   @Post(':month/approve-close')
   @HttpCode(200)
   @RequirePermission(VIEW, 'finance.close_approve')
-  @ApiOperation({ summary: 'Approve the close (CEO; not the person who ran it). The month is then locked.' })
+  @ApiOperation({ summary: 'Approve the close (the Director, D25; not the person who ran it). The month is then locked.' })
   approveClose(@CurrentActor() actor: Actor, @Param() p: MonthParamDto, @ClientInfo() client: RequestInfo) {
     return this.periods.approveClose(actor, p.month, client);
   }
@@ -512,7 +512,7 @@ export class PeriodsController {
   @Post(':month/reopen')
   @HttpCode(200)
   @RequirePermission(VIEW, 'finance.reopen')
-  @ApiOperation({ summary: 'Reopen a closed month (Owner or CEO): reason and "confirm again"; logged and alerted' })
+  @ApiOperation({ summary: 'Reopen a closed month (the Director or the Owner, D25): reason and "confirm again"; logged and alerted' })
   reopen(@CurrentActor() actor: Actor, @Param() p: MonthParamDto, @Body() body: ReopenDto, @CurrentSessionId() sessionId: string | null, @ClientInfo() client: RequestInfo) {
     return this.periods.reopen(actor, p.month, body.reason, sessionId, client);
   }

@@ -27,9 +27,9 @@ const LABELS: Record<ChecklistItemView['key'], string> = {
 };
 
 /**
- * Month close (plan section 13): a live checklist; the finance duty person runs the close, the CEO approves it (never the
- * person who ran it), and the month's entries are then locked (the database refuses them). Only the Owner or CEO reopen a
- * closed month, with a reason and "confirm again"; the reopening is logged and an alert event is written.
+ * Month close (plan section 13): a live checklist; the finance duty person runs the close, the Director approves it (never
+ * the person who ran it; decision D25, it was the CEO), and the month's entries are then locked (the database refuses them).
+ * Only the Director or the Owner reopen a closed month, with a reason and "confirm again"; the reopening is logged and an alert event is written.
  * Also the month-end USD revaluation. A month without a row is open.
  */
 @Injectable()
@@ -148,7 +148,7 @@ export class PeriodsService {
     return this.get(actor, month);
   }
 
-  /** The CEO approves the close (finance.close_approve), never the person who ran it. The checklist is checked again. */
+  /** The Director approves the close (finance.close_approve, D25), never the person who ran it. The checklist is checked again. */
   async approveClose(actor: Actor, month: string, client: RequestInfo): Promise<PeriodView> {
     const p = await this.row(month);
     if (!p || p.status !== 'closing') throw conflict('invalid_transition', `${month} is not waiting for close approval`);
@@ -180,7 +180,7 @@ export class PeriodsService {
     return this.get(actor, month);
   }
 
-  /** Only the Owner or CEO (finance.reopen), with a written reason and "confirm again"; logged and alerted. */
+  /** Only the Director or the Owner (finance.reopen, D25), with a written reason and "confirm again"; logged and alerted. */
   async reopen(actor: Actor, month: string, reason: string, sessionId: string | null, client: RequestInfo): Promise<PeriodView> {
     const p = await this.row(month);
     if (!p || p.status !== 'closed') throw conflict('invalid_transition', `${month} is not closed`);

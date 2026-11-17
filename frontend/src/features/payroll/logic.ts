@@ -113,20 +113,20 @@ export function journalPreview(lines: PayrollLine[]): JournalPreviewLine[] {
 }
 
 /**
- * Payroll chain (plan section 12): Prepared (Finance) -> Reviewed (Director) -> Approved (CEO, confirming the password again).
- * The person who prepared a run never reviews or approves it. These Emp-IDs only fill the chain in mock mode; who may act is
- * decided by permissions (payroll.prepare / payroll.review / payroll.approve), and in live mode the server fills the chain.
- * The demo roster has no CEO, so the mock approver is left empty.
+ * Payroll chain (decision D25, replacing plan section 12's "Director reviews, CEO approves"): Prepared (Finance) ->
+ * Approved (Director, confirming the password again), one step. The person who prepared a run never approves it. These
+ * Emp-IDs only fill the chain in mock mode; who may act is decided by permissions (payroll.prepare / payroll.approve), and in
+ * live mode the server fills the chain. A run reviewed before D25 shows its reviewer as an extra step (live mode).
  */
 export const PAYROLL_PREPARER = "ACV-0010";
-export const PAYROLL_REVIEWER = "ACV-0003";
-export const PAYROLL_APPROVER: string | undefined = undefined;
+export const PAYROLL_APPROVER = "ACV-0003";
 export const PREPARED_LABEL = "Prepared (Finance)";
-export const REVIEWED_LABEL = "Reviewed (Director)";
-export const APPROVED_LABEL = "Approved (CEO)";
+export const REVIEWED_LABEL = "Reviewed (Director, before D25)";
+export const APPROVED_LABEL = "Approved (Director)";
 
 /**
- * Stages shown on the stepper. The server has draft, calculated, prepared, reviewed and approved; after approval the screen
+ * Stages shown on the stepper. The server has draft, calculated, prepared, (reviewed, before D25 only) and approved; a
+ * reviewed run sits on the "Prepared" step, still waiting for approval. After approval the screen
  * shows "payslips sent" (payslips are issued on approval), "posted" (the salary entry was posted in the ledger) and "paid"
  * (the bank transfer was recorded).
  */
@@ -134,15 +134,14 @@ export const STAGES: { key: PayrollStage; label: string; short: string }[] = [
   { key: "draft", label: "Attendance open", short: "Draft" },
   { key: "calculated", label: "Calculated", short: "Calculated" },
   { key: "prepared", label: "Prepared", short: "Prepared" },
-  { key: "reviewed", label: "Reviewed", short: "Reviewed" },
   { key: "approved", label: "Approved", short: "Approved" },
   { key: "payslips_sent", label: "Payslips sent", short: "Payslips" },
   { key: "posted", label: "Posted to ledger", short: "Posted" },
   { key: "paid", label: "Paid", short: "Paid" },
 ];
 
-export const stageIndex = (s: PayrollStage) => STAGES.findIndex((x) => x.key === s);
-export const stageLabel = (s: PayrollStage) => STAGES.find((x) => x.key === s)?.label ?? s;
+export const stageIndex = (s: PayrollStage) => STAGES.findIndex((x) => x.key === (s === "reviewed" ? "prepared" : s));
+export const stageLabel = (s: PayrollStage) => (s === "reviewed" ? "Reviewed" : (STAGES.find((x) => x.key === s)?.label ?? s));
 
 /** Approved runs can't be edited; fixes go to next month as an adjustment (plan §12). */
 export const isLocked = (s: PayrollStage) => stageIndex(s) >= stageIndex("approved");

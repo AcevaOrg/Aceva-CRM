@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { toast } from "sonner";
-import { BookOpen, CircleCheck, FileSpreadsheet, Landmark, Lock, Send, Undo2, CornerDownLeft, Calculator, ClipboardCheck, Eye, TriangleAlert } from "lucide-react";
+import { BookOpen, CircleCheck, FileSpreadsheet, Landmark, Lock, Send, Undo2, CornerDownLeft, Calculator, ClipboardCheck, TriangleAlert } from "lucide-react";
 import { PageHeader, SectionTitle } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,7 @@ import { formatDateTime, formatMonthKey, isoDay } from "@/lib/dates";
 import { formatMoney, toNumber } from "@/lib/format";
 import type { RunAction } from "../api";
 import { useAdjustments, useBankAccounts, useBankSheet, useCanPreparePayroll, usePayrollRun, useRunAction } from "../hooks";
-import { isLocked, journalPreview, nextMonthKey, PAYROLL_REVIEWER, stageIndex } from "../logic";
+import { isLocked, journalPreview, nextMonthKey, PAYROLL_APPROVER, stageIndex } from "../logic";
 import type { LedgerEntryRef, PayrollLine, PayrollRun } from "../types";
 
 const LIVE = isLive("m8");
@@ -55,7 +55,7 @@ function JournalCard({ run, lines }: { run: PayrollRun; lines: PayrollLine[] }) 
   const description = LIVE
     ? run.salaryEntry
       ? `Created on approval as ${run.salaryEntry.number}. Like every system entry it goes through the normal ledger approval before it is posted.`
-      : "Created automatically when the CEO approves the run; it then waits for the normal ledger approval."
+      : "Created automatically when the Director approves the run; it then waits for the normal ledger approval."
     : posted
       ? `Posted as ${run.journalEntryNumber}${run.postedAt ? ` on ${formatDateTime(run.postedAt)}` : ""}.`
       : "Posted to the ledger after payslips are sent. Statements update on their own.";
@@ -146,10 +146,9 @@ function RunDetailInner({ id }: { id: string }) {
   const { run, lines } = q.data;
   const me = viewer.employee.empId;
   const isMaker = run.preparedBy === me;
-  const canReview = viewer.can("payroll.review");
   const canApprove = viewer.can("payroll.approve");
-  // Oversight only (the Owner): sees every run, acts on none.
-  const viewOnly = !canPrepare && !canApprove && !canReview;
+  // Oversight only (the CEO and the Owner, decision D25): sees every run, acts on none.
+  const viewOnly = !canPrepare && !canApprove;
   const name = (empId?: string) => lookup.employee(empId)?.name ?? empId ?? "—";
   const monthName = formatMonthKey(run.month);
   const carried = (adjustments.data ?? []).filter((a) => a.toMonth === run.month);
@@ -197,27 +196,15 @@ function RunDetailInner({ id }: { id: string }) {
       break;
     case "calculated":
       action = canPrepare ? (
-        <Button onClick={() => run_("prepare", "Prepared and sent to the Director for review")} loading={act.isPending}>
-          <ClipboardCheck /> Mark prepared and send for review
+        <Button onClick={() => run_("prepare", "Prepared and sent to the Director for approval")} loading={act.isPending}>
+          <ClipboardCheck /> Mark prepared and send for approval
         </Button>
       ) : null;
       break;
     case "prepared":
+    case "reviewed": // reviewed before D25: still waiting for the approval
       action =
-        canReview && !isMaker ? (
-          <>
-            <Button variant="outline" onClick={sendBack}>
-              <Undo2 /> Send back
-            </Button>
-            <Button onClick={() => run_("review", "Reviewed and sent to the CEO for approval")} loading={act.isPending}>
-              <Eye /> Mark reviewed
-            </Button>
-          </>
-        ) : null;
-      break;
-    case "reviewed":
-      action =
-        canApprove && !isMaker ? (
+        canApprove && !isMaker && run.reviewedBy !== me ? (
           <>
             <Button variant="outline" onClick={sendBack}>
               <Undo2 /> Send back
@@ -258,8 +245,8 @@ function RunDetailInner({ id }: { id: string }) {
   const waitingFor: Record<string, string> = {
     draft: "Finance to lock attendance",
     calculated: "Finance to prepare it",
-    prepared: `${name(run.chain[1]?.empId ?? PAYROLL_REVIEWER)} (Director) to review`,
-    reviewed: "the CEO to approve",
+    prepared: `${name(run.chain[run.chain.length - 1]?.empId ?? PAYROLL_APPROVER)} (Director) to approve`,
+    reviewed: "the Director to approve",
     approved: "Finance to send payslips",
     payslips_sent: "Finance to post it",
     posted: "Finance to record the bank transfer",
@@ -321,9 +308,9 @@ function RunDetailInner({ id }: { id: string }) {
               </div>
             </div>
             {isMaker && (run.stage === "prepared" || run.stage === "reviewed") && (
-              <MakerCheckerNote reason="You prepared this payroll, so you can't review or approve it. The Director reviews it and the CEO approves it." />
+              <MakerCheckerNote reason="You prepared this payroll, so you can't approve it. The Director approves it." />
             )}
-            {viewOnly && run.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll, the Director reviews it and the CEO approves it." />}
+            {viewOnly && run.stage !== "paid" && <MakerCheckerNote reason="View only. Finance prepares payroll and the Director approves it." />}
             {LIVE && (run.missingPay?.length || run.pendingAdjustments) && !isLocked(run.stage) ? (
               <div className="grid gap-1 rounded-lg border border-warning/40 bg-warning/12 px-3 py-2 text-[13px]">
                 {!!run.missingPay?.length && (

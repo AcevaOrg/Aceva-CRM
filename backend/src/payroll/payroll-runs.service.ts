@@ -48,8 +48,9 @@ const ROLE_FOR: Record<string, SystemEntryLine['accountRole']> = {
  * The monthly payroll run (plan section 12):
  *   draft -> calculated (attendance locked through Module 7, every salary calculated; may be calculated again)
  *         -> prepared (the finance duty person prepares the draft and checks it)
- *         -> reviewed (the Director reviews it; never the preparer)
- *         -> approved (the CEO approves it after confirming their password again; never the preparer).
+ *         -> approved (the Director approves it after confirming their password again; never the preparer).
+ * Decision D25 replaced "the Director reviews, then the CEO approves" with this single Director step. A run reviewed before
+ * D25 (`reviewed`) is still approved, by someone other than its reviewer (database rule), or sent back.
  * Approval issues the payslips, takes the advance repayments and creates the salary entry in Module 9, all in one transaction;
  * that entry then waits for the normal ledger approval (decision P7/D5). A run can be sent back to `calculated` from prepared
  * or reviewed. An approved run never changes (database trigger): mistakes are fixed by an adjustment in a later month.
@@ -180,7 +181,7 @@ export class PayrollRunsService {
     return this.get(run.id);
   }
 
-  /** The Director reviews a prepared run. The preparer never reviews it (maker-checker). */
+  /** Before D25 the Director reviewed a prepared run here. Nobody holds payroll.review any more; kept for older clients. */
   async review(actor: Actor, idOrNumber: string, client: RequestInfo): Promise<PayrollRunView> {
     const run = await this.findRun(idOrNumber);
     if (run.stage !== 'prepared') conflict('invalid_transition', 'Only a prepared run can be reviewed');
@@ -196,15 +197,16 @@ export class PayrollRunsService {
   }
 
   /**
-   * The CEO approves a reviewed run, after confirming their password (and code) again. Never the preparer. In ONE transaction:
+   * The Director approves a prepared run (D25), after confirming their password (and code) again. Never the preparer. A run
+   * reviewed before D25 is approved by someone other than its reviewer. In ONE transaction:
    * advance repayments, payslips, final settlements settled, the salary entry in Module 9 (which then waits for the ledger
    * approval), the stage change and the events.
    */
   async approve(actor: Actor, sessionId: string | null, idOrNumber: string, client: RequestInfo): Promise<PayrollRunView> {
     const run = await this.findRun(idOrNumber);
-    if (run.stage !== 'reviewed') conflict('invalid_transition', 'Only a reviewed run can be approved');
+    if (run.stage !== 'prepared' && run.stage !== 'reviewed') conflict('invalid_transition', 'Only a prepared run can be approved');
     if (run.preparedBy === actor.id) forbidden('maker_checker', 'You prepared this payroll, so you cannot approve it');
-    // Plan s.12: the Director reviews and the CEO approves: two different people (security review, finding 4).
+    // Runs reviewed before D25: the reviewer and the approver stay two different people (security review, finding 4; database rule).
     if (run.reviewedBy === actor.id) forbidden('maker_checker', 'You reviewed this payroll, so a different person approves it');
     await this.stepUp.require(actor, sessionId, 'approve_payroll', { type: 'payroll_run', id: run.number }, client);
     const now = this.clock.now();
@@ -214,7 +216,7 @@ export class PayrollRunsService {
     await withDbRules(() =>
       this.prisma.$transaction(async (tx) => {
         const stage = await this.lockRun(tx, run.id);
-        if (stage !== 'reviewed') conflict('state_changed', 'This run was changed by someone else. Reload it');
+        if (stage !== run.stage) conflict('state_changed', 'This run was changed by someone else. Reload it');
         const lines = await tx.payrollLine.findMany({ where: { runId: run.id }, include: { employee: { select: { empId: true } } }, orderBy: { employee: { empId: 'asc' } } });
         if (!lines.length) conflict('empty_run', 'This run has no salary lines');
 
@@ -266,7 +268,7 @@ export class PayrollRunsService {
         }
 
         const changed = await tx.payrollRun.updateMany({
-          where: { id: run.id, stage: 'reviewed', preparedBy: { not: actor.id }, reviewedBy: { not: actor.id } },
+          where: { id: run.id, stage: run.stage, preparedBy: { not: actor.id }, ...(run.stage === 'reviewed' ? { reviewedBy: { not: actor.id } } : {}) },
           data: { stage: 'approved', approvedBy: actor.id, approvedAt: now, journalEntryId: entry?.id ?? null, updatedBy: actor.id },
         });
         if (!changed.count) conflict('state_changed', 'This run was changed by someone else. Reload it');
@@ -282,7 +284,7 @@ export class PayrollRunsService {
     return this.get(run.id);
   }
 
-  /** Sent back to Finance (to `calculated`) with a reason, by the Director or the CEO. */
+  /** Sent back to Finance (to `calculated`) with a reason, by the Director (D25). */
   async returnRun(actor: Actor, idOrNumber: string, reason: string, client: RequestInfo): Promise<PayrollRunView> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
     if (!access.permissions.has('payroll.review') && !access.permissions.has('payroll.approve')) forbidden('forbidden', 'Only the reviewer or the approver can send a run back');
@@ -621,9 +623,8 @@ function nextStep(r: PayrollRun): PayrollRunView['next'] {
     case 'calculated':
       return { action: 'prepare', label: 'Finance prepares the draft and checks it' };
     case 'prepared':
-      return { action: 'review', label: 'The Director reviews it' };
     case 'reviewed':
-      return { action: 'approve', label: 'The CEO approves it (confirming their password again)' };
+      return { action: 'approve', label: 'The Director approves it (confirming their password again)' };
     default:
       return r.paymentEntryId ? { action: null, label: 'Approved and paid' } : { action: 'mark_paid', label: 'Finance records the bank transfer' };
   }

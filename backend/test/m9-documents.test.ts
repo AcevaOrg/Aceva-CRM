@@ -209,13 +209,14 @@ describe('M9 transfers between bank accounts', () => {
     await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1100'], date: '2026-09-20', amount: '10' }).expect(400);
     expect((await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00' }).expect(400)).body.code).toBe('to_amount_required');
     const e = (await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00', toAmount: '1000.00' }).expect(201)).body;
-    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 2 });
+    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 3 }); // D25: within the Director's limit
     expect(e.lines.map((l: { accountCode: string; debit: string; baseDebit: string; baseCredit: string }) => [l.accountCode, l.debit, l.baseDebit, l.baseCredit])).toEqual([
       ['1110', '1000.00', '278000.00', '0.00'],
       ['1100', '0.00', '0.00', '278000.00'],
     ]);
-    await t.stepUp(CEO);
-    await approve(e.id, CEO);
+    expect((await t.as(CEO).post(`${API}/journal-entries/${e.id}/approve`).send({}).expect(403)).body.code).toBe('approval_limit'); // the CEO only views
+    await t.stepUp(DIRECTOR);
+    await approve(e.id);
     const banks = (await fin().get(`${API}/bank-accounts`).expect(200)).body;
     expect(banks.find((b: { code: string }) => b.code === '1110')).toMatchObject({ foreignBalance: '1000.00', balance: '278000.00' });
     expect((await fin().get(`${API}/transfers`).expect(200)).body.items.map((x: { id: string }) => x.id)).toContain(e.id);
@@ -250,6 +251,7 @@ describe('M9 reports read posted lines only', () => {
 
   it('exports posted lines as CSV only for levels 1-3, after "confirm again", watermarked and logged', async () => {
     await fin().get(`${API}/ledger/export?from=2026-09-01&to=2026-09-30`).expect(404); // the finance officer (level 4) has no finance.export
+    t.clock.advance(6 * 60_000); // past the 5-minute window of the Director's confirmation for the transfer above
     expect((await t.as(DIRECTOR).get(`${API}/ledger/export?from=2026-09-01&to=2026-09-30`).expect(403)).body.code).toBe('step_up_required');
     await t.stepUp(DIRECTOR);
     const r = await t.as(DIRECTOR).get(`${API}/ledger/export?from=2026-09-01&to=2026-09-30`).expect(200);

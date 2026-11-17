@@ -91,7 +91,7 @@ test('Director and HR cannot approve; the CEO approves in the screen and the Emp
   const api = await apiAs(playwright, DIRECTOR);
   const pending = (await (await api.get('hire-requests?status=pending')).json()) as Array<{ id: string; name: string }>;
   const id = pending.find((r) => r.name === HIRE_NAME)!.id;
-  expect((await api.post(`hire-requests/${id}/approve`, {})).status()).toBe(403);
+  expect((await api.post(`hire-requests/${id}/approve`, {})).status()).toBe(403); // D25: the Director made this request, so the CEO decides it
 
   const ceo = await openAs(browser, CEO, '/people');
   const panel = ceo.page.getByTestId('hire-requests');
@@ -265,6 +265,9 @@ test('the confirm-again dialog is checked by the server: a wrong password or an 
 });
 
 test('pay edit form: the Director edits through confirm-again and a reason; history is masked; everyone else is refused', async ({ browser, playwright }) => {
+  // Real timing, not a weaker check: up to 30 s waiting for a fresh authenticator code (codes are never reused), and five
+  // API logins that the real login throttle slows to about 5 s each after the earlier wrong-password tests in the run.
+  test.setTimeout(120_000);
   const director = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=pay`);
   const page = director.page;
   await page.getByRole('button', { name: 'Edit pay' }).click();

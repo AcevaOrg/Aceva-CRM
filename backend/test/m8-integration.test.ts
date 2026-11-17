@@ -72,9 +72,9 @@ describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
 
   it('approval creates one balanced salary entry, made by the preparer, waiting for ledger approval', async () => {
     await as(FINANCE).post(`${API}/payroll/runs/${runId}/prepare`).expect(200);
-    await as(DIRECTOR).post(`${API}/payroll/runs/${runId}/review`).expect(200);
-    await t.stepUp(CEO);
-    const approved = (await as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(200)).body;
+    await as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(404); // D25: the CEO only views payroll
+    await t.stepUp(DIRECTOR);
+    const approved = (await as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(200)).body; // one Director step (D25)
     expect(approved.salaryEntry).toMatchObject({ status: 'pending_approval' });
     expect(approved.salaryEntry.number).toMatch(/^JE-\d{4}-\d{4,}$/);
 
@@ -94,10 +94,11 @@ describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
     expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } })).journalEntryId).toBe(entry.id);
   });
 
-  it('the run shows the entry as posted once Module 9 approves it (the CEO, at their tier, confirming again)', async () => {
+  it('the run shows the entry as posted once Module 9 approves it (the Director, at their tier, confirming again; D25)', async () => {
     const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } });
-    await t.stepUp(CEO);
-    await as(CEO).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(200);
+    expect((await as(CEO).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(403)).body.code).toBe('approval_limit'); // the CEO only views
+    await t.stepUp(DIRECTOR);
+    await as(DIRECTOR).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(200);
     expect((await as(FINANCE).get(`${API}/payroll/runs/${runId}`).expect(200)).body.salaryEntry.status).toBe('posted');
   });
 

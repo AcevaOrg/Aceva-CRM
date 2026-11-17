@@ -78,13 +78,13 @@ None of these carry an amount, a salary, a bank number or an employee UUID: peop
 | Event | Producer | When | Payload |
 |---|---|---|---|
 | `leave.requested` | M7 | A leave request is sent | `requestNumber`, `empId`, `approverEmpId` (null when nobody is above), `from`, `to` |
-| `leave.decided` | M7 | A step is approved or rejected, the request is forwarded to the next step, or cancelled | `requestNumber`, `empId`, `decision` (approved, rejected, cancelled, forwarded), `byEmpId`, `nextApproverEmpId` |
+| `leave.decided` | M7 | A request is approved, rejected or cancelled (since D24 leave has one step, so `forwarded` is no longer sent) | `requestNumber`, `empId`, `decision` (approved, rejected, cancelled, forwarded), `byEmpId`, `nextApproverEmpId` |
 | `attendance.correction.decided` | M7 | A correction is approved or rejected | `correctionId`, `empId`, `date`, `decision`, `byEmpId` |
-| `payroll.run.ready` | M8 | A run is prepared (for the Director) or reviewed (for the CEO) | `runNumber`, `month`, `stage` (prepared, reviewed) |
-| `payroll.run.approved` | M8 | The CEO approves a run | `runNumber`, `month`, `approvedByEmpId` |
+| `payroll.run.ready` | M8 | A run is prepared, waiting for the Director's approval (since D25 `reviewed` is no longer sent) | `runNumber`, `month`, `stage` (prepared, reviewed) |
+| `payroll.run.approved` | M8 | The Director approves a run (D25) | `runNumber`, `month`, `approvedByEmpId` |
 | `payslip.issued` | M8 | One per employee when a run is approved | `empId`, `month` |
 | `ledger.entry.posted` | M9 | A journal entry is posted | `entryNumber`, `source`, `entryDate` |
-| `finance.period.reopened` | M9 | The Owner or CEO reopen a closed month | `month`, `byEmpId`, `reason` |
+| `finance.period.reopened` | M9 | The Director or the Owner reopen a closed month (D25) | `month`, `byEmpId`, `reason` |
 
 No module consumes these yet. Module 12 (notifications) is meant to read them; until then nothing is emailed (decision D16).
 The schemas are in `packages/contracts/src/events.ts`; `OutboxService.emit` refuses a payload that does not match.

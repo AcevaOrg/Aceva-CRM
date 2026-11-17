@@ -159,22 +159,26 @@ describe('M9 approval tiers and maker-checker (plan section 13)', () => {
     expect((await approve(e.id, DIRECTOR).expect(409)).body.code).toBe('invalid_transition');
   });
 
-  it('60,000: needs the CEO; the Director is refused; the CEO must confirm again (above PKR 50,000)', async () => {
+  it('60,000: the Director approves it (D25, no CEO tier) after confirming again (above PKR 50,000); the CEO is refused', async () => {
     const e = await submitted('60000.00');
-    expect(e.requiredLevel).toBe(2);
-    expect((await approve(e.id, DIRECTOR).expect(403)).body.code).toBe('approval_limit');
-    const inbox = await t.as(DIRECTOR).get(`${API}/journal-entries?awaitingMe=true`).expect(200);
-    expect(inbox.body.items.map((x: { id: string }) => x.id)).not.toContain(e.id);
-    expect((await approve(e.id, CEO).expect(403)).body.code).toBe('step_up_required');
+    expect(e.requiredLevel).toBe(3);
     await t.stepUp(CEO);
-    expect((await approve(e.id, CEO).expect(200)).body.status).toBe('posted');
+    expect((await approve(e.id, CEO).expect(403)).body.code).toBe('approval_limit'); // the CEO only views
+    const inbox = await t.as(CEO).get(`${API}/journal-entries?awaitingMe=true`).expect(200);
+    expect(inbox.body.items.map((x: { id: string }) => x.id)).not.toContain(e.id);
+    expect((await approve(e.id, DIRECTOR).expect(403)).body.code).toBe('step_up_required');
+    await t.stepUp(DIRECTOR);
+    expect((await approve(e.id, DIRECTOR).expect(200)).body.status).toBe('posted');
   });
 
-  it('600,000 and any capital or loan account need the Owner', async () => {
-    const big = await submitted('600000.00');
+  it('above the Director limit (PKR 5,000,000) and any capital or loan account need the Owner', async () => {
+    const within = await submitted('600000.00');
+    expect(within.requiredLevel).toBe(3); // was the Owner before D25; now within the Director's limit
+    const big = await submitted('5000000.01');
     expect(big.requiredLevel).toBe(1);
     await t.stepUp(CEO);
     expect((await approve(big.id, CEO).expect(403)).body.code).toBe('approval_limit');
+    expect((await approve(big.id, DIRECTOR).expect(403)).body.code).toBe('approval_limit');
     await t.stepUp(OWNER);
     expect((await approve(big.id, OWNER).expect(200)).body.status).toBe('posted');
 
