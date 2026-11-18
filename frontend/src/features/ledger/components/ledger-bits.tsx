@@ -18,7 +18,9 @@ export const entryStatus = statusMap<EntryStatus>({
   reversed: { label: "Reversed", tone: "outline" },
 });
 
-export function EntryStatusBadge({ status }: { status: EntryStatus }) {
+/** `rejected` (live mode): an approver rejected it; it never changes again. */
+export function EntryStatusBadge({ status, rejected }: { status: EntryStatus; rejected?: boolean }) {
+  if (rejected) return <StatusBadge label="Rejected" tone="danger" />;
   const s = entryStatus(status);
   return <StatusBadge label={s.label} tone={s.tone} />;
 }
@@ -28,6 +30,8 @@ const SOURCE_ICON: Record<EntrySource, typeof BookOpen> = {
   invoice: FileText,
   bill: Receipt,
   payroll: Wallet,
+  payroll_payment: Wallet,
+  advance: Wallet,
   payment: CircleDollarSign,
   reversal: Undo2,
   revaluation: Repeat,
@@ -48,7 +52,26 @@ export function SourceBadge({ source }: { source: EntrySource }) {
  * Approval chip: every entry needs the Director, any amount. Entries above PKR 500,000 and every
  * capital or loan entry also show that the CEO / Founder / Owner is notified (view only).
  */
-export function ApprovalChip({ ceoNotified, blocked, className }: { ceoNotified?: boolean; blocked?: boolean; className?: string }) {
+export function ApprovalChip({
+  ceoNotified,
+  blocked,
+  className,
+  serverLabel,
+  serverLevel,
+}: {
+  ceoNotified?: boolean;
+  blocked?: boolean;
+  className?: string;
+  /** Live mode: the tier the SERVER decided from the amount (plan section 13), e.g. "CEO". */
+  serverLabel?: string | null;
+  serverLevel?: number | null;
+}) {
+  if (serverLabel && serverLevel)
+    return (
+      <Badge tone="info" className={cn("gap-1.5", className)}>
+        <LevelMark level={Math.min(5, Math.max(1, serverLevel)) as 1 | 2 | 3 | 4 | 5} /> Needs {serverLabel} approval
+      </Badge>
+    );
   if (blocked)
     return (
       <Badge tone="danger" className={cn("gap-1.5", className)}>
@@ -89,7 +112,7 @@ export function FinanceRoleNote({ prepares, className }: { prepares: string; cla
   if (canPrepare) return null;
   return (
     <ViewOnlyNote className={className}>
-      {canApprove ? `The finance person ${prepares}. You approve the entries, any amount.` : `View only. The finance person ${prepares}; the Director approves.`}
+      {canApprove ? `The finance person ${prepares}. You approve entries within your approval limit.` : `View only. The finance person ${prepares}; an approver at the level the amount needs approves.`}
     </ViewOnlyNote>
   );
 }

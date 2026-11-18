@@ -4,6 +4,7 @@
  */
 import { endOfMonth, startOfMonth } from "date-fns";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
+import { isLive } from "@/lib/api/http";
 import { descendantsOf, isInScope } from "@/lib/auth/scope";
 import { useSession } from "@/lib/auth/session";
 import { getViewer } from "@/lib/auth/viewer";
@@ -17,6 +18,7 @@ import {
 } from "@/mocks/seed/attendance";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
+import { liveAttendanceApi } from "./live-api";
 import { averageClock, buildLeaveChain, correctionApprover, DEFAULT_SCHEDULE, isPendingLeave, lateMinutes, leaveDays, minutesBetween } from "./logic";
 import type {
   AttendanceCorrection, AttendanceDay, LeaveBalanceView, LeaveCalendarEntry, LeaveRequest, LeaveType, NewCorrectionInput,
@@ -197,7 +199,7 @@ function clashesFor(empId: string, from: string, to: string) {
     .map((t) => ({ taskId: t.id, number: t.number, title: t.title, deadline: t.deadline }));
 }
 
-export const attendanceApi = {
+export const mockAttendanceApi = {
   /** GET /settings/work-schedule */
   schedule: () => mock(() => DEFAULT_SCHEDULE, { delay: 60 }),
 
@@ -278,7 +280,7 @@ export const attendanceApi = {
       const me = getViewer().employee.empId;
       if (input.date >= isoDay(new Date())) throw new ApiError("validation", "You can only correct past days.");
       if (!correctionApprover(me, employeesTable()))
-        throw new ApiError("validation", "Corrections are approved by your manager. As CEO / Founder / Owner there is no one above you, so this record can't be corrected here.");
+        throw new ApiError("validation", "Corrections are approved by the Director (the Director's own by the person above). As CEO / Founder / Owner there is no one above you, so this record can't be corrected here.");
       if (correctionsTable().some((c) => c.empId === me && c.date === input.date && c.status === "pending"))
         throw new ApiError("validation", "There is already a pending correction for this day.");
       const rec = attendanceTable().find((d) => d.empId === me && d.date === input.date);
@@ -303,10 +305,10 @@ export const attendanceApi = {
       const me = viewer.employee.empId;
       const c = correctionsTable().find((x) => x.id === id);
       if (!c) notFound("Correction");
-      if (!viewer.can("attendance.approve_correction")) throw new ApiError("forbidden", "View only. The person's manager approves corrections.", 403);
+      if (!viewer.can("attendance.approve_correction")) throw new ApiError("forbidden", "View only. The Director approves attendance corrections.", 403);
       if (c.empId === me) throw new ApiError("forbidden", "You can't approve your own correction.", 403);
       if (c.status !== "pending") throw new ApiError("validation", "This correction was already decided.");
-      if (correctionApprover(c.empId, employeesTable())?.empId !== me) throw new ApiError("forbidden", "Only this person's manager approves the correction.", 403);
+      if (correctionApprover(c.empId, employeesTable())?.empId !== me) throw new ApiError("forbidden", "Only the Director (for the Director's own, the person above) approves this correction.", 403);
       applyCorrectionDecision(c, approve, me, note);
     }),
 
@@ -389,7 +391,7 @@ export const attendanceApi = {
       const me = viewer.employee.empId;
       const r = leaveRequestsTable().find((x) => x.id === id);
       if (!r) notFound("Leave request");
-      if (!viewer.can("leave.approve")) throw new ApiError("forbidden", "View only. The person's manager and the Director approve leave.", 403);
+      if (!viewer.can("leave.approve")) throw new ApiError("forbidden", "View only. The Director approves leave.", 403);
       if (r.empId === me) throw new ApiError("forbidden", "You can't approve your own leave.", 403);
       if (currentLeaveApprover(r) !== me) throw new ApiError("forbidden", "This request is waiting for someone else.", 403);
       applyLeaveDecision(r, approve, me, note);
@@ -421,3 +423,6 @@ export const attendanceApi = {
   /** Days in a request, for live counting in forms. */
   countDays: (from: string, to: string, halfDay: boolean) => leaveDays(from, to, HOLIDAY_DATES, halfDay),
 };
+
+/** Module 7 is live when NEXT_PUBLIC_LIVE_MODULES contains m7 (or the whole app is live); otherwise the in-browser mock above. */
+export const attendanceApi = (isLive("m7") ? liveAttendanceApi : mockAttendanceApi) as typeof mockAttendanceApi;

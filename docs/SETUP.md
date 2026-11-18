@@ -78,10 +78,11 @@ Install the three services with your operating system's normal installer or pack
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
 | Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
 | Only the Module 5 database tests | `npm run build:contracts`, then `npm test -w backend -- m5-` |
 | Only the Module 6 database tests | `npm run build:contracts`, then `npm test -w backend -- m6-` |
+| Only the Module 7, 8 or 9 database tests | `npm run build:contracts`, then `npm test -w backend -- m7-`, `m8-` or `m9-` |
 
 Open the website at http://localhost:3000, not http://127.0.0.1:3000: the API accepts only the `localhost` address for the website.
 

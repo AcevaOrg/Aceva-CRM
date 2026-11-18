@@ -13,6 +13,11 @@ export class FakeClock extends Clock {
     this.offsetMs += ms;
   }
 
+  /** Jump to an exact moment (for example 09:20 Pakistan time on a Monday). Later advance() calls move on from there. */
+  set(instant: Date): void {
+    this.offsetMs = instant.getTime() - Date.now();
+  }
+
   /** Back to real time. */
   reset(): void {
     this.offsetMs = 0;

@@ -1,7 +1,10 @@
 /**
- * Module 9 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
- * Finance resources return 404 (not 403) to people without finance access (plan §16).
+ * Module 9 service functions. Mock mode uses the in-browser store; live mode (NEXT_PUBLIC_LIVE_MODULES contains m9) uses
+ * live-api.ts against the real endpoints named in each JSDoc. Finance resources return 404 (not 403) to people without
+ * finance access (plan §16).
  */
+import type { ExchangeRateView } from "@aceva/contracts";
+import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import type { Permission } from "@/lib/auth/permissions";
 import { getViewer } from "@/lib/auth/viewer";
@@ -13,6 +16,7 @@ import {
   currentRate, entriesTable, findEntry, partiesTable, partyBalances, periodsTable, projectsList, ratesTable, receivablesTable,
   rejectClose, rejectEntry, reopenMonth, revaluationPreview, reverseEntry, saveEntry, statementTable, submitEntry, suggestMatches,
 } from "./store";
+import { liveLedgerApi } from "./live-api";
 import type { Account, AccountGroup, Bill, EntryListParams, FinancePeriod, JournalEntry, NewEntryInput, Party } from "./types";
 
 function guard(p: Permission = "finance.view") {
@@ -21,7 +25,7 @@ function guard(p: Permission = "finance.view") {
   return v;
 }
 
-export const ledgerApi = {
+export const mockLedgerApi = {
   /** GET /accounts */
   accounts: () => mock(() => (guard(), accountsWithBalances())),
 
@@ -330,6 +334,24 @@ export const ledgerApi = {
 
   /** GET /settings/approval-limits */
   approvalLimits: () => mock(() => APPROVAL_LIMITS, { delay: 60 }),
+
+  /** POST /bank-accounts/:id/reveal (mock: the seeded number) */
+  revealBankNumber: (accountId: string) => mock(() => (guard(), accountsTable().find((a) => a.id === accountId)?.bankAccountNumber ?? "")),
+
+  /** POST /exchange-rates (mock: kept as the month's rate) */
+  createRate: (date: string, rate: string) =>
+    mock(() => {
+      guard("finance.entry_create");
+      const month = date.slice(0, 7);
+      const rates = ratesTable();
+      const cur = rates.find((r) => r.month === month);
+      if (cur) cur.rate = rate;
+      else rates.push({ month, rate });
+      const view: ExchangeRateView = { id: uid("rate"), date, currency: "USD", rate, source: null };
+      return view;
+    }),
 };
+
+export const ledgerApi: typeof mockLedgerApi = isLive("m9") ? liveLedgerApi : mockLedgerApi;
 
 export type { JournalEntry };

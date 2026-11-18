@@ -1,17 +1,34 @@
 /**
- * Approvals provider for Module 8: payroll approval by the Director (step-up).
- * Chain: Prepared (Finance) → Approved (Director). There is no CEO step: the CEO / Founder / Owner
- * views every run but approves nothing. The maker can't also be the checker: whoever prepared a run
- * never sees it here; it is counted in routedUp.
+ * Approvals provider for Module 8 (decision D25, replacing plan §12's "Director reviews, CEO approves"):
+ * Prepared (Finance) → Approved (Director, step-up), one step. The person who prepared a run never sees it here
+ * (maker-checker); it is counted in routedUp. The CEO and the Owner view every run but approve none.
+ * A run reviewed before D25 (stage "reviewed") is still approved here, by someone other than its reviewer.
+ *
+ * Mock mode reads the in-browser tables. Live mode lists from the runs last read from the server (the inbox providers are
+ * synchronous) and sends the decision to the server, which checks permission, stage, maker-checker and the step-up again.
  */
+import { toast } from "sonner";
 import type { ApprovalItem, ApprovalProvider } from "@/features/approvals/types";
+import { isLive } from "@/lib/api/http";
 import { employeeName } from "@/lib/directory";
 import { formatMonthKey } from "@/lib/dates";
-import { runsTable } from "./api";
+import { runsTable, withApprovalChain } from "./api";
+import { liveRunCache, livePayrollApi } from "./live-api";
 import { PAYROLL_PREPARER } from "./logic";
+import type { PayrollRun } from "./types";
 
-/** Chain position of the "Approved (Director)" step. */
+/** Chain positions: 0 Prepared (Finance), 1 Approved (Director). */
 const APPROVED = 1;
+const live = () => isLive("m8");
+const waiting = (r: PayrollRun) => r.stage === "prepared" || r.stage === "reviewed";
+
+function runs(): PayrollRun[] {
+  if (!live()) return runsTable().map(withApprovalChain);
+  const cache = liveRunCache();
+  // Refresh in the background when the list is old; the inbox re-reads it on its next refresh.
+  if (Date.now() - cache.at > 60_000) void livePayrollApi.listRuns().catch(() => undefined);
+  return cache.runs;
+}
 
 export const payrollApprovals: ApprovalProvider = {
   key: "payroll",
@@ -19,8 +36,8 @@ export const payrollApprovals: ApprovalProvider = {
     const me = viewer.employee.empId;
     const items: ApprovalItem[] = [];
     if (!viewer.can("payroll.approve")) return items;
-    for (const run of runsTable()) {
-      if (run.preparedBy === me || run.stage !== "prepared") continue;
+    for (const run of runs()) {
+      if (run.preparedBy === me || run.reviewedBy === me || !waiting(run)) continue;
       items.push({
         type: "payroll",
         refId: run.id,
@@ -40,9 +57,19 @@ export const payrollApprovals: ApprovalProvider = {
     return items;
   },
   decide: (item, decision, viewer, opts) => {
+    if (live()) {
+      const action = decision === "approve" ? "approve" : "return";
+      void livePayrollApi.act(item.refId, action, { note: opts.reason }).then(
+        () => toast.success(decision === "approve" ? "Payroll approved" : "Sent back to Finance"),
+        (e: Error) => toast.error(e.message),
+      );
+      return;
+    }
     const run = runsTable().find((r) => r.id === item.refId);
     const me = viewer.employee.empId;
-    if (!run || run.stage !== "prepared" || run.preparedBy === me || !viewer.can("payroll.approve")) return;
+    if (!run || run.preparedBy === me || run.reviewedBy === me) return;
+    withApprovalChain(run);
+    if (!waiting(run) || !viewer.can("payroll.approve")) return;
     const now = new Date().toISOString();
     if (decision === "approve") {
       run.chain[APPROVED] = { ...run.chain[APPROVED], empId: me, state: "done", at: now };
@@ -53,7 +80,9 @@ export const payrollApprovals: ApprovalProvider = {
       run.chain[APPROVED] = { ...run.chain[APPROVED], empId: me, state: "rejected", at: now, note: opts.reason };
       run.stage = "calculated";
       run.returnedNote = opts.reason;
+      run.reviewedBy = undefined;
+      run.reviewedAt = undefined;
     }
   },
-  routedUp: (viewer) => runsTable().filter((r) => r.preparedBy === viewer.employee.empId && r.stage === "prepared").length,
+  routedUp: (viewer) => runs().filter((r) => r.preparedBy === viewer.employee.empId && waiting(r)).length,
 };

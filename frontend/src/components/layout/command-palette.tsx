@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { Avatar, Kbd } from "@/components/ui/misc";
 import { useLookup } from "@/hooks/use-directory";
+import { useLiveCheck } from "@/features/attendance/today";
+import { isLive } from "@/lib/api/http";
 import type { Permission } from "@/lib/auth/permissions";
 import { useSession } from "@/lib/auth/session";
 import { useViewer } from "@/lib/auth/viewer";
@@ -19,6 +21,7 @@ import { formatTime } from "@/lib/dates";
 import { allNavItems, PHASE2_ENABLED } from "@/lib/nav";
 import { useUi } from "@/lib/ui-store";
 import { ZONE_COLOR } from "./page-header";
+import { useTodayCheck } from "./topbar-widgets";
 
 interface Action {
   label: string;
@@ -39,9 +42,11 @@ export function CommandPalette() {
   const router = useRouter();
   const viewer = useViewer();
   const lookup = useLookup();
-  const checkIn = useSession((s) => s.checkIn);
-  const checkOut = useSession((s) => s.checkOut);
-  const todayCheck = useSession((s) => s.todayCheck);
+  const mockCheckIn = useSession((s) => s.checkIn);
+  const mockCheckOut = useSession((s) => s.checkOut);
+  // Live (m7): today's state and the time both come from the server; mock mode keeps the browser-only demo.
+  const check = useTodayCheck();
+  const liveCheck = useLiveCheck();
 
   if (!viewer) return null;
 
@@ -50,12 +55,28 @@ export function CommandPalette() {
     router.push(href);
   };
 
-  const check = todayCheck();
+  const runCheck = (kind: "in" | "out") => {
+    setOpen(false);
+    if (!isLive("m7")) {
+      (kind === "in" ? mockCheckIn : mockCheckOut)();
+      toast.success(`Checked ${kind} at ${formatTime(new Date())}`);
+      return;
+    }
+    (kind === "in" ? liveCheck.checkIn : liveCheck.checkOut)
+      .mutateAsync()
+      .then((res) => {
+        const at = kind === "in" ? res.checkIn : res.checkOut;
+        toast.success(`Checked ${kind} at ${at ? formatTime(at) : "the server time"}`, {
+          description: kind === "in" && res.lateMinutes ? `${res.lateMinutes} min after the grace period. It is marked late.` : "Time comes from the server clock.",
+        });
+      })
+      .catch((e: unknown) => toast.error((e as Error).message));
+  };
   const candidates: (Action | null)[] = [
     !check?.in
-      ? { label: "Check in", icon: LogIn, run: () => { checkIn(); toast.success(`Checked in at ${formatTime(new Date())}`); setOpen(false); }, keywords: "attendance start day" }
+      ? { label: "Check in", icon: LogIn, run: () => runCheck("in"), keywords: "attendance start day" }
       : !check.out
-        ? { label: "Check out", icon: LogOut, run: () => { checkOut(); toast.success(`Checked out at ${formatTime(new Date())}`); setOpen(false); }, keywords: "attendance end day" }
+        ? { label: "Check out", icon: LogOut, run: () => runCheck("out"), keywords: "attendance end day" }
         : null,
     { label: "Assign a task", icon: Plus, permission: "task.assign", run: () => go("/tasks?assign=1"), keywords: "new task" },
     { label: "Request leave", icon: CalendarDays, permission: "leave.request", run: () => go("/leave?request=1"), keywords: "holiday time off" },

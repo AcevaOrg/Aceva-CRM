@@ -87,31 +87,49 @@ export function variancePct(line: Pick<PayrollLine, "net" | "lastMonthNet">) {
 
 export const VARIANCE_FLAG = 10;
 
-/** Journal posted when the run is approved: salary expense against payables (plan §12). */
+/**
+ * The salary entry created when the run is approved (plan section 12): Dr salary expense / Cr income tax payable,
+ * Cr employee advances, Cr other payroll deductions, Cr salary payable. Accounts are found by their system role; the codes
+ * are those of the development chart (the accountant maps the real ones). In live mode the server creates the entry and it
+ * then waits for the normal ledger approval; this is only the preview.
+ */
 export function journalPreview(lines: PayrollLine[]): JournalPreviewLine[] {
   const s = (f: (l: PayrollLine) => Money) => lines.reduce((a, l) => a + toNumber(f(l)), 0);
   const gross = s((l) => l.gross);
   const tax = s((l) => l.tax);
-  const other = s((l) => l.otherDeductions);
+  const deductions = s((l) => l.otherDeductions);
+  // Mock lines carry advance repayments in otherDeductions; live lines say how much of it is advances.
+  const advances = lines.some((l) => l.advanceDeduction !== undefined) ? s((l) => l.advanceDeduction ?? money(0)) : deductions;
+  const other = deductions - advances;
   const net = s((l) => l.net);
   const zero = money(0);
   return [
-    { code: "5100", account: "Salaries and wages expense", debit: money(gross), credit: zero },
-    { code: "2210", account: "Income tax payable (salaries)", debit: zero, credit: money(tax) },
-    { code: "1310", account: "Employee advances", debit: zero, credit: money(other) },
-    { code: "2200", account: "Salaries payable", debit: zero, credit: money(net) },
+    { code: "5100", account: "Salary expense", debit: money(gross), credit: zero },
+    { code: "2300", account: "Income tax payable", debit: zero, credit: money(tax) },
+    { code: "1300", account: "Employee advances", debit: zero, credit: money(advances) },
+    { code: "2400", account: "Other payroll deductions", debit: zero, credit: money(other) },
+    { code: "2200", account: "Salary payable", debit: zero, credit: money(net) },
   ];
 }
 
 /**
- * Payroll chain: Prepared (Finance) → Approved (Director, step-up). These Emp-IDs only fill the chain for display;
- * who may act is decided by permissions (payroll.prepare / payroll.approve). The CEO / Founder / Owner views only.
+ * Payroll chain (decision D25, replacing plan section 12's "Director reviews, CEO approves"): Prepared (Finance) ->
+ * Approved (Director, confirming the password again), one step. The person who prepared a run never approves it. These
+ * Emp-IDs only fill the chain in mock mode; who may act is decided by permissions (payroll.prepare / payroll.approve), and in
+ * live mode the server fills the chain. A run reviewed before D25 shows its reviewer as an extra step (live mode).
  */
 export const PAYROLL_PREPARER = "ACV-0010";
 export const PAYROLL_APPROVER = "ACV-0003";
 export const PREPARED_LABEL = "Prepared (Finance)";
+export const REVIEWED_LABEL = "Reviewed (Director, before D25)";
 export const APPROVED_LABEL = "Approved (Director)";
 
+/**
+ * Stages shown on the stepper. The server has draft, calculated, prepared, (reviewed, before D25 only) and approved; a
+ * reviewed run sits on the "Prepared" step, still waiting for approval. After approval the screen
+ * shows "payslips sent" (payslips are issued on approval), "posted" (the salary entry was posted in the ledger) and "paid"
+ * (the bank transfer was recorded).
+ */
 export const STAGES: { key: PayrollStage; label: string; short: string }[] = [
   { key: "draft", label: "Attendance open", short: "Draft" },
   { key: "calculated", label: "Calculated", short: "Calculated" },
@@ -122,8 +140,8 @@ export const STAGES: { key: PayrollStage; label: string; short: string }[] = [
   { key: "paid", label: "Paid", short: "Paid" },
 ];
 
-export const stageIndex = (s: PayrollStage) => STAGES.findIndex((x) => x.key === s);
-export const stageLabel = (s: PayrollStage) => STAGES.find((x) => x.key === s)?.label ?? s;
+export const stageIndex = (s: PayrollStage) => STAGES.findIndex((x) => x.key === (s === "reviewed" ? "prepared" : s));
+export const stageLabel = (s: PayrollStage) => (s === "reviewed" ? "Reviewed" : (STAGES.find((x) => x.key === s)?.label ?? s));
 
 /** Approved runs can't be edited; fixes go to next month as an adjustment (plan §12). */
 export const isLocked = (s: PayrollStage) => stageIndex(s) >= stageIndex("approved");

@@ -8,12 +8,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress, Skeleton } from "@/components/ui/misc";
 import { Money } from "@/components/shared/money";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
+import { isLive } from "@/lib/api/http";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatMonthKey } from "@/lib/dates";
 import { toNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAdvances, usePayslips } from "../hooks";
 import { PayslipDocument } from "./payslip-document";
+
+const LIVE = isLive("m8");
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 /** /payroll/payslips: the viewer's own payslips, styled like the PDF (spec §9.8). */
 export function MyPayslips() {
@@ -38,9 +42,16 @@ export function MyPayslips() {
               <Button variant="outline" onClick={() => window.print()}>
                 <Printer /> Print
               </Button>
-              <Button onClick={() => toast.success(`Payslip for ${formatMonthKey(slip.month)} downloaded`, { description: "PDF prepared (demo)." })}>
-                <Download /> Download PDF
-              </Button>
+              {LIVE ? (
+                // The server's printable payslip (HTML until a PDF library is approved); "Print, Save as PDF" makes the file.
+                <Button onClick={() => window.open(`${API_BASE}/payslips/${slip.id}/document`, "_blank", "noopener")}>
+                  <Download /> Open printable payslip
+                </Button>
+              ) : (
+                <Button onClick={() => toast.success(`Payslip for ${formatMonthKey(slip.month)} downloaded`, { description: "PDF prepared (demo)." })}>
+                  <Download /> Download PDF
+                </Button>
+              )}
             </>
           )
         }
@@ -108,7 +119,7 @@ export function MyPayslips() {
               );
             })}
           </div>
-          {slip && <PayslipDocument slip={slip} canRevealBank />}
+          {slip && <PayslipDocument slip={slip} canRevealBank={!LIVE} />}
         </div>
       )}
     </>

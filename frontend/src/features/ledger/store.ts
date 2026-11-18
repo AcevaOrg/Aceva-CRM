@@ -391,7 +391,7 @@ export function approveClose(month: string, by: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p || p.status !== "closing") throw new ApiError("validation", "This month isn't waiting for close approval.");
   if (p.closedBy === by) throw new ApiError("forbidden", "You ran the close, so you can't approve it.", 403);
-  if (!may(by, "finance.close") || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director approves a month close.", 403);
+  if (!may(by, "finance.close_approve")) throw new ApiError("forbidden", "Only the Director approves a month close.", 403);
   p.status = "closed";
   p.approvedBy = by;
   p.approvedAt = nowIso();
@@ -400,7 +400,7 @@ export function approveClose(month: string, by: string) {
 export function rejectClose(month: string, by: string, reason: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p) notFound("Period");
-  if (!may(by, "finance.close") || !may(by, "finance.entry_approve")) throw new ApiError("forbidden", "Only the Director can send a close back.", 403);
+  if (!may(by, "finance.close_approve")) throw new ApiError("forbidden", "Only the Director can send a close back.", 403);
   p.status = "open";
   p.reopenReason = `Close sent back by ${by}: ${reason}`;
 }
@@ -409,7 +409,7 @@ export function rejectClose(month: string, by: string, reason: string) {
 export function reopenMonth(month: string, by: string, reason: string) {
   const p = periodsTable().find((x) => x.month === month);
   if (!p || p.status !== "closed") throw new ApiError("validation", "Only a closed month can be reopened.");
-  if (!may(by, "finance.reopen")) throw new ApiError("forbidden", "Only the Director can reopen a closed month.", 403);
+  if (!may(by, "finance.reopen")) throw new ApiError("forbidden", "Only the Director or the Owner can reopen a closed month.", 403);
   p.status = "reopened";
   p.reopenReason = `${reason} (reopened by ${by}; the CEO / Founder / Owner was notified)`;
 }

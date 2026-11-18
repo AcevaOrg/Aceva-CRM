@@ -15,11 +15,12 @@ import { StatCard } from "@/components/shared/metrics";
 import { Money } from "@/components/shared/money";
 import { CardsSkeleton, EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { isLive } from "@/lib/api/http";
 import { useCan } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey, formatMonthShort, monthKey } from "@/lib/dates";
 import { formatMoneyCompact, toNumber } from "@/lib/format";
 import { useCanPreparePayroll, usePayrollRuns, useStartRun, useTaxSlabs } from "../hooks";
-import { nextMonthKey, PAYROLL_APPROVER } from "../logic";
+import { nextMonthKey } from "../logic";
 import type { PayrollRun } from "../types";
 import { StageBadge, StagePipeline } from "./stage-pipeline";
 
@@ -30,11 +31,15 @@ function waitingText(run: PayrollRun, name: (id?: string) => string) {
     case "calculated":
       return run.returnedNote ? `Sent back: “${run.returnedNote}”. Finance fixes and prepares it again.` : "Calculated. Waiting for Finance to prepare it.";
     case "prepared":
-      return `Prepared by ${name(run.preparedBy)} (Finance). Waiting for ${name(PAYROLL_APPROVER)} (Director) to approve.`;
+      return `Prepared by ${name(run.preparedBy)} (Finance). Waiting for the Director to approve it.`;
+    case "reviewed":
+      return `Reviewed by ${name(run.reviewedBy)} before D25. Waiting for the Director to approve it.`;
     case "approved":
       return "Approved by the Director. Finance sends the payslips.";
     case "payslips_sent":
-      return "Payslips sent. Finance posts it to the ledger.";
+      return isLive("m8")
+        ? `Approved by ${name(run.approvedBy)} (Director); payslips issued. Salary entry ${run.salaryEntry?.number ?? ""} waits for the ledger approval.`
+        : "Payslips sent. Finance posts it to the ledger.";
     case "posted":
       return "Posted to the ledger. Waiting for Finance to record the bank transfer.";
     case "paid":
@@ -49,7 +54,7 @@ export function RunsOverview() {
   const start = useStartRun();
   const canPrepare = useCanPreparePayroll();
   const canApprove = useCan("payroll.approve");
-  // Oversight only (the CEO / Founder / Owner): every run is visible, no action is offered.
+  // Oversight only (the CEO and the Owner, decision D25): every run is visible, no action is offered.
   const viewOnly = !canPrepare && !canApprove;
   const lookup = useLookup();
   const name = (id?: string) => lookup.employee(id)?.name ?? id ?? "—";
@@ -57,7 +62,7 @@ export function RunsOverview() {
   const list = React.useMemo(() => runs.data ?? [], [runs.data]);
   const latest = list[0];
   const nextMonth = latest ? nextMonthKey(latest.month) : monthKey();
-  const canStart = latest?.stage === "paid";
+  const canStart = !latest || latest.stage === "paid";
   const current = list.find((r) => r.stage !== "paid") ?? latest;
 
   const fyStart = (() => {
@@ -241,6 +246,11 @@ export function RunsOverview() {
                 <CardContent>
                   <table className="w-full text-[12.5px]">
                     <tbody>
+                      {slabs.data && !slabs.data.length && (
+                        <tr>
+                          <td className="py-1.5 text-muted-foreground">No tax slabs are entered yet. Payroll cannot be calculated until they are (Settings).</td>
+                        </tr>
+                      )}
                       {(slabs.data ?? []).map((s) => (
                         <tr key={s.from} className="border-b border-dashed border-border last:border-0">
                           <td className="py-1.5 font-mono tabular text-muted-foreground">

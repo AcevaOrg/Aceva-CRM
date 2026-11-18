@@ -153,7 +153,7 @@ function PartySheet({ party, onClose }: { party: Party; onClose: () => void }) {
                           <Mono>{e.number}</Mono> · {formatDate(e.date)}
                         </span>
                       </span>
-                      <EntryStatusBadge status={e.status} />
+                      <EntryStatusBadge status={e.status} rejected={e.rejected} />
                       <EntryAmount entry={e} />
                     </Link>
                   </li>

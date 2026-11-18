@@ -195,10 +195,10 @@ export function seedBaseUsed(): { empId: string; leaveTypeId: string; used: numb
 type ReqSeed = [empId: string, type: string, fromWd: number, toWd: number, status: LeaveRequest["status"], reason: string, minAgo: number, opts?: { halfDay?: boolean; note?: string }];
 
 const REQS: ReqSeed[] = [
-  // Development: CTO first, then the Director.
+  // Development: the Director (one step, decision D24).
   ["ACV-0008", "lt-casual", 3, 4, "pending_manager", "Family wedding in Hyderabad.", 25],
   ["ACV-0013", "lt-sick", 1, 1, "pending_manager", "Doctor's appointment, fever since last night.", 200],
-  ["ACV-0006", "lt-annual", 15, 16, "pending_director", "Brother's wedding in Multan.", 60 * 30],
+  ["ACV-0006", "lt-annual", 15, 16, "pending_manager", "Brother's wedding in Multan.", 60 * 30],
   // Sales and Finance: the Director only (sales manager duty, and the Finance person reports to the Director).
   ["ACV-0012", "lt-casual", 2, 2, "pending_manager", "Moving to a new flat.", 60 * 26],
   ["ACV-0010", "lt-annual", 18, 19, "pending_manager", "Visiting family in Lahore.", 60 * 4],

@@ -242,3 +242,30 @@ Rules (also in the code comment of `OutboxConsumer`):
   events, which have no consumer today). An event that other consumers already processed is not delivered again.
 
 Adding a consumer never needs a change to the module that writes the event.
+
+`employee.offboarded`, `task.transfer.requested` and `payroll.final_settlement.requested` are written to the outbox when
+an employee's last working day is processed (see `backend/src/people/offboarding.service.ts`).
+
+- `payroll.final_settlement.requested` **is now consumed by Module 8** (`backend/src/payroll/final-settlement.service.ts`):
+  it takes the rows with `FOR UPDATE SKIP LOCKED` at every payroll calculation and every 60 seconds, inserts one
+  `final_settlements` row per leaver (`ON CONFLICT DO NOTHING`, so an event is never handled twice) and marks the event
+  processed. The leaver's line in the run for the month of their last working day is flagged for review (decision D11).
+- `employee.offboarded` and `task.transfer.requested` still wait for Module 5 (Tasks) and Module 12.
+
+## Modules 7, 8 and 9, version 1
+
+None of these carry an amount, a salary, a bank number or an employee UUID: people are named by Emp-ID only.
+
+| Event | Producer | When | Payload |
+|---|---|---|---|
+| `leave.requested` | M7 | A leave request is sent | `requestNumber`, `empId`, `approverEmpId` (null when nobody is above), `from`, `to` |
+| `leave.decided` | M7 | A request is approved, rejected or cancelled (since D24 leave has one step, so `forwarded` is no longer sent) | `requestNumber`, `empId`, `decision` (approved, rejected, cancelled, forwarded), `byEmpId`, `nextApproverEmpId` |
+| `attendance.correction.decided` | M7 | A correction is approved or rejected | `correctionId`, `empId`, `date`, `decision`, `byEmpId` |
+| `payroll.run.ready` | M8 | A run is prepared, waiting for the Director's approval (since D25 `reviewed` is no longer sent) | `runNumber`, `month`, `stage` (prepared, reviewed) |
+| `payroll.run.approved` | M8 | The Director approves a run (D25) | `runNumber`, `month`, `approvedByEmpId` |
+| `payslip.issued` | M8 | One per employee when a run is approved | `empId`, `month` |
+| `ledger.entry.posted` | M9 | A journal entry is posted | `entryNumber`, `source`, `entryDate` |
+| `finance.period.reopened` | M9 | The Director reopens a closed month (D25) | `month`, `byEmpId`, `reason` |
+
+No module consumes these yet. Module 12 (notifications) is meant to read them; until then nothing is emailed (decision D16).
+The schemas are in `packages/contracts/src/events.ts`; `OutboxService.emit` refuses a payload that does not match.

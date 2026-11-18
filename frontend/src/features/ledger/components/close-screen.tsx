@@ -53,7 +53,7 @@ function Close() {
           <OpenPeriod key={p.month} period={p} />
         ))}
         <section>
-          <SectionTitle title="Closed months" description="Only the Director can reopen a closed month, with a step-up check and a written reason. Reopening is logged and the CEO / Founder / Owner is notified." />
+          <SectionTitle title="Closed months" description="Only the Director or the Owner can reopen a closed month, with a step-up check and a written reason. Reopening is logged and alerted." />
           <ClosedTable periods={closed} />
         </section>
       </div>
@@ -72,9 +72,9 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
   const [reval, setReval] = React.useState(false);
   const allDone = period.checklist.every((c) => c.done);
   const missing = period.checklist.filter((c) => !c.done);
-  // The finance person runs the close; the Director approves it (maker-checker). The CEO / Founder / Owner views only.
+  // The finance person runs the close; the Director approves it (decision D25, maker-checker). Live: the server says who may.
   const canRun = !!viewer && canRunClose(viewer.can);
-  const canApprove = !!viewer && canApproveClose(viewer.can);
+  const canApprove = period.canApproveClose !== undefined ? period.canApproveClose : !!viewer && canApproveClose(viewer.can);
   const isMaker = period.closedBy === viewer?.employee.empId;
   const done = period.checklist.filter((c) => c.done).length;
 

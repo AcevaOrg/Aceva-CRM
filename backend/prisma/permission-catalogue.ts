@@ -29,7 +29,7 @@ export const PERMISSION_KEYS: string[] = [
   'performance.weights', 'attendance.self', 'attendance.view_team', 'attendance.approve_correction',
   'leave.request', 'leave.approve', 'payroll.view_own', 'payroll.view', 'payroll.prepare',
   'payroll.review', 'payroll.approve', 'payroll.export', 'finance.view', 'finance.entry_create',
-  'finance.entry_approve', 'finance.close', 'finance.reopen', 'finance.export', 'statements.view',
+  'finance.entry_approve', 'finance.close', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.export', 'statements.view', 'people.approve_hire',
   'statements.export', 'sheet.view', 'sheet.import', 'insights.view', 'audit.view', 'settings.view',
   'settings.manage', 'backup.view', 'billing.view', 'billing.manage', 'subscriptions.view',
   'subscriptions.manage', 'comms.use', 'comms.admin', 'announcements.publish', 'sales.own',
@@ -72,8 +72,8 @@ const OWNER: string[] = [
   'statements.view', 'statements.export', 'sheet.view', 'insights.view', 'audit.view',
   'settings.view', 'backup.view', 'billing.view', 'subscriptions.view', 'sales.own', 'sales.team',
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
-  // only for the Director's own leave and attendance corrections (see above)
-  'leave.approve', 'attendance.approve_correction', 'approval.approve',
+  // only for the Director's own items (see above): leave, attendance corrections, journal entries and hire requests
+  'leave.approve', 'attendance.approve_correction', 'approval.approve', 'finance.entry_approve', 'people.approve_hire',
   // only for his direct report, the Director (see above)
   'auth.unlock_account', 'auth.reset_two_factor',
 ];
@@ -92,8 +92,10 @@ const DIRECTOR: string[] = [
   'attendance.approve_correction', 'leave.approve', 'auth.unlock_account', 'session.force_logout',
   'comms.admin', 'announcements.publish', 'roles.manage', 'people.view_personal', 'people.view_pay',
   'people.manage', 'people.manage_pay', 'activity.security', 'performance.weights', 'payroll.view',
-  'payroll.review', 'payroll.approve', 'payroll.export', 'finance.view', 'finance.entry_approve',
-  'finance.close', 'finance.reopen', 'finance.export', 'statements.view', 'statements.export',
+  // Decision D25: the Director approves everything below the Owner in one step (Finance prepares): payroll, the month
+  // close, reopening a month, journal entries of any amount (confirm again above 50,000), hire requests.
+  'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'people.approve_hire',
+  'payroll.export', 'finance.view', 'finance.export', 'statements.view', 'statements.export',
   'sheet.view', 'insights.view', 'audit.view', 'settings.view', 'settings.manage', 'backup.view',
   'billing.view', 'subscriptions.view', 'subscriptions.manage', 'sales.own', 'sales.team',
   'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.export',
@@ -101,6 +103,8 @@ const DIRECTOR: string[] = [
   'auth.set_temporary_password',
   'auth.reset_two_factor',
   'org.manage',
+  // Decision D22: only the Director changes approval limits and finance settings (with "confirm again"); the Owner only views.
+  'finance.authority_manage',
 ];
 
 /** Level 3, the CTO (reports to the Director): runs development, security events, backups and integrations. */
