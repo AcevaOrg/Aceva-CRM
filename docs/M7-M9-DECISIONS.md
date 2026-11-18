@@ -48,7 +48,7 @@ row) and to new databases by `backend/prisma/permission-catalogue.ts`.
 | D13 | Invoices: Module 9 vs Module 13 split, numbering, Aceva's details on the invoice, sales tax | M9 stores invoices (`INV-YYYY-NNNN`) with lines and a ledger entry; no tax lines; M13 adds recurring billing later |
 | D14 | Projects for tagging | A small `finance_projects` list owned by M9 until a projects module exists |
 | D15 | PDF and Excel libraries (payslip PDF, invoice PDF, Excel bank sheet) | No new dependency added: payslips and invoices are served as printable HTML documents; the bank transfer sheet is CSV |
-| D16 | Notifications before Module 12 | Outbox events only (leave asked/answered, payroll ready, payslip available, period reopened); nothing is emailed yet |
+| D16 | Notifications before Module 12 | Outbox events only (leave asked/answered, payroll ready, payslip available, period reopened); nothing is emailed yet. **Superseded by the Cycle 3 foundation** (docs/CYCLE3-FOUNDATION.md): these events now become in-app notifications and emails |
 | D17 | Tamper-proof hash chain for finance logs (s.16) | Not built in this cycle (finance history tables are insert-only by trigger) |
 | D18 | Payroll screens on the 10-minute finance idle limit | Yes for payroll management routes; own payslips use the normal limit |
 | D20 | Source of USD exchange rates; revaluation accounts | Rates are entered by the finance duty person per day; gain or loss goes to the `fx_gain_loss` account |

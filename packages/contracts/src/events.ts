@@ -192,6 +192,65 @@ export const financePeriodReopenedV1 = defineEvent(
   z.object({ month: monthString, byEmpId: empIdSchema, reason: z.string() }),
 );
 
+// ---------- Cycle 3: Modules 13, 14, 15 (defined in the shared foundation; each is produced once its module is built) ----------
+// Same rules as above: Emp-IDs and document numbers only, no amounts, no prospect or customer personal data.
+
+/** M15: a Won deal was confirmed (by the sales manager, or the Director until there is one). M13 makes one draft invoice. */
+export const salesDealWonConfirmedV1 = defineEvent(
+  'sales.deal.won_confirmed',
+  1,
+  z.object({ dealNumber: z.string().min(1), ownerEmpId: empIdSchema, confirmedByEmpId: empIdSchema }),
+);
+
+/** M13: an invoice was issued; its ledger entry now waits for approval in Module 9. */
+export const billingInvoiceIssuedV1 = defineEvent(
+  'billing.invoice.issued',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), dueDate: dayString, sourceDealNumber: z.string().min(1).nullable() }),
+);
+
+/** M13: an invoice is fully paid (its payments are posted in Module 9). M15 calculates commission from it. */
+export const billingInvoicePaidV1 = defineEvent(
+  'billing.invoice.paid',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), paidOn: dayString, sourceDealNumber: z.string().min(1).nullable(), firstForClient: z.boolean() }),
+);
+
+/** M13: an invoice passed its due date unpaid. */
+export const billingInvoiceOverdueV1 = defineEvent(
+  'billing.invoice.overdue',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), dueDate: dayString, daysOverdue: z.number().int().min(1) }),
+);
+
+/** M13: a subscription or domain renews soon; its responsible person is alerted. */
+export const billingSubscriptionRenewalDueV1 = defineEvent(
+  'billing.subscription.renewal_due',
+  1,
+  z.object({ subscriptionNumber: z.string().min(1), renewsOn: dayString, ownerEmpId: empIdSchema }),
+);
+
+/** M15: the Director approved a commission line; Module 8 adds it to that month's payroll as a bonus line. */
+export const salesCommissionApprovedV1 = defineEvent(
+  'sales.commission.approved',
+  1,
+  z.object({ dealNumber: z.string().min(1), empId: empIdSchema, approvedByEmpId: empIdSchema, payrollMonth: monthString }),
+);
+
+/** M14: someone was mentioned in a message (never the message text). */
+export const commsMentionV1 = defineEvent(
+  'comms.mention',
+  1,
+  z.object({ conversationId: z.uuid(), messageId: z.uuid(), mentionedEmpId: empIdSchema, byEmpId: empIdSchema }),
+);
+
+/** M14: an announcement was published to its audience. */
+export const commsAnnouncementPublishedV1 = defineEvent(
+  'comms.announcement.published',
+  1,
+  z.object({ announcementId: z.uuid(), byEmpId: empIdSchema, requiresAck: z.boolean() }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -208,6 +267,14 @@ export const outboxEventSchemas = {
   'payslip.issued': { 1: payslipIssuedV1 },
   'ledger.entry.posted': { 1: ledgerEntryPostedV1 },
   'finance.period.reopened': { 1: financePeriodReopenedV1 },
+  'sales.deal.won_confirmed': { 1: salesDealWonConfirmedV1 },
+  'billing.invoice.issued': { 1: billingInvoiceIssuedV1 },
+  'billing.invoice.paid': { 1: billingInvoicePaidV1 },
+  'billing.invoice.overdue': { 1: billingInvoiceOverdueV1 },
+  'billing.subscription.renewal_due': { 1: billingSubscriptionRenewalDueV1 },
+  'sales.commission.approved': { 1: salesCommissionApprovedV1 },
+  'comms.mention': { 1: commsMentionV1 },
+  'comms.announcement.published': { 1: commsAnnouncementPublishedV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -227,6 +294,14 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   payslipIssuedV1,
   ledgerEntryPostedV1,
   financePeriodReopenedV1,
+  salesDealWonConfirmedV1,
+  billingInvoiceIssuedV1,
+  billingInvoicePaidV1,
+  billingInvoiceOverdueV1,
+  billingSubscriptionRenewalDueV1,
+  salesCommissionApprovedV1,
+  commsMentionV1,
+  commsAnnouncementPublishedV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

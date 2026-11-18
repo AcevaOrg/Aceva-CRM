@@ -86,5 +86,32 @@ None of these carry an amount, a salary, a bank number or an employee UUID: peop
 | `ledger.entry.posted` | M9 | A journal entry is posted | `entryNumber`, `source`, `entryDate` |
 | `finance.period.reopened` | M9 | The Director or the Owner reopen a closed month (D25) | `month`, `byEmpId`, `reason` |
 
-No module consumes these yet. Module 12 (notifications) is meant to read them; until then nothing is emailed (decision D16).
+Since the Cycle 3 foundation the notification core reads `leave.requested`, `leave.decided`, `attendance.correction.decided`,
+`payroll.run.ready`, `payslip.issued` and `finance.period.reopened` (reader `notifications`) and turns them into in-app
+notifications and emails (this supersedes D16). See docs/CYCLE3-FOUNDATION.md.
 The schemas are in `packages/contracts/src/events.ts`; `OutboxService.emit` refuses a payload that does not match.
+
+## Cycle 3: several readers per event
+
+Readers registered with `OutboxConsumerRunner` record their progress in `outbox_consumptions` (one row per reader and
+event, unique), not in `processed_at`, so each reader handles each event exactly once and several readers can read the
+same event. `processed_at` stays with the final-settlement reader. A new reader only sees events written after it was
+first registered. Details: docs/CYCLE3-FOUNDATION.md.
+
+| Reader | Reads |
+|---|---|
+| `notifications` | `leave.requested`, `leave.decided`, `attendance.correction.decided`, `payroll.run.ready`, `payslip.issued`, `finance.period.reopened` |
+| Final settlements (M8, uses `processed_at`) | `payroll.final_settlement.requested` |
+
+## Cycle 3: Modules 13 to 15, version 1 (defined in the shared foundation; produced when each module is built)
+
+| Type | From | When | Payload |
+|---|---|---|---|
+| `sales.deal.won_confirmed` | M15 | A Won deal is confirmed (the Director until there is a sales manager) | `dealNumber`, `ownerEmpId`, `confirmedByEmpId` |
+| `billing.invoice.issued` | M13 | An invoice is issued (its ledger entry waits for approval in M9) | `invoiceNumber`, `dueDate`, `sourceDealNumber` |
+| `billing.invoice.paid` | M13 | An invoice is fully paid | `invoiceNumber`, `paidOn`, `sourceDealNumber`, `firstForClient` |
+| `billing.invoice.overdue` | M13 | An invoice passes its due date unpaid | `invoiceNumber`, `dueDate`, `daysOverdue` |
+| `billing.subscription.renewal_due` | M13 | A subscription or domain renews soon | `subscriptionNumber`, `renewsOn`, `ownerEmpId` |
+| `sales.commission.approved` | M15 | The Director approves a commission line | `dealNumber`, `empId`, `approvedByEmpId`, `payrollMonth` |
+| `comms.mention` | M14 | Someone is mentioned (never the message text) | `conversationId`, `messageId`, `mentionedEmpId`, `byEmpId` |
+| `comms.announcement.published` | M14 | An announcement is published | `announcementId`, `byEmpId`, `requiresAck` |

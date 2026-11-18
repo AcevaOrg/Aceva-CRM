@@ -7,3 +7,5 @@ export * from './shared';
 export * from './attendance';
 export * from './payroll';
 export * from './ledger';
+export * from './notifications';
+export * from './settings';

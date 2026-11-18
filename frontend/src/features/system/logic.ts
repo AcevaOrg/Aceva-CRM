@@ -117,6 +117,7 @@ export const NOTIFICATION_LABEL: Record<NotificationType, string> = {
   extension_answered: "Extension answered",
   leave_requested: "Leave asked",
   leave_answered: "Leave answered",
+  correction_answered: "Attendance correction answered",
   approval_waiting: "Approval waiting",
   payroll_ready: "Payroll ready",
   payslip_available: "Payslip available",

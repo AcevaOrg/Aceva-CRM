@@ -14,10 +14,12 @@ import { FinanceModule } from './finance/finance.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { OrgModule } from './org/org.module';
 import { PeopleModule } from './people/people.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ModuleSettingsModule } from './settings/module-settings.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), JobsModule, AccessModule, AuthModule, HealthModule, OrgModule, PeopleModule, AttendanceModule, FinanceModule, PayrollModule],
+  imports: [ConfigModule, PrismaModule, RedisModule, CommonModule, ScheduleModule.forRoot(), JobsModule, AccessModule, AuthModule, HealthModule, OrgModule, PeopleModule, AttendanceModule, FinanceModule, PayrollModule, ModuleSettingsModule, NotificationsModule],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })
 export class AppModule {}

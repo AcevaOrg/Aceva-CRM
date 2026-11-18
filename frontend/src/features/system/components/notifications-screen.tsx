@@ -24,7 +24,7 @@ import { ESSENTIAL_TYPES, NOTIFICATION_GROUP, type Notification, type Notificati
 
 const ICON: Record<NotificationType, React.ElementType> = {
   task_assigned: ListTodo, task_due_soon: AlarmClock, task_overdue: AlarmClock, task_reviewed: ClipboardCheck,
-  extension_requested: AlarmClock, extension_answered: AlarmClock, leave_requested: CalendarDays, leave_answered: CalendarDays,
+  extension_requested: AlarmClock, extension_answered: AlarmClock, leave_requested: CalendarDays, leave_answered: CalendarDays, correction_answered: CalendarDays,
   approval_waiting: Inbox, payroll_ready: Wallet, payslip_available: Receipt, scorecard_released: Gauge,
   security_alert: ShieldAlert, sales_reply: Sunrise, sales_follow_up: Sunrise, sales_tool_problem: Plug,
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
@@ -32,7 +32,7 @@ const ICON: Record<NotificationType, React.ElementType> = {
 
 /** Email preference groups; a group shows only to people who can receive those notifications. */
 const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Permission | Permission[] }[] = [
-  { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered"] },
+  { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered", "correction_answered"] },
   // Approvers: the Director and the CTO. The CEO / Founder / Owner only approves the Director's own leave or correction;
   // Finance, Sales and Development approve nothing.
   { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"], permission: ["leave.approve", "payroll.approve", "finance.entry_approve"] },

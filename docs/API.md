@@ -175,6 +175,16 @@ Module 10's `/reports`.
 | `GET /ledger/reports/{trial-balance, general-ledger, ar-aging, ap-due, profit-by-project, profit-by-client}` | `finance.view` | |
 | `GET /ledger/export?from&to` | `finance.export` + "confirm again" | CSV with a watermark line; formula injection blocked; audited |
 
+## Cycle 3 foundation: notifications and module settings
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /notifications?unread=` | everyone logged in | The caller's own, newest first (the latest 100): `{ id, empId, type, title, body, link, at, read, essential }` |
+| `POST /notifications/read {ids?}` | everyone logged in | Marks the caller's own read (no ids = all); other people's ids are not matched. `{ updated }` |
+| `GET /notifications/prefs`, `PATCH /notifications/prefs` | everyone logged in | `{ email: { [type]: boolean }, dailySummary }`. Turning off an essential type: `400 essential_notification` |
+| `GET /settings/modules/:module` | the module's view permission (default `settings.view`) | `{ module, value, version, updatedAt, updatedByEmpId }`; version 0 = defaults. Unknown module or no permission: 404 |
+| `PUT /settings/modules/:module {value, version, reason}` | the module's manage permission (`notifications`: `settings.manage`) | Checked by the module's schema (`400 invalid_settings`), stale version `409 stale_version`, audited with old and new value |
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full

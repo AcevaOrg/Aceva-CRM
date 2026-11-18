@@ -50,6 +50,8 @@ export default defineConfig({
         REDIS_KEY_PREFIX: 'aceva:e2e:',
         FILE_STORAGE_ROOT: E2E_FILES,
         TRUST_PROXY: '0',
+        // Cycle 3 foundation: the outbox reader and the notification emails run on their own timers, as in production.
+        BACKGROUND_WORKERS: 'on',
       },
     },
     {
@@ -61,7 +63,7 @@ export default defineConfig({
       env: {
         NODE_ENV: 'production', // Playwright sets NODE_ENV=test, which breaks next build
         NEXT_PUBLIC_API_MODE: 'mock',
-        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m7,m8,m9',
+        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m7,m8,m9,m12',
         NEXT_PUBLIC_API_URL: API,
       },
     },

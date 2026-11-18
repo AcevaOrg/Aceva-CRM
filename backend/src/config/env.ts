@@ -54,6 +54,10 @@ export const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   MAIL_FROM: z.string().min(3).default('Aceva <no-reply@acevatech.com>'),
 
+  /** Background workers of the Cycle 3 foundation (outbox readers, notification emails): on | off. Defaults to on, and to
+   *  off when NODE_ENV is test, where tests run them step by step. */
+  BACKGROUND_WORKERS: z.enum(['on', 'off']).optional(),
+
   /** Argon2id cost. The defaults follow OWASP guidance; tests use a cheaper setting. */
   ARGON2_MEMORY_KIB: z.coerce.number().int().min(1024).default(65536),
   ARGON2_TIME_COST: z.coerce.number().int().min(1).default(3),
@@ -77,4 +81,9 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
     throw new Error(`Invalid environment configuration:\n${problems}`);
   }
   return result.data;
+}
+
+/** Whether the background workers (outbox readers, notification emails) run on their own timer. */
+export function backgroundWorkersOn(env: Pick<Env, 'BACKGROUND_WORKERS' | 'NODE_ENV'>): boolean {
+  return env.BACKGROUND_WORKERS ? env.BACKGROUND_WORKERS === 'on' : env.NODE_ENV !== 'test';
 }

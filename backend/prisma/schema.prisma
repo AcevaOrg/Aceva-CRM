@@ -348,6 +348,10 @@ model Employee {
   finalSettlements      FinalSettlement[]
   journalLines          JournalLine[]
 
+  // Cycle 3 foundation (back-relations only)
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+
   @@index([departmentId])
   @@index([officeId])
   @@index([levelId])
@@ -681,7 +685,8 @@ model AuditLog {
 }
 
 /// Events for other modules (see packages/contracts). Written in the same transaction as the
-/// change. A consumer marks processed_at. Consumers are built in later cycles.
+/// change. processed_at belongs to the one reader that predates Cycle 3 (final settlements); every other
+/// reader records its progress in outbox_consumptions, so several modules can each read the same event once.
 model OutboxEvent {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type        String
@@ -691,6 +696,8 @@ model OutboxEvent {
   occurredAt  DateTime  @default(now()) @map("occurred_at") @db.Timestamptz(3)
   processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  consumptions OutboxConsumption[]
 
   @@index([type, version, createdAt])
   @@index([processedAt])
@@ -1744,4 +1751,137 @@ model FinanceSetting {
   updatedBy             String?  @map("updated_by") @db.Uuid
 
   @@map("finance_settings")
+}
+
+// ============================================================================================================
+// Cycle 3 shared foundation: outbox readers, notifications (minimal Module 12 core), module-owned settings.
+// ============================================================================================================
+
+/// A module that reads outbox events. It sees only events written after it was first registered (started_at),
+/// so switching a new reader on never replays the past.
+model OutboxConsumer {
+  name      String   @id
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+
+  consumptions OutboxConsumption[]
+
+  @@map("outbox_consumers")
+}
+
+enum OutboxConsumptionStatus {
+  done
+  failed
+  dead
+  skipped
+
+  @@map("outbox_consumption_status")
+}
+
+/// One row per reader and event: handled (done), to be tried again (failed), given up after the last attempt (dead) or
+/// unreadable for this reader (skipped). Unique per reader and event, so each reader processes each event once.
+model OutboxConsumption {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  consumer      String
+  eventId       String                  @map("event_id") @db.Uuid
+  status        OutboxConsumptionStatus
+  attempts      Int                     @default(0)
+  /// Never message bodies or personal data: the error class and a short message only.
+  lastError     String?                 @map("last_error")
+  nextAttemptAt DateTime?               @map("next_attempt_at") @db.Timestamptz(3)
+  processedAt   DateTime?               @map("processed_at") @db.Timestamptz(3)
+  createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  reader OutboxConsumer @relation(fields: [consumer], references: [name])
+  event  OutboxEvent    @relation(fields: [eventId], references: [id])
+
+  @@unique([consumer, eventId])
+  @@index([consumer, status, nextAttemptAt])
+  @@map("outbox_consumptions")
+}
+
+/// An in-app notification (the bell). One per recipient and dedupe key, so a retried event never creates a second one.
+model Notification {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId   String    @map("recipient_id") @db.Uuid
+  /// One of notificationTypeSchema (packages/contracts/src/notifications.ts).
+  type          String
+  title         String
+  body          String?
+  /// An app path such as /approvals (never an external URL).
+  link          String?
+  /// Approvals and security alerts: always shown and always emailed (plan section 17).
+  essential     Boolean
+  dedupeKey     String    @map("dedupe_key")
+  sourceEventId String?   @map("source_event_id") @db.Uuid
+  readAt        DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipient  Employee               @relation(fields: [recipientId], references: [id])
+  deliveries NotificationDelivery[]
+
+  @@unique([recipientId, dedupeKey])
+  @@index([recipientId, createdAt])
+  @@map("notifications")
+}
+
+/// A person's choices. Only emails can be turned off, and never for the essential types (database rule too).
+model NotificationPreference {
+  employeeId   String   @id @map("employee_id") @db.Uuid
+  /// Notification types whose email this person turned off.
+  emailOff     String[] @default([]) @map("email_off")
+  /// Stored for the daily summary email (Module 12); the summary itself is not sent yet.
+  dailySummary Boolean  @default(true) @map("daily_summary")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("notification_preferences")
+}
+
+enum NotificationDeliveryStatus {
+  pending
+  sending
+  sent
+  failed
+  skipped
+  /// The server stopped while sending: the outcome is unknown, so it is never sent again automatically.
+  unknown
+
+  @@map("notification_delivery_status")
+}
+
+/// One email per notification at most (unique), sent by the delivery worker with retries.
+model NotificationDelivery {
+  id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notificationId String                     @map("notification_id") @db.Uuid
+  channel        String                     @default("email")
+  status         NotificationDeliveryStatus @default(pending)
+  /// Why it was skipped (turned_off, no_email, recipient_left), or the last error class.
+  note           String?
+  toAddress      String?                    @map("to_address")
+  attempts       Int                        @default(0)
+  nextAttemptAt  DateTime                   @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  claimedAt      DateTime?                  @map("claimed_at") @db.Timestamptz(3)
+  sentAt         DateTime?                  @map("sent_at") @db.Timestamptz(3)
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+
+  @@unique([notificationId, channel])
+  @@index([status, nextAttemptAt])
+  @@map("notification_deliveries")
+}
+
+/// Settings owned by one module (the pattern until Module 12's settings screen exists). The value is validated by the
+/// module's own schema; version gives optimistic locking; every change is audited.
+model ModuleSetting {
+  module    String   @id
+  value     Json
+  version   Int      @default(1)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("module_settings")
 }
