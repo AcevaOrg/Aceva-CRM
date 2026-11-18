@@ -269,6 +269,37 @@ export const commsAnnouncementPublishedV1 = defineEvent(
   z.object({ announcementId: z.uuid(), byEmpId: empIdSchema, requiresAck: z.boolean() }),
 );
 
+/**
+ * M14: a message was saved (never its text). Module 14's later parts deliver it live and notify people; nothing
+ * consumes it yet.
+ */
+export const commsMessageCreatedV1 = defineEvent(
+  'comms.message.created',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    conversationKind: z.enum(['dm', 'group', 'channel']),
+    messageId: z.uuid(),
+    seq: z.number().int().min(1),
+    authorEmpId: empIdSchema,
+    /** A reply: the message it answers. */
+    parentMessageId: z.uuid().nullable(),
+    mentionedEmpIds: z.array(empIdSchema),
+  }),
+);
+
+/** M14: someone stopped being a member of a conversation (removed by a moderator or admin, left, or left the company). */
+export const commsMemberRemovedV1 = defineEvent(
+  'comms.member.removed',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    empId: empIdSchema,
+    byEmpId: z.union([empIdSchema, z.literal('system')]),
+    reason: z.enum(['removed', 'left', 'employee_left']),
+  }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -293,6 +324,8 @@ export const outboxEventSchemas = {
   'sales.commission.approved': { 1: salesCommissionApprovedV1 },
   'comms.mention': { 1: commsMentionV1 },
   'comms.announcement.published': { 1: commsAnnouncementPublishedV1 },
+  'comms.message.created': { 1: commsMessageCreatedV1 },
+  'comms.member.removed': { 1: commsMemberRemovedV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -320,6 +353,8 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   salesCommissionApprovedV1,
   commsMentionV1,
   commsAnnouncementPublishedV1,
+  commsMessageCreatedV1,
+  commsMemberRemovedV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

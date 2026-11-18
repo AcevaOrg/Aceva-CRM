@@ -213,6 +213,45 @@ applies. Invoices and payments are Module 9's (one system); full table of routes
 | `PUT /billing/subscriptions/:id/costs/:month {amount, currency, estimated, billId?, reference?}` | `subscriptions.manage` | Actual only with a bill or provider reference |
 | `GET/PUT /settings/modules/billing` | view `billing.view`, change `settings.manage` (step-up) | Company details, customer emails, reminder days, default terms and income account |
 
+## Module 14, part 1: conversations and messages
+
+Every route needs `comms.use` (everyone). Inside a conversation, what you may do depends on being a member and your role
+there, checked on every request. **A conversation you are not a member of is "not found" (404)**, for every route below,
+also for managers and admins (DMs and groups are open to their members only). Department channel members are the
+department's current employees and its head (read from the employee records at each request) plus people added by hand.
+**History starts when you join:** a member sees only messages sent after they became a member. For people added by hand
+that is the conversation's message number when they were added (again); for department channels it is recorded by
+database triggers when someone is hired into or moved into the department, or made its head (table
+`department_channel_access`). Earlier messages are "not found" for them in every route, search, saved messages, unread
+counts, previews and receipts. People already in a department when its channel is created see it from the start.
+Message text is plain text (at most 4,000 characters, never HTML); it is never written to the audit log, the outbox or the
+application log, and database errors on these routes are answered and logged as codes only.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /comms/conversations?cursor&limit` | member | My conversations, most recently active first, with my unread count and the last message |
+| `POST /comms/conversations` | DM, group: anyone; channel: `comms.admin` | `{kind:'dm', empId}` (an existing DM is returned with 200), `{kind:'group', name?, memberEmpIds}` (at most 50 people; the creator moderates), `{kind:'channel', scope:'department', departmentId, name, topic?, moderatorEmpIds?}` or `{kind:'channel', scope:'project', projectName, projectCode?, name, memberEmpIds, moderatorEmpIds?}` |
+| `GET /comms/conversations/:id` | member; a `comms.admin` also for any channel (no messages) | Members (with `source` added or department), my read position, receipts (DMs and groups only), pins, `can` |
+| `PATCH /comms/conversations/:id {name?, topic?, projectName?, projectCode?}` | group moderators; channel moderators and `comms.admin` | |
+| `POST /comms/conversations/:id/archive {reason}` | group moderators; channels: `comms.admin` | Read-only afterwards (`409 conversation_archived`) |
+| `POST /comms/conversations/:id/members {empIds}` | group moderators; channel moderators and `comms.admin` | Current employees only (`400 unknown_or_inactive_employee`) |
+| `DELETE /comms/conversations/:id/members/:empId` | same; your own Emp-ID = leave | `409 department_member`: department channel members stay while they are in the department. Writes `comms.member.removed` |
+| `PUT` / `DELETE /comms/conversations/:id/moderators/:empId` | channels: `comms.admin`; groups: moderators | |
+| `POST /comms/conversations/:id/read {seq}`, `POST .../delivered {seq}` | member | Positions only move forward; read counts as delivered |
+| `GET /comms/conversations/:id/messages?before=N` or `?after=N`, `&limit` | member | By sequence number (unique per conversation, no gaps). Deleted messages stay as placeholders |
+| `POST /comms/conversations/:id/messages {clientKey, body, parentId?}` | member, not archived | 201, or 200 with `created:false` for a retry with the same `clientKey`; `409 client_key_reused` when that key was used for something else; replies only to a top-level message (`400 invalid_reply_target`); `@ACV-0006` mentions members only (`400 mention_not_member`); at most 30 a minute (`429 rate_limited`) |
+| `GET /comms/conversations/:id/pins` | member | |
+| `GET /comms/messages/:id/thread?after&limit` | member | The message and its replies |
+| `PATCH /comms/messages/:id {body}` | the author, within 24 hours | `409 edit_window_closed`; the older text is kept, never shown |
+| `DELETE /comms/messages/:id` | the author, any time | A placeholder stays; the text is kept as an older version |
+| `POST /comms/messages/:id/remove {reason}` | moderators (and `comms.admin` members of a channel) | Audited with the reason, never the text |
+| `PUT` / `DELETE /comms/messages/:id/reactions/:emoji` | member | Once per person and emoji |
+| `PUT` / `DELETE /comms/messages/:id/pin` | DMs and groups: members; channels: moderators | Once per message; audited |
+| `PUT` / `DELETE /comms/messages/:id/save` | member | Private to you |
+| `GET /comms/search?q&conversationId&cursor&limit` | member | PostgreSQL full-text search, only in conversations you can see now |
+| `GET /comms/saved?cursor&limit` | anyone | Your saved messages from conversations you can still see |
+| `GET /comms/admin/channels?cursor&limit` | `comms.admin` | Every channel with member count and moderators, never messages |
+
 
 ## Event contracts
 

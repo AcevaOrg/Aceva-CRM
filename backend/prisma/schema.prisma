@@ -245,7 +245,9 @@ model Department {
   updatedBy      String?   @map("updated_by") @db.Uuid
 
   employees Employee[]
-  head      Employee?  @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  head      Employee?      @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  /// Module 14 department channels (back-relation only).
+  channels  Conversation[]
 
   @@index([headEmployeeId])
   @@map("departments")
@@ -354,6 +356,15 @@ model Employee {
   invoicesAssigned       Invoice[]               @relation("InvoiceAssignee")
   recurringRulesAssigned RecurringBillingRule[]  @relation("RecurringRuleAssignee")
   subscriptionsOwned     Subscription[]          @relation("SubscriptionOwner")
+
+  // Module 14 (back-relations only)
+  conversationMemberships ConversationMember[]
+  conversationReads       ConversationRead[]
+  departmentChannelAccess DepartmentChannelAccess[]
+  messagesAuthored        Message[]                 @relation("MessageAuthor")
+  messageMentions         MessageMention[]          @relation("MessageMentioned")
+  messageReactions        MessageReaction[]
+  savedMessages           SavedMessage[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -2250,4 +2261,248 @@ model SubscriptionCost {
 
   @@unique([subscriptionId, month])
   @@map("subscription_costs")
+}
+
+// ============================================================================================================
+// Module 14, part 1 (M14.1): conversations and messages (plan section 19).
+// Message text lives only in messages.body and message_revisions.body. It is never copied into the audit log, the
+// outbox or the application logs. Nothing here is hard-deleted (database triggers); retention periods are not decided
+// yet, so nothing is deleted automatically.
+// ============================================================================================================
+
+enum ConversationKind {
+  dm
+  group
+  channel
+
+  @@map("conversation_kind")
+}
+
+/// What a channel is for: a department (members follow the employee records) or a project (members managed by hand).
+enum ChannelScope {
+  department
+  project
+
+  @@map("channel_scope")
+}
+
+enum ConversationRole {
+  member
+  moderator
+
+  @@map("conversation_role")
+}
+
+/// Why an older version of a message was kept: the author edited it, the author deleted it, or a moderator removed it.
+enum MessageRevisionKind {
+  edited
+  deleted
+  removed
+
+  @@map("message_revision_kind")
+}
+
+/// A direct message (two people), a group, or a department or project channel.
+model Conversation {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind          ConversationKind
+  channelScope  ChannelScope?    @map("channel_scope")
+  name          String?
+  topic         String?
+  /// Department channels: the department whose current employees (and head) are members.
+  departmentId  String?          @map("department_id") @db.Uuid
+  /// Project channels: a free-text project name and code (Module 5 projects do not exist yet; M9 finance projects are not used).
+  projectName   String?          @map("project_name")
+  projectCode   String?          @map("project_code")
+  /// DMs only: the two people's ids in sorted order, so the same pair can never get a second DM (unique).
+  dmKey         String?          @unique @map("dm_key")
+  /// The last sequence number given to a message here. Raised in the same transaction as the message insert, under
+  /// this row's lock, so concurrent sends are numbered one after another and a rolled-back send leaves no gap.
+  lastSeq       Int              @default(0) @map("last_seq")
+  lastMessageAt DateTime?        @map("last_message_at") @db.Timestamptz(3)
+  createdById   String           @map("created_by_id") @db.Uuid
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
+  archivedAt    DateTime?        @map("archived_at") @db.Timestamptz(3)
+  archivedById  String?          @map("archived_by_id") @db.Uuid
+
+  department       Department?               @relation(fields: [departmentId], references: [id])
+  members          ConversationMember[]
+  reads            ConversationRead[]
+  messages         Message[]
+  pins             PinnedMessage[]
+  departmentAccess DepartmentChannelAccess[]
+
+  @@index([departmentId])
+  @@index([kind])
+  @@map("conversations")
+}
+
+/// People added to a conversation by hand (DM and group members, project channel members, moderators, and anyone added
+/// to a department channel beyond its department). One row per person and conversation; leaving sets left_at.
+model ConversationMember {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  employeeId     String           @map("employee_id") @db.Uuid
+  role           ConversationRole @default(member)
+  addedById      String?          @map("added_by_id") @db.Uuid
+  /// The conversation's last message number when this person was added (or added again): they see only later messages.
+  joinedSeq      Int              @default(0) @map("joined_seq")
+  joinedAt       DateTime         @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt         DateTime?        @map("left_at") @db.Timestamptz(3)
+  removedById    String?          @map("removed_by_id") @db.Uuid
+  updatedAt      DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@unique([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("conversation_members")
+}
+
+/// How far each person has received and read a conversation (sequence numbers). Kept apart from the member rows because
+/// department channel members are worked out from the employee records and have no member row.
+model ConversationRead {
+  conversationId   String   @map("conversation_id") @db.Uuid
+  employeeId       String   @map("employee_id") @db.Uuid
+  lastDeliveredSeq Int      @default(0) @map("last_delivered_seq")
+  lastReadSeq      Int      @default(0) @map("last_read_seq")
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("conversation_reads")
+}
+
+/// When someone became a member of a department channel through the employee records (hired into the department,
+/// moved into it, or made its head): they see only messages after from_seq. Written by database triggers on employees
+/// and departments, so every way of changing a department is covered. No row = a member since before the channel existed.
+model DepartmentChannelAccess {
+  conversationId String   @map("conversation_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  fromSeq        Int      @map("from_seq")
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("department_channel_access")
+}
+
+/// One message. seq is unique per conversation and has no gaps; client_key is the sender's retry key (unique per author).
+/// A deleted or removed message keeps its row as a placeholder with an empty body; the text is kept in message_revisions.
+model Message {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String               @map("conversation_id") @db.Uuid
+  seq            Int
+  authorId       String               @map("author_id") @db.Uuid
+  /// A reply: the top-level message of the same conversation it answers.
+  parentId       String?              @map("parent_id") @db.Uuid
+  /// Plain text, at most 4,000 characters. Empty only once deleted.
+  body           String
+  clientKey      String               @map("client_key") @db.Uuid
+  /// SHA-256 of what was first sent with this retry key, so a retry with different content is refused.
+  requestHash    String               @map("request_hash")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt       DateTime?            @map("edited_at") @db.Timestamptz(3)
+  /// How many older versions are kept in message_revisions.
+  revision       Int                  @default(0)
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(3)
+  deletedById    String?              @map("deleted_by_id") @db.Uuid
+  deletedAs      MessageRevisionKind? @map("deleted_as")
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id])
+  author       Employee          @relation("MessageAuthor", fields: [authorId], references: [id])
+  parent       Message?          @relation("MessageReplies", fields: [parentId], references: [id])
+  replies      Message[]         @relation("MessageReplies")
+  revisions    MessageRevision[]
+  reactions    MessageReaction[]
+  mentions     MessageMention[]
+  saves        SavedMessage[]
+  pin          PinnedMessage?
+
+  @@unique([conversationId, seq])
+  @@unique([authorId, clientKey])
+  @@index([conversationId, parentId, seq])
+  @@index([authorId, createdAt])
+  @@map("messages")
+}
+
+/// Older versions of a message (insert-only). Kept in the database for the retention period, never shown in the app.
+model MessageRevision {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId   String              @map("message_id") @db.Uuid
+  revision    Int
+  kind        MessageRevisionKind
+  /// The text as it was before this change.
+  body        String
+  changedById String              @map("changed_by_id") @db.Uuid
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message Message @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, revision])
+  @@map("message_revisions")
+}
+
+/// Someone mentioned in a message (by Emp-ID; always a member of the conversation).
+model MessageMention {
+  messageId  String   @map("message_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  employee Employee @relation("MessageMentioned", fields: [employeeId], references: [id])
+
+  @@id([messageId, employeeId])
+  @@index([employeeId])
+  @@map("message_mentions")
+}
+
+model MessageReaction {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  emoji      String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([messageId, employeeId, emoji])
+  @@map("message_reactions")
+}
+
+/// A person's own saved messages (private to them).
+model SavedMessage {
+  employeeId String   @map("employee_id") @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  savedAt    DateTime @default(now()) @map("saved_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  message  Message  @relation(fields: [messageId], references: [id])
+
+  @@id([employeeId, messageId])
+  @@index([employeeId, savedAt])
+  @@map("saved_messages")
+}
+
+/// A message pinned in its conversation (once).
+model PinnedMessage {
+  messageId      String   @id @map("message_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  pinnedById     String   @map("pinned_by_id") @db.Uuid
+  pinnedAt       DateTime @default(now()) @map("pinned_at") @db.Timestamptz(3)
+
+  message      Message      @relation(fields: [messageId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId])
+  @@map("pinned_messages")
 }

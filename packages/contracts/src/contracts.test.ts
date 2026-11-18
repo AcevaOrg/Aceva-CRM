@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   BILLING_SETTINGS_DEFAULTS,
   billingSettingsSchema,
+  commsMessageCreatedV1,
+  createConversationSchema,
+  editMessageSchema,
+  markSeqSchema,
+  mentionedEmpIds,
+  MESSAGE_MAX_LENGTH,
+  messageHistoryQuerySchema,
+  messageSearchQuerySchema,
+  reactionEmojiSchema,
+  sendMessageSchema,
   containsCardNumber,
   createBillingInvoiceSchema,
   ESSENTIAL_NOTIFICATION_TYPES,
@@ -47,7 +57,9 @@ describe('outbox event contracts', () => {
       'billing.invoice.paid',
       'billing.subscription.renewal_due',
       'comms.announcement.published',
+      'comms.member.removed',
       'comms.mention',
+      'comms.message.created',
       'employee.offboarded',
       'finance.period.reopened',
       'leave.decided',
@@ -173,5 +185,61 @@ describe('Module 13 billing contracts', () => {
     expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: true }).success).toBe(true);
     expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: false }).success).toBe(false);
     expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: false, reference: 'INV-77' }).success).toBe(true);
+  });
+});
+describe('Module 14 part 1: conversation and message contracts', () => {
+  const key = '3f2b8c1e-5a4d-4e6b-9c7a-1d2e3f4a5b6c';
+
+  it('message text is plain text of 1 to 4,000 characters; Windows line endings become new lines', () => {
+    expect(sendMessageSchema.parse({ clientKey: key, body: 'line one\r\nline two' }).body).toBe('line one\nline two');
+    expect(sendMessageSchema.safeParse({ clientKey: key, body: 'x'.repeat(MESSAGE_MAX_LENGTH) }).success).toBe(true);
+    expect(sendMessageSchema.safeParse({ clientKey: key, body: 'x'.repeat(MESSAGE_MAX_LENGTH + 1) }).success).toBe(false);
+    expect(sendMessageSchema.safeParse({ clientKey: key, body: '   \n ' }).success).toBe(false);
+    expect(sendMessageSchema.safeParse({ clientKey: key, body: 'bell\u0007' }).success).toBe(false);
+    expect(sendMessageSchema.safeParse({ clientKey: 'not-a-uuid', body: 'hi' }).success).toBe(false);
+    // HTML is just text: it is kept as typed and shown as text, never interpreted.
+    expect(sendMessageSchema.parse({ clientKey: key, body: '<b>bold</b>' }).body).toBe('<b>bold</b>');
+    expect(editMessageSchema.safeParse({ body: '' }).success).toBe(false);
+  });
+
+  it('mentions are Emp-ID tokens, never names', () => {
+    expect(mentionedEmpIds('@ACV-0006 and @ACV-0007, again @ACV-0006')).toEqual(['ACV-0006', 'ACV-0007']);
+    expect(mentionedEmpIds('@Fahad and email@ACV-00 and @ACV-00061x')).toEqual(['ACV-00061']);
+    expect(mentionedEmpIds('no mentions')).toEqual([]);
+  });
+
+  it('a conversation is a DM, a group or a channel with the right fields', () => {
+    expect(createConversationSchema.safeParse({ kind: 'dm', empId: 'ACV-0006' }).success).toBe(true);
+    expect(createConversationSchema.safeParse({ kind: 'dm', empId: 'Fahad' }).success).toBe(false);
+    expect(createConversationSchema.safeParse({ kind: 'group', memberEmpIds: [] }).success).toBe(false);
+    expect(createConversationSchema.safeParse({ kind: 'group', memberEmpIds: ['ACV-0006', 'ACV-0006'] }).success).toBe(false);
+    expect(createConversationSchema.safeParse({ kind: 'channel', scope: 'department', name: 'eng', departmentId: 'dep-eng' }).success).toBe(true);
+    expect(createConversationSchema.safeParse({ kind: 'channel', scope: 'department', name: 'eng' }).success).toBe(false);
+    expect(createConversationSchema.safeParse({ kind: 'channel', scope: 'project', name: 'web', projectName: 'Website', projectCode: 'WEB-1' }).success).toBe(true);
+    expect(createConversationSchema.safeParse({ kind: 'channel', scope: 'project', name: 'web' }).success).toBe(false);
+    expect(createConversationSchema.safeParse({ kind: 'channel', scope: 'project', name: 'web', projectName: 'Website', departmentId: 'dep-eng' }).success).toBe(false);
+  });
+
+  it('reactions are emoji; history uses before or after; read positions are whole numbers', () => {
+    for (const ok of ['👍', '🎉', '❤️', '👍🏽', '🇵🇰']) expect(reactionEmojiSchema.safeParse(ok).success, ok).toBe(true);
+    for (const bad of ['ok', '<b>', '', '1', '#']) expect(reactionEmojiSchema.safeParse(bad).success, bad).toBe(false);
+    expect(messageHistoryQuerySchema.parse({ before: '10' })).toEqual({ before: 10, limit: 50 });
+    expect(messageHistoryQuerySchema.safeParse({ before: '10', after: '2' }).success).toBe(false);
+    expect(markSeqSchema.safeParse({ seq: -1 }).success).toBe(false);
+    expect(messageSearchQuerySchema.safeParse({ q: 'a' }).success).toBe(false);
+  });
+
+  it('message events carry ids and Emp-IDs, never the text', () => {
+    const created = {
+      ...base,
+      type: 'comms.message.created',
+      payload: { conversationId: key, conversationKind: 'dm', messageId: key, seq: 1, authorEmpId: 'ACV-0006', parentMessageId: null, mentionedEmpIds: [] },
+    };
+    expect(outboxEventSchema.safeParse(created).success).toBe(true);
+    expect(Object.keys(commsMessageCreatedV1.shape.payload.shape)).not.toContain('body');
+    expect(outboxEventSchema.safeParse({ ...created, payload: { ...created.payload, seq: 0 } }).success).toBe(false);
+    const removed = { ...base, type: 'comms.member.removed', payload: { conversationId: key, empId: 'ACV-0008', byEmpId: 'ACV-0006', reason: 'removed' } };
+    expect(outboxEventSchema.safeParse(removed).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...removed, payload: { ...removed.payload, reason: 'kicked' } }).success).toBe(false);
   });
 });
