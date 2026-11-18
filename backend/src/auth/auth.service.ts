@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type {
+  AUTH_SECURITY_KINDS,
   ChangePasswordRequest,
   DisableTwoFactorRequest,
   StepUpRequest,
@@ -9,6 +10,7 @@ import type {
   LoginRequest,
   LoginResult,
   LogoutReason,
+  LogoutRequest,
   MeResponse,
   ResetPasswordRequest,
   SessionInfo,
@@ -32,6 +34,7 @@ import { AuthStateService } from './auth-state.service';
 import { CryptoService } from './crypto.service';
 import { LoginThrottleService } from './login-throttle.service';
 import { PasswordService } from './password.service';
+import { idleLogoutIsGenuine } from './session/session-limits';
 import { EndReason, SessionService } from './session/session.service';
 import { TotpService } from './totp.service';
 
@@ -51,6 +54,7 @@ export interface IssuedSession {
 }
 
 type FailureReason = 'invalid_credentials' | 'locked' | 'rate_limited' | 'two_factor_failed' | 'disabled';
+type SecurityKind = (typeof AUTH_SECURITY_KINDS)[number];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -139,6 +143,7 @@ export class AuthService {
           details: { failedAttempts: rows[0].failed_attempts },
           ...client,
         });
+        await this.securityEvent(employee.empId, 'account_locked', null);
       }
       await this.recordFailure(dto.empId, employee, client, nowLocked ? 'locked' : 'invalid_credentials');
       // The number of attempts left is not revealed (it would show which Emp-IDs are real).
@@ -241,7 +246,7 @@ export class AuthService {
       await this.recordFailure(actor.empId, { id: actor.id, empId: actor.empId }, client, 'two_factor_failed');
       if ((await this.throttle.recentTwoFactorFailures(actor.id)) >= MAX_WRONG_CODES) {
         await this.audit.record({ actorId: actor.id, action: 'auth.2fa.too_many_failures', targetType: 'employee', targetId: actor.empId, outcome: 'denied', ...client });
-        await this.sessions.end(sessionId, 'forced');
+        await this.sessions.end(sessionId, 'too_many_wrong_codes');
         throw new ForbiddenException({ statusCode: 403, code: 'too_many_wrong_codes', message: 'Too many wrong codes. Please log in again.' });
       }
       throw new BadRequestException({ statusCode: 400, code: 'invalid_code', message: 'That code is not right. Try the current code from your app.' });
@@ -249,6 +254,7 @@ export class AuthService {
     if (!row.confirmedAt) {
       await this.prisma.credential.updateMany({ where: { employeeId: actor.id }, data: { mustEnrollTwoFactor: false } });
       await this.audit.record({ actorId: actor.id, action: 'auth.2fa.enabled', targetType: 'employee', targetId: actor.empId, ...client });
+      await this.securityEvent(actor.empId, 'two_factor_enabled', actor.empId);
     }
     await this.sessions.markTwoFactorVerified(sessionId);
     const state = await this.state.get(actor.id);
@@ -289,7 +295,7 @@ export class AuthService {
       await this.recordFailure(actor.empId, { id: actor.id, empId: actor.empId }, client, 'two_factor_failed');
       await this.audit.record({ actorId: actor.id, action: 'auth.step_up.failed', targetType: 'employee', targetId: actor.empId, outcome: 'denied', ...client });
       if ((await this.throttle.recentTwoFactorFailures(actor.id)) >= MAX_WRONG_CODES) {
-        await this.sessions.end(sessionId, 'forced');
+        await this.sessions.end(sessionId, 'too_many_wrong_codes');
         throw new ForbiddenException({ statusCode: 403, code: 'too_many_wrong_codes', message: 'Too many wrong answers. Please log in again.' });
       }
       // The same answer whichever part was wrong: it does not tell an attacker which one to fix.
@@ -315,6 +321,7 @@ export class AuthService {
     }
     await this.prisma.totpSecret.delete({ where: { employeeId: actor.id } });
     await this.audit.record({ actorId: actor.id, action: 'auth.2fa.disabled', targetType: 'employee', targetId: actor.empId, ...client });
+    await this.securityEvent(actor.empId, 'two_factor_disabled', actor.empId);
   }
 
   async twoFactorStatus(actor: Actor): Promise<TwoFactorStatus> {
@@ -348,6 +355,7 @@ export class AuthService {
     const previous = await this.prisma.session.findUnique({ where: { id: sessionId }, select: { twoFactorVerifiedAt: true, rememberMe: true } });
     await this.sessions.endAllFor(actor.id, 'password_changed');
     await this.audit.record({ actorId: actor.id, action: 'auth.password.changed', targetType: 'employee', targetId: actor.empId, ...client });
+    await this.securityEvent(actor.empId, 'password_changed', actor.empId);
 
     const issued = await this.sessions.create({
       employeeId: actor.id,
@@ -418,6 +426,10 @@ export class AuthService {
     const hash = await this.passwords.hash(temporary);
     await this.prisma.$transaction((tx) => this.writeCredential(tx, employeeId, hash, this.clock.now(), { mustChange: true, actorId }));
     await this.sessions.endAllFor(employeeId, 'password_changed');
+    const people = await this.prisma.employee.findMany({ where: { id: { in: [employeeId, actorId] } }, select: { id: true, empId: true } });
+    const empIdOf = (id: string) => people.find((p) => p.id === id)?.empId ?? null;
+    const target = empIdOf(employeeId);
+    if (target) await this.securityEvent(target, 'temporary_password_set', empIdOf(actorId), empIdOf(actorId));
     return temporary;
   }
 
@@ -481,6 +493,7 @@ export class AuthService {
     });
     await this.sessions.endAllFor(row.employeeId, 'password_changed');
     await this.audit.record({ actorId: null, action: 'auth.password.reset', targetType: 'employee', targetId: row.employee.empId, ...client });
+    await this.securityEvent(row.employee.empId, 'password_reset', row.employee.empId);
   }
 
   // ===================================================================== administration
@@ -502,6 +515,25 @@ export class AuthService {
     const { count } = await this.prisma.credential.updateMany({ where: { employeeId: target.id, lockedAt: { not: null } }, data: { lockedAt: null, failedAttempts: 0, updatedBy: actor.id } });
     if (count === 0) throw new ConflictException({ statusCode: 409, code: 'not_locked', message: 'This account is not locked' });
     await this.audit.record({ actorId: actor.id, action: 'auth.account.unlocked', targetType: 'employee', targetId: target.empId, reason: reason ?? null, details: { byHrDuty: isHr }, ...client });
+    await this.securityEvent(target.empId, 'account_unlocked', actor.empId, actor.empId);
+  }
+
+  /**
+   * Module 4 admin control: lock someone's account. Every session ends at once and the person cannot sign in until it
+   * is unlocked (unlock() above). THE CALLER CHECKS ACCESS: ActivityControlsService (backend/src/activity) allows it only
+   * with session.force_logout AND auth.unlock_account (the Director and the CTO), for someone below the caller in the
+   * reporting line, after a recent confirm-again.
+   */
+  async lockAccount(actor: Actor, target: { id: string; empId: string }, reason: string, client: RequestInfo): Promise<{ ended: number }> {
+    const { count } = await this.prisma.credential.updateMany({ where: { employeeId: target.id, lockedAt: null }, data: { lockedAt: this.clock.now(), updatedBy: actor.id } });
+    if (count === 0) {
+      if (!(await this.prisma.credential.count({ where: { employeeId: target.id } }))) throw new NotFoundException('This employee has no login');
+      throw new ConflictException({ statusCode: 409, code: 'already_locked', message: 'This account is already locked' });
+    }
+    const ended = await this.sessions.endAllFor(target.id, 'forced');
+    await this.audit.record({ actorId: actor.id, action: 'auth.account.locked', targetType: 'employee', targetId: target.empId, reason, details: { by: 'administrator', ended }, ...client });
+    await this.securityEvent(target.empId, 'account_locked', actor.empId, actor.empId);
+    return { ended };
   }
 
   /** An administrator ends every session of someone below them, on every device, at once. */
@@ -537,6 +569,7 @@ export class AuthService {
     await this.prisma.$transaction((tx) => this.writeCredential(tx, target.id, hash, this.clock.now(), { mustChange: true, actorId: actor.id }));
     await this.sessions.endAllFor(target.id, 'password_changed');
     await this.audit.record({ actorId: actor.id, action: 'auth.password.temporary_set', targetType: 'employee', targetId: target.empId, reason: reason ?? null, ...client });
+    await this.securityEvent(target.empId, 'temporary_password_set', actor.empId, actor.empId);
     return { temporaryPassword: temporary };
   }
 
@@ -573,6 +606,7 @@ export class AuthService {
       details: { ended, rule: byOwner ? 'owner_direct_report' : byDirector ? 'director' : 'hr_duty' },
       ...client,
     });
+    await this.securityEvent(target.empId, 'two_factor_reset', actor.empId, actor.empId);
     return { ended };
   }
 
@@ -588,6 +622,18 @@ export class AuthService {
     return target;
   }
 
+  /**
+   * Tells Module 4 about a security change on an account (auth.security). `actor` is who caused it: the person, the
+   * administrator (`byEmpId`), or the system (5 wrong passwords).
+   */
+  private async securityEvent(empId: string, kind: SecurityKind, actorEmpId: string | null, byEmpId: string | null = null): Promise<void> {
+    await this.outbox.emit({
+      type: 'auth.security',
+      actor: (actorEmpId ?? 'system') as `ACV-${string}`,
+      payload: { empId: empId as `ACV-${string}`, kind, byEmpId: byEmpId as `ACV-${string}` | null },
+    });
+  }
+
   private async denyAdmin(actor: Actor, action: string, targetEmpId: string, client: RequestInfo): Promise<never> {
     await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'employee', targetId: targetEmpId, outcome: 'denied', reason: 'out_of_scope', details: { attempted: action }, ...client });
     throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
@@ -597,6 +643,25 @@ export class AuthService {
 
   async logout(sessionId: string | null, reason: EndReason = 'user'): Promise<void> {
     if (sessionId) await this.sessions.end(sessionId, reason);
+  }
+
+  /**
+   * POST /auth/logout. Without a claim it is a clicked logout ('user'). With the browser tab open, the browser's own
+   * idle timer always runs out before the server's, so it says why it is logging out. That claim is believed only when
+   * the session really was idle for about the limit (30 minutes, 10 on a finance screen): then Module 4 records
+   * "Timed out", exactly like the sweeper does. A claim made too early is recorded as a clicked logout.
+   */
+  async logoutFromBrowser(sessionId: string | null, claim: LogoutRequest): Promise<EndReason> {
+    if (!sessionId) return 'user';
+    let reason: EndReason = 'user';
+    if (claim.reason === 'idle_timeout') {
+      const lastActiveAtMs = await this.sessions.lastActiveAt(sessionId);
+      if (lastActiveAtMs !== null && idleLogoutIsGenuine({ nowMs: this.clock.now().getTime(), lastActiveAtMs, financeScreen: claim.financeScreen === true })) {
+        reason = 'idle_timeout';
+      }
+    }
+    await this.logout(sessionId, reason);
+    return reason;
   }
 
   async listSessions(actor: Actor, currentSessionId: string | null): Promise<SessionInfo[]> {
@@ -624,11 +689,12 @@ export class AuthService {
       }
       throw new NotFoundException('Session not found');
     }
-    await this.sessions.end(sessionId, 'user');
+    // 'user_other_device': ended from another device. Module 4 must not count it as a signal from that session (a shut laptop).
+    await this.sessions.end(sessionId, 'user_other_device');
   }
 
   async endOtherSessions(actor: Actor, currentSessionId: string | null): Promise<{ ended: number }> {
-    return { ended: await this.sessions.endAllFor(actor.id, 'user', currentSessionId ?? undefined) };
+    return { ended: await this.sessions.endAllFor(actor.id, 'user_other_device', currentSessionId ?? undefined) };
   }
 
   async loginHistory(actor: Actor): Promise<LoginHistoryItem[]> {
@@ -637,7 +703,7 @@ export class AuthService {
       this.prisma.loginAttempt.findMany({ where: { employeeId: actor.id, success: false }, orderBy: { createdAt: 'desc' }, take: 30 }),
     ]);
     const endReason = (r: string | null): LogoutReason | undefined =>
-      r === 'user' ? 'clicked' : r === 'idle_timeout' || r === 'max_duration' ? 'timed_out' : r === 'password_changed' ? 'password_changed' : r ? 'forced' : undefined;
+      r === 'user' || r === 'user_other_device' ? 'clicked' : r === 'idle_timeout' || r === 'max_duration' ? 'timed_out' : r === 'password_changed' ? 'password_changed' : r ? 'forced' : undefined;
     const items: LoginHistoryItem[] = [
       ...sessions.map((s) => ({
         id: s.id,

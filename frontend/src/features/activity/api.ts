@@ -1,7 +1,14 @@
 /**
- * Module 4 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
+ * Module 4 service functions. Each one talks to the real API when Module 4 is live (NEXT_PUBLIC_LIVE_MODULES contains
+ * m4, or NEXT_PUBLIC_API_MODE=live) and to the in-browser mock otherwise; each JSDoc names the real endpoint (spec §7.3).
  * Tracking tables only allow adding rows: there are no update or delete functions for events.
+ * Live, the server decides everything (who sees what, scope, maker-checker); the checks in the mock branches only
+ * mirror it so the demo behaves the same.
  */
+import type {
+  AccountLockView, ActivityEventView, DailySummaryView, MyActivityResponse, OnlineSessionView, SecurityAlertView, TimelineResponse,
+} from "@aceva/contracts";
+import { http, isLive } from "@/lib/api/http";
 import { ApiError, mock } from "@/lib/api/mock";
 import { descendantsOf, scopeOf } from "@/lib/auth/scope";
 import { getViewer } from "@/lib/auth/viewer";
@@ -11,7 +18,7 @@ import { liveHeartbeats, liveScreens } from "@/lib/telemetry";
 import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { seedAlerts, seedEvents, seedLocks, seedOnline, seedSummaries } from "@/mocks/seed/activity";
-import { activityAccess, alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert } from "./logic";
+import { activityAccess, alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert, canLockAccounts } from "./logic";
 import type { AccountLock, ActivityEvent, ActivityQuery, DailySummary, MyActivity, OnlineSession, SecurityAlert } from "./types";
 
 const eventsTable = () => table<ActivityEvent>("activity.events", seedEvents);
@@ -31,8 +38,15 @@ function requireBelow(targetEmpId: string, message: string) {
   if (!canActOn(me, targetEmpId, descendantsOf(me, employeesTable()))) throw new ApiError("forbidden", message, 403);
 }
 
-/** Mock helper for other modules: record an action by the current viewer (server does this automatically). */
+/** Is Module 4 talking to the real server? (NEXT_PUBLIC_LIVE_MODULES contains m4, or NEXT_PUBLIC_API_MODE=live) */
+const live = () => isLive("m4");
+
+/**
+ * Mock helper for other modules: record an action by the current viewer. Live it does nothing: the server's action
+ * recorder records every request by itself, so the screens never report their own actions.
+ */
 export function recordActivity(e: Pick<ActivityEvent, "action" | "module" | "description"> & Partial<Pick<ActivityEvent, "target" | "changes" | "source">>) {
+  if (live()) return;
   eventsTable().unshift({ id: uid("ev"), empId: getViewer().employee.empId, at: new Date().toISOString(), source: e.source ?? "aceva", ...e });
 }
 
@@ -46,7 +60,7 @@ function inRange(at: string, from?: string, to?: string) {
   return (!from || day >= from) && (!to || day <= to);
 }
 
-export const activityApi = {
+const mockActivityApi = {
   /** GET /activity/online (CEO / Founder / Owner: everyone; Director, CTO: their reporting line) */
   online: () =>
     mock(() => {
@@ -83,7 +97,7 @@ export const activityApi = {
 
   /** GET /activity/timeline?empId&date — own, or people below you (CTO: developers; Director: their line; CEO / Founder / Owner: everyone) */
   timeline: (empId: string, date: string) =>
-    mock(() => {
+    mock<{ summary?: DailySummary; events: ActivityEvent[] | null }>(() => {
       const v = getViewer();
       if (empId !== v.employee.empId && (!activityAccess(v).timeline || !scope().has(empId))) throw new ApiError("forbidden", "This person is outside your reporting line.", 403);
       const full = empId === v.employee.empId || v.can("activity.view_all");
@@ -93,7 +107,7 @@ export const activityApi = {
       };
     }),
 
-  /** GET /activity/alerts?status — CTO, Director and CEO / Founder / Owner (activity.security sees every alert) */
+  /** GET /activity/alerts?status — CTO, Director and CEO / Founder / Owner (activity.security sees every alert; the server cuts only old checked ones) */
   alerts: () =>
     mock(() => {
       const v = getViewer();
@@ -146,7 +160,7 @@ export const activityApi = {
   /** POST /employees/:empId/lock { reason } — someone below you only */
   lock: (empId: string, reason: string) =>
     mock(() => {
-      if (!getViewer().can("auth.unlock_account")) throw new ApiError("forbidden", "You can't lock accounts.", 403);
+      if (!canLockAccounts(getViewer())) throw new ApiError("forbidden", "You can't lock accounts.", 403);
       requireBelow(empId, "You can only lock the accounts of people below you in your reporting line.");
       if (!locksTable().some((l) => l.empId === empId)) locksTable().push({ empId, at: new Date().toISOString(), by: getViewer().employee.empId, reason });
       const list = onlineTable();
@@ -183,3 +197,70 @@ export const activityApi = {
       };
     }, { delay: 120 }),
 };
+
+/** The export formats the server records (the export dialog offers Excel and PDF). */
+const exportFormat = (format: string): "xlsx" | "pdf" | "csv" => (format === "pdf" || format === "csv" ? format : "xlsx");
+
+/**
+ * Module 4 against the REAL API. Same names and result shapes as the mock above, so the screens do not change. The
+ * server applies every rule: who may see a screen, the reporting-line scope, maker-checker on alerts, the confirm-again
+ * before a control (the screens ask for it first through POST /auth/step-up).
+ */
+const liveActivityApi: typeof mockActivityApi = {
+  /** GET /activity/online: sessions of the people below me (activity.view_all) */
+  online: () => http.get<OnlineSessionView[]>("/activity/online"),
+
+  /** GET /activity/events?empId&departmentId&module&action&source&from&to: my line for the Director and the CEO / Founder / Owner, otherwise my own */
+  events: (q: ActivityQuery) =>
+    http.get<ActivityEventView[]>("/activity/events", {
+      empId: q.empId || undefined,
+      departmentId: q.departmentId || undefined,
+      module: q.module || undefined,
+      action: q.action || undefined,
+      source: q.source || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+    }),
+
+  /** GET /activity/summaries?from&to&scope=team: the people below me */
+  summaries: (from: string, to: string) => http.get<DailySummaryView[]>("/activity/summaries", { from, to, scope: "team" }),
+
+  /** GET /activity/timeline?empId&date */
+  timeline: (empId: string, date: string) => http.get<TimelineResponse>("/activity/timeline", { empId, date }),
+
+  /** GET /activity/alerts: every open alert plus the newest checked ones (the screen filters open / checked; open is never cut off) */
+  alerts: () => http.get<SecurityAlertView[]>("/activity/alerts", { status: "all" }),
+
+  /** POST /activity/alerts/:id/check { note } */
+  checkAlert: async (id: string, note: string) => {
+    await http.post(`/activity/alerts/${id}/check`, { note });
+  },
+
+  /** POST /sessions/:id/force-logout { reason } (after the confirm-again) */
+  forceLogout: async (sessionId: string, reason: string) => {
+    await http.post(`/sessions/${sessionId}/force-logout`, { reason });
+  },
+
+  /** GET /accounts/locked */
+  locks: () => http.get<AccountLockView[]>("/accounts/locked"),
+
+  /** POST /employees/:empId/lock { reason } (after the confirm-again) */
+  lock: async (empId: string, reason: string) => {
+    await http.post(`/employees/${empId}/lock`, { reason });
+  },
+
+  /** POST /employees/:empId/unlock (after the confirm-again) */
+  unlock: async (empId: string) => {
+    await http.post(`/employees/${empId}/unlock`, {});
+  },
+
+  /** POST /activity/export { rows, format, module, dataset }: the server records the export (and checks it for the large-export alert) */
+  logExport: async (rows: number, format: string) => {
+    await http.post("/activity/export", { rows, format: exportFormat(format), module: "Activity", dataset: "Activity search results" });
+  },
+
+  /** GET /activity/me */
+  mine: () => http.get<MyActivityResponse>("/activity/me"),
+};
+
+export const activityApi: typeof mockActivityApi = live() ? liveActivityApi : mockActivityApi;

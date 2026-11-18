@@ -461,8 +461,11 @@ describe('M1 people who have left cannot act', () => {
 
 describe('M1 recent changes feed', () => {
   it('describes the changes made above in plain words, with who and why', async () => {
-    const feed = (await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200)).body as Array<{ kind: string; summary: string; reason: string; by: string }>;
-    expect(feed.length).toBeGreaterThan(5);
+    // The screen shows the newest 12; this file makes more changes than that (departments and offices too), so ask for more.
+    const latest = (await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200)).body as unknown[];
+    expect(latest).toHaveLength(12);
+    const feed = (await t.as(DIRECTOR).get('/api/v1/org/changes?limit=50').expect(200)).body as Array<{ kind: string; summary: string; reason: string; by: string }>;
+    expect(feed.length).toBeGreaterThan(12);
     expect(feed.map((f) => f.kind)).toEqual(expect.arrayContaining(['level', 'reporting_line', 'duty', 'stand_in']));
     const line = feed.find((f) => f.kind === 'reporting_line' && f.summary.includes('Nida Aslam'));
     expect(line).toMatchObject({ by: DIRECTOR });

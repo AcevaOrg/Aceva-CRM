@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   assignDutyRequestSchema,
@@ -10,6 +10,7 @@ import {
   changeLevelRequestSchema,
   changeReportingLineRequestSchema,
   endDutyRequestSchema,
+  orgChangesQuerySchema,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, RequestInfo, RequirePermission, Scope } from '../access/decorators';
@@ -26,6 +27,7 @@ class UpdateDepartmentDto extends createZodDto(updateDepartmentRequestSchema) {}
 class CreateOfficeDto extends createZodDto(createOfficeRequestSchema) {}
 class UpdateOfficeDto extends createZodDto(updateOfficeRequestSchema) {}
 class DeactivateDto extends createZodDto(deactivateRequestSchema) {}
+class ChangesQueryDto extends createZodDto(orgChangesQuerySchema) {}
 
 @ApiTags('org')
 @Controller('org')
@@ -93,9 +95,9 @@ export class OrgController {
 
   @Get('changes')
   @RequirePermission('audit.view')
-  @ApiOperation({ summary: 'Recent access changes (levels, reporting lines, duties, stand-ins) from the audit log' })
-  changes() {
-    return this.org.recentChanges();
+  @ApiOperation({ summary: 'Recent access changes (levels, reporting lines, duties, stand-ins, departments, offices) from the audit log; newest first, 12 by default (limit 1 to 50)' })
+  changes(@Query() query: ChangesQueryDto) {
+    return this.org.recentChanges(query.limit);
   }
 
   @Get('team')

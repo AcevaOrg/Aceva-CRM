@@ -16,6 +16,7 @@ import { createFixtureStaff } from './people';
 import { createTestPrisma } from './prisma';
 import { testDatabaseUrl } from './env';
 import { FakeClock, MemoryMailer } from './fakes';
+import { switchOffBackgroundWork } from './quiet-env';
 
 export { TEST_PASSWORD } from './reset-db';
 import { TEST_PASSWORD } from './reset-db';
@@ -81,6 +82,12 @@ export async function createTestApp(options: { extraControllers?: Type[] } = {})
   process.env.REDIS_KEY_PREFIX = 'aceva:test:'; // tests never touch real session data
   process.env.FILE_STORAGE_ROOT = mkdtempSync(join(tmpdir(), 'aceva-private-'));
   process.env.TRUST_PROXY = '1'; // tests choose the client address with X-Forwarded-For
+  // Module 4: tests deliver outbox events and build daily summaries themselves (OutboxDispatcher.tick(),
+  // ActivitySummaryService.buildDay()), so nothing runs in the background while a test looks at the tables.
+  switchOffBackgroundWork();
+  // The local city list for tests (documentation address ranges, never used by freshIp()): 192.0.2.x is "Karachi",
+  // 198.51.100.x is "Lahore". No outside GeoIP service is ever called.
+  process.env.GEOIP_RANGES = '192.0.2.0/24=Karachi; 198.51.100.0/24=Lahore';
 
   const clock = new FakeClock();
   const mailer = new MemoryMailer();

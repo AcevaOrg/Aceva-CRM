@@ -6,6 +6,9 @@ Machine-readable OpenAPI JSON: `http://localhost:4000/api/docs-json`
 
 Request and response shapes are defined once, in `packages/contracts/src` (Zod schemas), and shared with the website.
 
+Every answer carries an `X-Request-Id` header (the same id is stored with the request's audit log rows and activity
+records; quote it when reporting a problem).
+
 **Company structure used by these rules** (final): Level 1 CEO / Founder / Owner (role key `owner`, one person; sees
 everything, approves and manages nothing), Level 2 Director (`director`, the only approver and the org administrator,
 holds the HR and sales-manager duties), Level 3 CTO (`cto`), Level 4 Sales (`sales`) and Finance (`finance`, with the
@@ -34,7 +37,7 @@ No login needed. `{ "status": "ok", "database": "up", "time": "...", "version": 
 | Method and path | Who | What it does |
 |---|---|---|
 | `POST /auth/login` | public | Body `{ empId, password, rememberMe? }`. Answer `{ status, retryAfterSec?, csrfToken? }` with `status` one of `ok`, `password_change_required`, `2fa_required`, `2fa_setup_required`, `locked`, `invalid`, `rate_limited`. Sets the session cookie unless refused. Unknown Emp-ID and wrong password look the same. |
-| `POST /auth/logout` | logged in | Ends this session now (all stores) |
+| `POST /auth/logout` | logged in | Ends this session now (all stores). Optional body, strict (any other field or value gives 400): `{ reason: "idle_timeout", financeScreen?: boolean }`, sent by the browser when its idle timer ran out with the tab open. The server records the session as `idle_timeout` (Module 4 shows "Timed out") only if it was idle for at least the limit minus 2 minutes (28 minutes, or 8 on a finance screen; the browser's own limits are 30 and 10 minutes). Otherwise it is a normal clicked logout. An idle logout does not count as activity (it does not move last-active). No body is a plain logout. Like every change, it needs `X-CSRF-Token` |
 | `GET /auth/me` | logged in, even if unfinished | Who I am, `stage`, permissions, `twoFactorRequired`, `csrfToken`, `rememberAllowed` |
 | `POST /auth/2fa/setup` | logged in, even if unfinished | Starts authenticator set-up. Returns `{ secret, otpauthUrl }` once; the secret is stored encrypted |
 | `POST /auth/2fa/verify` | logged in, even if unfinished | Body `{ code }` (6 digits). The first correct code confirms the set-up. 5 wrong codes end the session. A code works once. |
@@ -105,7 +108,42 @@ stand-in cover, clears a department head, writes the history, and queues the eve
 `task.transfer.requested` and `payroll.final_settlement.requested`. **Reporting lines are not changed**: the leaver's direct
 reports are listed until the Director assigns a new manager. The record is never deleted.
 
+## M4: activity tracking
+
+Tracking data is insert-only (database triggers): there is no request that edits or deletes it. Days are Pakistan days
+(`YYYY-MM-DD`, UTC+5); times are ISO 8601 in UTC. Shapes: `packages/contracts/src/activity.ts` (the same as
+`frontend/src/features/activity/types.ts`).
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `POST /activity/heartbeat` | logged in | Body `{ active: boolean }` only (was the mouse or keyboard used in the last minute). Sent every 60 s while the app is open. Only `active: true` keeps the session from timing out. Answer `{ ok, recorded }` (`recorded: false` when ignored: more than 6 a minute per session) |
+| `POST /activity/screen` | logged in | Body `{ screen, path? }` (label, page path starting with `/`). One record per screen opened. A finance screen opened without its permission is recorded as a **blocked attempt**; for a blocked finance screen the record's target and description use the server's module of the page (for example Ledger), not the label the browser sent (the browser label is kept only in `details.screen`). At most 60 a minute per session |
+| `POST /activity/export` | logged in | Body `{ rows, format: xlsx\|pdf\|csv, module?, dataset? }`. The screens build the file; this records that the export happened. Exports of finance or employee data with at least `largeExportRows` rows (default 500) raise an alert. One large-export alert per person, per kind of data (finance, employee) and hour: later large exports in that hour are only logged; the alert mail follows the alert. At most 10 exports a minute per session and 20 per person are recorded; a refused call still answers 200 with `{ ok: true, recorded: false }`, and a recorded one answers `{ ok: true, recorded: true }` |
+| `GET /activity/me` | logged in | My activity: `today` (worked out live), my records of the last 14 days, this session's screens and heartbeats |
+| `GET /activity/events?empId&departmentId&module&action&source&from&to` | `activity.view_own` | Activity search, newest first, at most 2000 rows. **The Director and the CEO / Founder / Owner** (`activity.view_all` and `audit.view`) search themselves and everyone below them; everyone else gets only their own records. `changes` holds the old and new values, joined from the audit log rows of the same request. `departmentId` is a department code (`dep-eng`); empty filters mean "any" |
+| `GET /activity/online` | `activity.view_all` (the CEO / Founder / Owner, the Director, the CTO) | Sessions signed in now of the people **below** me: since, current screen, `active` (use in the last 5 minutes) or `idle`, device, city, `newDevice` |
+| `GET /activity/summaries?from&to&scope=team` | `activity.view_team` or `activity.view_all` | Daily summaries of the people below me, at most 31 days: first login, last logout, active and idle minutes, actions, tasks touched, check-in, idle spans. Stored nightly rows; today (and any day whose job has not run) worked out live. Others get 403 |
+| `GET /activity/timeline?empId&date` | my own; someone below me with `activity.view_team` or `activity.view_all` | `{ summary?, events }`, events in time order. Without `activity.view_all` only the summary (`events: null`). Someone above or beside me: 403 |
+| `GET /activity/alerts?status=open\|checked\|all` | `activity.security` (the CEO / Founder / Owner, the Director, the CTO) | Every open alert (never cut off) plus the newest 500 checked alerts, newest first. `status=open` returns every open alert; `status=checked` the newest 500 checked ones |
+| `POST /activity/alerts/:id/check` | `activity.security` and `session.force_logout` (the Director, the CTO) | Body `{ note }` (3 to 500 characters). Never an alert about yourself; a manager above the person checks it (the CTO checks alerts about the Director, the Director those about the CEO / Founder / Owner). Once only (409 `already_checked`). The alert itself never changes; the check is a row of its own |
+| `POST /sessions/:id/force-logout` | `session.force_logout` (the Director, the CTO), the session of someone **below** me, confirm-again in the last 5 minutes | Body `{ reason }`. Ends that one session at once. 403 `step_up_required` without the confirm-again; 409 `session_ended` if it already ended. The person sees the reason in My activity |
+| `POST /employees/:empId/lock` | `session.force_logout` and `auth.unlock_account` (the Director, the CTO), someone **below** me, confirm-again | Body `{ reason }`. Locks the account and ends every session (`{ ok, ended }`); 409 `already_locked` |
+| `POST /employees/:empId/unlock` | `auth.unlock_account`, confirm-again; then Module 2's rule (someone above them in the line, HR duty, the CEO / Founder / Owner for his direct report only) | Body `{ reason? }`. Same as `POST /auth/employees/:empId/unlock`, plus the confirm-again |
+| `GET /accounts/locked` | logged in | Locked accounts of me and the people below me; all of them with `activity.security`. `{ empId, at, by (Emp-ID or "system"), reason }` |
+
+**Recorded automatically for every module** (no code in the module): every successful POST, PUT, PATCH and DELETE; every
+GET ending in `/download`, `/export` or `/print`; every handler marked `@SensitiveView` (the M3 reveal of CNIC, bank
+account and salary is one); every refused attempt (403, from the access check or a service). Never request bodies or query
+strings. Logins, logouts and the person's own security changes come from the Module 2 events instead.
+
+**Alerts** (mailed to the Director and the CTO; stored in `security_alerts`): account locked after 5 wrong passwords
+(medium); sign-in from a new device (medium) or a new city (high); sign-in outside working hours (low, default 20:00 to
+07:00 Pakistan time); large export of finance or employee data (medium; one alert per person, kind of data and hour); many salary, bank or payslip records opened in one
+hour (medium, default 5); repeated attempts to open finance screens (high, default 3 in 15 minutes). The thresholds are the
+`alert-rules` settings section (see `docs/M4-ACCEPTANCE.md`).
+
 ## Event contracts
 
-Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full
-contract (what, when, how to read them) is in `docs/EVENTS.md`.
+Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by
+the outbox dispatcher to the modules that consume them. The full contract (what, when, how to consume) is in
+`docs/EVENTS.md`.

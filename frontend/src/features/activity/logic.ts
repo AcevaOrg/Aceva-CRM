@@ -7,10 +7,59 @@
  * - Acting (force sign-out, lock, unlock, checking alerts) needs an action permission the CEO / Founder / Owner doesn't have.
  * - Everyone sees their own activity.
  */
+import type { ActivityModuleName, ALERTS_CHECKED_LIMIT } from "@aceva/contracts";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import type { Viewer } from "@/lib/auth/viewer";
 import type { Employee } from "@/types";
 import { isTopLevelRole } from "@/types";
+
+/**
+ * Every module label the server records on an activity event: the options of the search "Module" filter. The server
+ * matches the label exactly, so an option that is missing here cannot be searched for. This is a Record on purpose: the
+ * compiler fails here when a label is added to or removed from ACTIVITY_MODULES in packages/contracts.
+ */
+const MODULE_LABELS: Record<ActivityModuleName, true> = {
+  Home: true,
+  Login: true,
+  People: true,
+  Org: true,
+  Approvals: true,
+  Activity: true,
+  Tasks: true,
+  Performance: true,
+  Attendance: true,
+  Leave: true,
+  Payroll: true,
+  Finance: true,
+  Ledger: true,
+  Banking: true,
+  "Bills and expenses": true,
+  "Month close": true,
+  Statements: true,
+  Spreadsheet: true,
+  Insights: true,
+  Billing: true,
+  Subscriptions: true,
+  Settings: true,
+  Audit: true,
+  Messages: true,
+  Announcements: true,
+  Meetings: true,
+  Sales: true,
+  Integrations: true,
+  Notifications: true,
+  System: true,
+};
+export const ACTIVITY_MODULES = Object.keys(MODULE_LABELS) as ActivityModuleName[];
+
+/**
+ * GET /activity/alerts returns EVERY open alert plus at most this many of the newest checked ones (ALERTS_CHECKED_LIMIT in
+ * packages/contracts; the type keeps the two numbers equal).
+ */
+export const CHECKED_ALERTS_LIMIT: typeof ALERTS_CHECKED_LIMIT = 500;
+
+/** Did the checked alerts reach the server's limit? Then older checked alerts exist that the list does not show. */
+export const checkedAlertsCut = (checkedShown: number) => checkedShown >= CHECKED_ALERTS_LIMIT;
 
 export interface ActivityAccess {
   online: boolean;
@@ -40,6 +89,13 @@ export function activityAccess(v: Viewer | null): ActivityAccess {
 export function canActOn(viewerEmpId: string, targetEmpId: string, below: string[]) {
   return targetEmpId !== viewerEmpId && below.includes(targetEmpId);
 }
+
+/**
+ * Locking and unlocking from the activity screens needs both control permissions (the Director and the CTO), the same
+ * rule as the server. The CEO / Founder / Owner holds auth.unlock_account only for Module 2's unlock of his direct report
+ * (My account / People), so on these screens he stays view only.
+ */
+export const canLockAccounts = (v: Pick<Viewer, "can"> | null) => !!v?.can("session.force_logout") && !!v.can("auth.unlock_account");
 
 /** Checking an alert is an action: only people with security actions (Director, CTO). The CEO / Founder / Owner views alerts only. */
 export const canActOnAlerts = (v: Pick<Viewer, "can"> | null) => !!v?.can("activity.security") && !!v.can("session.force_logout");

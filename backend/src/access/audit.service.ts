@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { currentRequestId } from '../common/request-context';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -16,12 +17,17 @@ export interface AuditEntry {
   details?: Prisma.InputJsonValue;
   ip?: string | null;
   userAgent?: string | null;
+  /** Filled in automatically with the current HTTP request's id (see common/request-context.ts). */
   requestId?: string | null;
 }
 
 type Db = PrismaService | Prisma.TransactionClient;
 
-/** Writes to the insert-only audit_log table. */
+/**
+ * Writes to the insert-only audit_log table. Each row carries the id of the request that wrote it, which Module 4 uses
+ * to show the before and after values of a change in activity search: put changes in `details` as
+ * `{ before: {...}, after: {...} }` and they appear there automatically.
+ */
 @Injectable()
 export class AuditService {
   constructor(private readonly prisma: PrismaService) {}
@@ -40,7 +46,7 @@ export class AuditService {
         details: entry.details,
         ip: entry.ip ?? null,
         userAgent: entry.userAgent?.slice(0, 300) ?? null,
-        requestId: entry.requestId ?? null,
+        requestId: entry.requestId ?? currentRequestId(),
       },
     });
   }

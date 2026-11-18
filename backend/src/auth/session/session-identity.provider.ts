@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Request } from 'express';
-import { IdentityProvider, type ResolvedIdentity } from '../../identity/identity.provider';
+import { IdentityProvider, type ResolvedIdentity, type ResolveOptions } from '../../identity/identity.provider';
 import { AuthStateService } from '../auth-state.service';
 import { SESSION_COOKIE } from './session-cookie';
 import { SessionService } from './session.service';
@@ -18,7 +18,7 @@ export class SessionIdentityProvider extends IdentityProvider {
     super();
   }
 
-  async resolve(request: Request, options: { financeScreen: boolean }): Promise<ResolvedIdentity | null> {
+  async resolve(request: Request, options: ResolveOptions): Promise<ResolvedIdentity | null> {
     const token = (request.cookies as Record<string, string> | undefined)?.[SESSION_COOKIE];
     if (!token || typeof token !== 'string') return null;
 

@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import { requestContextMiddleware } from './common/request-context';
 import { ENV } from './config/config.module';
 import type { Env } from './config/env';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -11,6 +12,8 @@ export function configureApp(app: INestApplication): void {
   express.disable('x-powered-by');
   // Behind a reverse proxy the real client address (used for login rate limiting) is in X-Forwarded-For.
   express.set('trust proxy', env.TRUST_PROXY);
+  // First: every request gets an id that the audit log and the activity recorder share (Module 4 "Changes").
+  app.use(requestContextMiddleware);
   app.use(cookieParser());
   app.setGlobalPrefix('api/v1', { exclude: [] });
 
@@ -18,7 +21,7 @@ export function configureApp(app: INestApplication): void {
     app,
     new DocumentBuilder()
       .setTitle('Aceva Digital System API')
-      .setDescription('Cycle 1 backend: M1 hierarchy and access, M2 login and sessions, M3 employee profiles.')
+      .setDescription('M1 hierarchy and access, M2 login and sessions, M3 employee profiles, M4 activity tracking.')
       .setVersion('0.1.0')
       .addCookieAuth('aceva_session')
       .build(),

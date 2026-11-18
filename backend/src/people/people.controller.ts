@@ -13,8 +13,10 @@ import {
   updatePayRequestSchema,
   updatePersonalRequestSchema,
 } from '@aceva/contracts';
+import type { Request } from 'express';
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, CurrentSessionId, RequestInfo, RequirePermission } from '../access/decorators';
+import { SensitiveView } from '../activity/activity.decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { z } from 'zod';
 import { JoiningService } from './joining.service';
@@ -32,6 +34,19 @@ class CancelOffboardDto extends createZodDto(z.object({ reason: reasonSchema }))
 class ApproveHireDto extends createZodDto(approveHireRequestSchema) {}
 class RejectHireDto extends createZodDto(rejectHireRequestSchema) {}
 class CreateEmployeeDto extends createZodDto(createEmployeeRequestSchema) {}
+
+/** Module 4: what a successful reveal showed (the body was validated before the recorder reads this one field). */
+type RevealField = 'cnic' | 'account' | 'salary';
+const revealField = (request: Request): RevealField => {
+  const field = (request.body as { field?: unknown } | undefined)?.field;
+  return field === 'account' || field === 'salary' ? field : 'cnic';
+};
+const REVEAL_CATEGORY = { cnic: 'personal', account: 'bank', salary: 'salary' } as const;
+const REVEAL_WORDS: Record<RevealField, string> = {
+  cnic: 'Viewed the CNIC of :empId',
+  account: 'Viewed the bank account number of :empId',
+  salary: 'Viewed the salary of :empId',
+};
 
 @ApiTags('hire-requests')
 @Controller('hire-requests')
@@ -152,8 +167,9 @@ export class PeopleController {
 
   @Post(':empId/reveal')
   @Authenticated()
+  @SensitiveView({ category: (request) => REVEAL_CATEGORY[revealField(request)], describe: (request) => REVEAL_WORDS[revealField(request)] })
   @HttpCode(200)
-  @ApiOperation({ summary: 'Show a masked CNIC or bank account number. Every reveal is logged.' })
+  @ApiOperation({ summary: 'Show a masked CNIC or bank account number. Every reveal is logged (audit log and Module 4 sensitive view).' })
   reveal(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('empId') empId: string, @Body() body: RevealDto, @ClientInfo() client: RequestInfo) {
     return this.people.reveal(actor, empId, body.field, client, sessionId);
   }

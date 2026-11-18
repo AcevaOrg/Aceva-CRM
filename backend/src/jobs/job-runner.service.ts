@@ -22,6 +22,9 @@ const BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 3600_000, 6 * 3600_000]
  * Runs scheduled jobs stored in PostgreSQL (the scheduled_jobs table). Several server copies can run at once:
  * each job is claimed with FOR UPDATE SKIP LOCKED so it runs once. Failed jobs retry with a growing delay and the
  * last error is kept; a job that is still "running" after a crash is recovered once its lock is stale.
+ *
+ * One instance for the whole application (provided by the global CommonModule): every module registers its job types
+ * on it in onModuleInit, for example `this.jobs.register('activity.daily_summary', (payload) => ...)`.
  */
 @Injectable()
 export class JobRunner {
@@ -47,6 +50,19 @@ export class JobRunner {
       create: { type, dedupeKey, runAt, payload: payload as never, createdBy: actorId },
       update: { runAt, payload: payload as never, status: 'pending', attempts: 0, lockedAt: null, lockedBy: null, lastError: null, completedAt: null, updatedBy: actorId },
     });
+  }
+
+  /**
+   * Creates a job only if no job with this dedupe key exists yet, and never re-arms one that already ran (unlike
+   * schedule). For work that must happen once per period, for example one nightly summary per day: when several servers
+   * try to create it, exactly one job exists. Returns true if this call created it.
+   */
+  async scheduleOnce(type: string, dedupeKey: string, runAt: Date, payload: Record<string, unknown>, actorId: string | null): Promise<boolean> {
+    const { count } = await this.prisma.scheduledJob.createMany({
+      data: [{ type, dedupeKey, runAt, payload: payload as never, createdBy: actorId }],
+      skipDuplicates: true,
+    });
+    return count === 1;
   }
 
   @Interval(30_000)

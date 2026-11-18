@@ -62,6 +62,12 @@ export const approvalRouteQuerySchema = z.object({
 });
 export type ApprovalRouteQuery = z.infer<typeof approvalRouteQuerySchema>;
 
+/** GET /org/changes?limit=12 (the newest access changes; the screen shows the default 12) */
+export const orgChangesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(12),
+});
+export type OrgChangesQuery = z.infer<typeof orgChangesQuerySchema>;
+
 /** POST /org/departments (the Director) */
 export const createDepartmentRequestSchema = z.object({
   name: z.string().trim().min(2).max(80),

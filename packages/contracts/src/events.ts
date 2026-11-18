@@ -4,8 +4,10 @@ import { z } from 'zod';
  * Outbox event contracts.
  *
  * A module writes an event into the `outbox_events` table in the SAME database
- * transaction as the change it describes. A later module (a "consumer") reads
- * the events it cares about. Consumers are NOT part of Cycle 1.
+ * transaction as the change it describes. The outbox dispatcher
+ * (backend/src/events/outbox-dispatcher.service.ts) hands each event to every
+ * consumer registered for its type and version; Module 4 consumes the auth.*
+ * events. Events nobody consumes yet simply wait in the table.
  *
  * Rules:
  *  - Every event has a `type` and an integer `version`. A breaking change to a
@@ -90,7 +92,73 @@ export const authLogoutV1 = defineEvent(
       'password_changed',
       'forced',
       'employee_left',
+      // Ended from another device in "My devices" (not a signal from that session), and 5 wrong codes in a row.
+      'user_other_device',
+      'too_many_wrong_codes',
     ]),
+  }),
+);
+
+/**
+ * Security events on an account that are not a login or a logout: password changed or reset, two-step login switched
+ * on, off or reset, account locked or unlocked, temporary password set. `byEmpId` is the administrator who did it, or
+ * null when the person did it themselves or the system did it (5 wrong passwords lock the account).
+ */
+export const AUTH_SECURITY_KINDS = [
+  'password_changed',
+  'password_reset',
+  'two_factor_enabled',
+  'two_factor_disabled',
+  'two_factor_reset',
+  'account_locked',
+  'account_unlocked',
+  'temporary_password_set',
+] as const;
+
+export const authSecurityV1 = defineEvent(
+  'auth.security',
+  1,
+  z.object({
+    empId: empIdSchema,
+    kind: z.enum(AUTH_SECURITY_KINDS),
+    byEmpId: empIdSchema.nullable(),
+  }),
+);
+
+// ---------- Module 4 (activity tracking) ----------
+
+/** The alert rules of plan section 8, and the severities. */
+export const ALERT_KINDS = ['account_locked', 'new_device', 'outside_hours', 'large_export', 'salary_views', 'finance_attempts'] as const;
+export const ALERT_SEVERITIES = ['low', 'medium', 'high'] as const;
+
+/**
+ * Module 4 internal: an activity event an alert rule must look at (a blocked finance attempt, a salary or bank detail
+ * view, an export). Written in the same transaction as the activity event, so the rule runs even after a restart.
+ */
+export const activityFlaggedV1 = defineEvent(
+  'activity.flagged',
+  1,
+  z.object({
+    eventId: z.uuid(),
+    empId: empIdSchema,
+    kind: z.enum(['finance_blocked', 'salary_view', 'export']),
+    /** When the activity happened. */
+    at: z.iso.datetime(),
+    module: z.string().min(1).max(80),
+    /** Rows exported (exports only, otherwise null). */
+    rows: z.number().int().min(0).nullable(),
+  }),
+);
+
+/** A security alert was raised. Module 4 mails the Director and the CTO; Module 12 (notifications) can consume it too. */
+export const activityAlertRaisedV1 = defineEvent(
+  'activity.alert.raised',
+  1,
+  z.object({
+    alertId: z.uuid(),
+    kind: z.enum(ALERT_KINDS),
+    severity: z.enum(ALERT_SEVERITIES),
+    empId: empIdSchema,
   }),
 );
 
@@ -133,6 +201,9 @@ export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
   'auth.login_failed': { 1: authLoginFailedV1 },
   'auth.logout': { 1: authLogoutV1 },
+  'auth.security': { 1: authSecurityV1 },
+  'activity.flagged': { 1: activityFlaggedV1 },
+  'activity.alert.raised': { 1: activityAlertRaisedV1 },
   'employee.offboarded': { 1: employeeOffboardedV1 },
   'task.transfer.requested': { 1: taskTransferRequestedV1 },
   'payroll.final_settlement.requested': { 1: payrollFinalSettlementRequestedV1 },
@@ -144,6 +215,9 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   authLoginV1,
   authLoginFailedV1,
   authLogoutV1,
+  authSecurityV1,
+  activityFlaggedV1,
+  activityAlertRaisedV1,
   employeeOffboardedV1,
   taskTransferRequestedV1,
   payrollFinalSettlementRequestedV1,

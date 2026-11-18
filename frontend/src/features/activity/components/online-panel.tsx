@@ -16,7 +16,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative, formatTime } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useForceLogout, useLockAccount, useOnlineNow } from "../hooks";
-import { canActOn } from "../logic";
+import { canActOn, canLockAccounts } from "../logic";
 import type { OnlineSession } from "../types";
 
 /** "Who is online now" (plan §8 admin screens). */
@@ -58,7 +58,7 @@ export function OnlinePanel() {
         <StatCard label="Idle" value={rows.length - active} icon={<Moon />} accent="var(--warning)" hint="no input for 5 min or more" />
         <StatCard label="New devices today" value={rows.filter((r) => r.newDevice).length} icon={<Smartphone />} accent="var(--danger)" hint="also raised as alerts" />
       </div>
-      {viewer && !viewer.can(["session.force_logout", "auth.unlock_account"]) && (
+      {viewer && !viewer.can("session.force_logout") && (
         <p className="text-[12.5px] text-muted-foreground">View only. The Director and the CTO sign people out or lock accounts, for people below them.</p>
       )}
       <DataTable<OnlineSession>
@@ -127,7 +127,7 @@ export function OnlinePanel() {
                       <LogOut /> Force sign-out
                     </DropdownMenuItem>
                   )}
-                  {viewer?.can("auth.unlock_account") && canActOn(viewer.employee.empId, s.empId, below) && (
+                  {viewer && canLockAccounts(viewer) && canActOn(viewer.employee.empId, s.empId, below) && (
                     <DropdownMenuItem destructive onSelect={() => lockAccount(s)}>
                       <Lock /> Lock account
                     </DropdownMenuItem>

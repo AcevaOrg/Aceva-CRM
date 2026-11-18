@@ -30,6 +30,11 @@ export class SmtpMailer extends Mailer {
       port: env.SMTP_PORT,
       secure: env.SMTP_SECURE,
       auth: env.SMTP_USER ? { user: env.SMTP_USER, pass: env.SMTP_PASSWORD ?? '' } : undefined,
+      // nodemailer waits 2 minutes to connect, 30 seconds for the greeting and 10 minutes on a silent socket. A mail host
+      // that drops packets must fail a send in seconds (inside the outbox dispatcher's 20-second limit per consumer).
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
     });
   }
 

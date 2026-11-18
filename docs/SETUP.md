@@ -73,15 +73,23 @@ Install the three services with your operating system's normal installer or pack
 | Give the demo people a login | set `DEMO_PASSWORD` (at least 10 characters), then `npm run db:seed:passwords -w backend`. Development only; refuses production |
 | Rebuild your local database from scratch (deletes its data) | `npm run db:reset -w backend`, then `npm run db:seed` and the demo logins again |
 | Type check, lint | `npm run typecheck`, `npm run lint` |
+| Build the shared contracts (after pulling changes) | `npm run build -w @aceva/contracts`. Backend and frontend read `@aceva/contracts` from its git-ignored `dist` folder |
 | Unit and database tests (use `aceva_test`, rebuilt each run; need PostgreSQL and Redis) | `npm test` |
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave `m4` out to keep Activity on demo data) |
+| Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
+
+Open the website at http://localhost:3000, not http://127.0.0.1:3000: the API accepts only the `localhost` address for the website.
 
 **A database made before the final company structure** (it still has the separate CEO role, the Level 3 Director or
 the "Department Head / Team Lead" role) is refused by `npm run db:seed` with a message saying so. Rebuild it once with
 `npm run db:reset -w backend`, then run `npm run db:seed` and the demo logins again.
+
+The database tests (`aceva_test`) switch off the background work (the outbox dispatcher and the summary schedule) for every
+test file (`backend/test/global-setup.ts`, `switchOffBackgroundWork`), so no test finds background jobs or summary jobs
+left in `aceva_test`.
 
 Browser downloads for the tests go to Playwright's default folder. To keep them on another drive, set
 `PLAYWRIGHT_BROWSERS_PATH` to a folder of your choice before `npx playwright install chromium` and before the tests.
@@ -99,6 +107,30 @@ approves nothing except the Director's own leave and attendance corrections), **
 CTO (Level 3), Sales and the Finance person (ACV-0010 Sana Malik) are Level 4 under the Director, and the developers and
 SQA are Level 5 under the CTO. There is no separate CEO role and no separate HR officer; the automated tests add a
 test-only HR officer to the test database only.
+
+## Module 4 (activity tracking) settings
+
+Three optional lines in `backend/.env` (all have safe defaults; see `backend/.env.example`):
+
+| Variable | Default | What it does |
+|---|---|---|
+| `GEOIP_RANGES` | empty (every city "unknown") | The approximate city of an internet address, from a **local** list: `range/prefix=City; ...`. No outside service is ever called. To see a city when you sign in on this computer, use `GEOIP_RANGES=127.0.0.0/8=Karachi` (it also covers the IPv6 loopback `::1`). Restart the API after changing it |
+| `OUTBOX_DISPATCH_INTERVAL_MS` | `5000` | How often events are turned into activity records, alerts and alert emails. `0` switches it off (the tests do this) |
+| `ACTIVITY_SUMMARY_SCHEDULE` | `on` | Builds the nightly activity summaries at 00:15 Pakistan time and catches up the last 7 days after the API was off |
+
+Alert emails go to the Director's and the CTO's official addresses through the normal mailer, so locally they arrive in
+Mailpit (http://127.0.0.1:8025). If Mailpit is not running, the alert is still stored and shown; the email is retried. SMTP
+sends time out after about 10 to 15 seconds (connection 10 s, greeting 10 s, socket 15 s); a mail server that does not
+answer is given up on and the email is retried after 10 s, 30 s, 2 min and so on, without holding up logins or alerts.
+
+The alert thresholds and the "outside working hours" window are the `alert-rules` section of the `system_settings` table.
+There is no settings screen yet (Module 12); without a row the defaults apply (outside hours 20:00 to 07:00 Pakistan time,
+large export 500 rows, 5 salary records an hour, 3 finance attempts in 15 minutes). `docs/M4-ACCEPTANCE.md` shows how to
+change them with SQL for a check by hand.
+
+The database sessions must run in UTC. The API sets this itself on every database connection, so a PostgreSQL in another
+time zone (for example Pakistan time, `Asia/Karachi`) works without changes. `SHOW timezone;` in `psql` shows the
+server's own setting, which the API does not use.
 
 ## Not used locally (on purpose)
 MinIO or any other object storage: uploaded files are kept in the private folder `FILE_STORAGE_ROOT`

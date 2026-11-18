@@ -1,19 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CityLocator } from '../../common/city-locator';
 import { Clock } from '../../common/clock';
 import { OutboxService } from '../../events/outbox.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CryptoService } from '../crypto.service';
 import { parseUserAgent } from '../user-agent';
+import { FINANCE_IDLE_LIMIT_MS, IDLE_LIMIT_MS, MAX_SESSION_MS } from './session-limits';
 import { CachedSession, SessionStore } from './session-store';
 
-/** The fixed session limits (plan section 6). */
-export const IDLE_LIMIT_MS = 30 * 60_000; // normal screens
-export const FINANCE_IDLE_LIMIT_MS = 10 * 60_000; // finance screens
-export const MAX_SESSION_MS = 12 * 3_600_000; // in any case
+/** The fixed session limits (plan section 6) live in session-limits.ts; they are also exported from here. */
+export { FINANCE_IDLE_LIMIT_MS, IDLE_LIMIT_MS, MAX_SESSION_MS };
 /** PostgreSQL gets the "last active" time at most this often (Redis always has the exact value). */
 const PG_SYNC_EVERY_MS = 60_000;
 
-export type EndReason = 'user' | 'idle_timeout' | 'max_duration' | 'password_changed' | 'forced' | 'employee_left';
+export type EndReason =
+  | 'user'
+  | 'idle_timeout'
+  | 'max_duration'
+  | 'password_changed'
+  | 'forced'
+  | 'employee_left'
+  | 'user_other_device'
+  | 'too_many_wrong_codes';
 
 export type SessionCheck =
   | { ok: true; session: CachedSession }
@@ -46,6 +54,7 @@ export class SessionService {
     private readonly crypto: CryptoService,
     private readonly clock: Clock,
     private readonly outbox: OutboxService,
+    private readonly cities: CityLocator,
   ) {}
 
   /** Creates a session. Returns the secret token (for the cookie) and the CSRF token (for the page); neither is stored. */
@@ -70,6 +79,8 @@ export class SessionService {
         device: device.device,
         browser: device.browser,
         os: device.os,
+        // Module 4: the approximate city from the internet address only (a local list, never GPS, no outside service).
+        city: this.cities.cityFor(input.ip),
         lastActiveAt: now,
         absoluteExpiresAt,
         createdAt: now,
@@ -95,10 +106,11 @@ export class SessionService {
   }
 
   /**
-   * Checks the cookie token. On success the "last active" time moves to now. An expired or unknown session
-   * is ended (if it exists) and refused.
+   * Checks the cookie token. On success the "last active" time moves to now, unless `touch` is false (a request that
+   * does not count as activity, such as a heartbeat from an unused tab). An expired or unknown session is ended (if it
+   * exists) and refused.
    */
-  async authenticate(token: string, options: { financeScreen: boolean }): Promise<SessionCheck> {
+  async authenticate(token: string, options: { financeScreen: boolean; touch?: boolean }): Promise<SessionCheck> {
     const now = this.clock.now().getTime();
     const tokenHash = this.crypto.sha256(token);
 
@@ -116,10 +128,12 @@ export class SessionService {
       return { ok: false, reason: 'expired' };
     }
 
-    session.lastActiveAt = now;
-    if (now - session.pgSyncedAt >= PG_SYNC_EVERY_MS) {
-      session.pgSyncedAt = now;
-      await this.prisma.session.updateMany({ where: { id: session.id, revokedAt: null }, data: { lastActiveAt: new Date(now) } });
+    if (options.touch !== false) {
+      session.lastActiveAt = now;
+      if (now - session.pgSyncedAt >= PG_SYNC_EVERY_MS) {
+        session.pgSyncedAt = now;
+        await this.prisma.session.updateMany({ where: { id: session.id, revokedAt: null }, data: { lastActiveAt: new Date(now) } });
+      }
     }
     await this.store.set(tokenHash, session, (session.absoluteExpiresAt - now) / 1000);
     return { ok: true, session };
@@ -185,6 +199,17 @@ export class SessionService {
     if (!sessionId) return false;
     const row = await this.prisma.session.findFirst({ where: { id: sessionId, revokedAt: null }, select: { stepUpAt: true } });
     return !!row?.stepUpAt && this.clock.now().getTime() - row.stepUpAt.getTime() <= SessionService.STEP_UP_VALID_MS;
+  }
+
+  /**
+   * When a live session last counted as active (Redis has the exact time, PostgreSQL a slightly older one), or null if it
+   * has ended. Reading it does not count as activity.
+   */
+  async lastActiveAt(sessionId: string): Promise<number | null> {
+    const row = await this.prisma.session.findUnique({ where: { id: sessionId }, select: { tokenHash: true, lastActiveAt: true, revokedAt: true } });
+    if (!row || row.revokedAt) return null;
+    const cached = await this.store.get(row.tokenHash);
+    return cached?.lastActiveAt ?? row.lastActiveAt.getTime();
   }
 
   /** Ends one session everywhere and tells Module 4. Safe to call twice. */

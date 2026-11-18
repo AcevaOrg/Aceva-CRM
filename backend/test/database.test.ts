@@ -394,3 +394,17 @@ describe('outbox and scheduled jobs', () => {
     expect(message).toMatch(/dedupe_key|scheduled_jobs/);
   });
 });
+
+describe('database time zone', () => {
+  it('runs every session in UTC, whatever time zone the server is set to', async () => {
+    const rows = await prisma.$queryRawUnsafe<Record<string, string>[]>('SHOW TimeZone');
+    expect(Object.values(rows[0])).toEqual(['UTC']);
+  });
+
+  it('writes database-side defaults (CURRENT_TIMESTAMP) in the same time as the values the app writes', async () => {
+    const [row] = await prisma.$queryRawUnsafe<{ same: boolean }[]>(
+      `SELECT (CURRENT_TIMESTAMP::timestamp = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')) AS same`,
+    );
+    expect(row.same).toBe(true);
+  });
+});
