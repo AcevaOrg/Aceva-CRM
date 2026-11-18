@@ -1,21 +1,22 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { DUTY_SEEDS, PERMISSION_KEYS, ROLE_SEEDS } from './permission-catalogue';
+import { seedTaskReferenceData } from './seed-tasks';
 
 /**
  * Development and test seed data. Safe to run more than once (it only adds what is missing).
  *
- * The company structure follows the DEVELOPMENT PLAN (section 5), not the frontend mocks:
- *   Level 1 Owner | Level 2 CEO | Level 3 Director and CTO | Level 4 Heads and Leads | Level 5 Employees
+ * The company structure is the one the owner of the company decided (final):
+ *   Level 1 CEO / Founder / Owner | Level 2 Director | Level 3 CTO | Level 4 Sales and Finance | Level 5 Developer / SQA
  *
  * All people below are fictional demo data. No passwords are created (login is built in M2).
  */
 
 export const LEVELS = [
-  { number: 1, name: 'Owner' },
-  { number: 2, name: 'CEO' },
-  { number: 3, name: 'Director and CTO' },
-  { number: 4, name: 'Department Head and Team Lead' },
-  { number: 5, name: 'Employee' },
+  { number: 1, name: 'CEO / Founder / Owner' },
+  { number: 2, name: 'Director' },
+  { number: 3, name: 'CTO' },
+  { number: 4, name: 'Sales and Finance' },
+  { number: 5, name: 'Developer / SQA' },
 ] as const;
 
 export const PERMISSIONS: Array<{ key: string; module: string; description: string }> = PERMISSION_KEYS.map((key) => {
@@ -28,12 +29,11 @@ export const ROLES = ROLE_SEEDS;
 export const DUTIES = DUTY_SEEDS;
 
 /**
- * The only allowed same-level reporting lines (plan: the CTO reports to the Director, both Level 3).
- * Everything else must report to a strictly higher level.
+ * Allowed same-level reporting lines. NONE are configured: in the final structure everybody reports to someone at a
+ * strictly higher level (the CTO, Level 3, reports to the Director, Level 2). The rule table stays, so a pair can be
+ * added here later if the company ever needs one; the seed keeps the table equal to this list.
  */
-export const SAME_LEVEL_RULES: Array<{ manager: string; employee: string; reason: string }> = [
-  { manager: 'director', employee: 'cto', reason: 'The CTO (Level 3) reports to the Director (Level 3), as documented in the company structure.' },
-];
+export const SAME_LEVEL_RULES: Array<{ manager: string; employee: string; reason: string }> = [];
 
 /** Department and office codes match the ids the frontend already uses (dep-eng, off-khi ...). */
 export const DEPARTMENTS = [
@@ -70,22 +70,21 @@ type DemoEmployee = {
 };
 
 /**
- * The demo company, following the DEVELOPMENT PLAN's five levels:
- *   Level 1 Owner > Level 3 Director > Level 3 CTO (same-level line, explicitly configured),
- *   Level 4 heads and leads (Sales, Finance) report to the Director, Level 5 developers report to the CTO.
- * Level 2 (CEO) is an official level and role, but the demo company has no CEO yet, so the Director reports to the Owner.
- * The demo HR work is done by the Director, who holds the HR duty. Emp-IDs match the frontend's demo roster; ACV-0002, ACV-0005
- * and ACV-0015 are not used (Emp-IDs are never renumbered or reused).
+ * The demo company, in the final structure:
+ *   Level 1 CEO / Founder / Owner > Level 2 Director > Level 3 CTO > Level 5 Developer / SQA,
+ *   Level 4 Sales and the Finance person report to the Director.
+ * The Director also holds the HR and sales-manager duties (there is no separate HR person). Emp-IDs match the frontend's
+ * demo roster; ACV-0002, ACV-0005 and ACV-0015 are not used (Emp-IDs are never renumbered or reused).
  */
 export const DEMO_EMPLOYEES: DemoEmployee[] = [
-  { empId: 'ACV-0001', slug: 'owner', name: 'Hamza Qureshi', email: 'hamza', designation: 'Owner and Founder', department: 'dep-mgmt', office: 'off-dadu', level: 1, role: 'owner', reportsTo: null },
-  { empId: 'ACV-0003', slug: 'director', name: 'Bilal Ahmed', email: 'bilal', designation: 'Director', department: 'dep-mgmt', office: 'off-dadu', level: 3, role: 'director', reportsTo: 'owner', duties: ['hr'] },
+  { empId: 'ACV-0001', slug: 'owner', name: 'Hamza Qureshi', email: 'hamza', designation: 'CEO, Founder and Owner', department: 'dep-mgmt', office: 'off-dadu', level: 1, role: 'owner', reportsTo: null },
+  { empId: 'ACV-0003', slug: 'director', name: 'Bilal Ahmed', email: 'bilal', designation: 'Director', department: 'dep-mgmt', office: 'off-dadu', level: 2, role: 'director', reportsTo: 'owner', duties: ['hr', 'sales_manager'] },
   { empId: 'ACV-0004', slug: 'cto', name: 'Omar Farooq', email: 'omar', designation: 'Chief Technology Officer', department: 'dep-eng', office: 'off-dadu', level: 3, role: 'cto', reportsTo: 'director' },
   { empId: 'ACV-0006', slug: 'dev1', name: 'Fahad Khan', email: 'fahad', designation: 'Senior Backend Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0007', slug: 'dev2', name: 'Mariam Shah', email: 'mariam', designation: 'Software Developer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0008', slug: 'dev3', name: 'Ali Raza', email: 'ali', designation: 'Backend Developer', department: 'dep-eng', office: 'off-remote', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0009', slug: 'sales1', name: 'Hira Baig', email: 'hira', designation: 'Sales Executive', department: 'dep-sales', office: 'off-khi', level: 4, role: 'sales', reportsTo: 'director' },
-  { empId: 'ACV-0010', slug: 'finance', name: 'Sana Malik', email: 'sana', designation: 'Finance Officer', department: 'dep-fin', office: 'off-dadu', level: 4, role: 'level4_default', reportsTo: 'director', duties: ['finance'] },
+  { empId: 'ACV-0010', slug: 'finance', name: 'Sana Malik', email: 'sana', designation: 'Finance Officer', department: 'dep-fin', office: 'off-dadu', level: 4, role: 'finance', reportsTo: 'director', duties: ['finance'] },
   { empId: 'ACV-0011', slug: 'sqa1', name: 'Danish Iqbal', email: 'danish', designation: 'SQA Engineer', department: 'dep-eng', office: 'off-khi', level: 5, role: 'employee', reportsTo: 'cto' },
   { empId: 'ACV-0012', slug: 'sales2', name: 'Kamran Javed', email: 'kamran', designation: 'Sales Executive', department: 'dep-sales', office: 'off-remote', level: 4, role: 'sales', reportsTo: 'director' },
   { empId: 'ACV-0013', slug: 'sqa2', name: 'Nida Aslam', email: 'nida', designation: 'SQA Intern', department: 'dep-eng', office: 'off-dadu', level: 5, role: 'employee', reportsTo: 'cto', type: 'intern', weeklyHours: 20 },
@@ -113,6 +112,24 @@ export async function rebuildReportingClosure(tx: Tx): Promise<void> {
     SELECT ancestor_id, descendant_id, depth FROM tree`;
 }
 
+/**
+ * A local database created before the final company structure still has people on a removed role (ceo, level3_default,
+ * level4_default) or on a role whose level moved (the Director was Level 3). The seed never moves people by itself:
+ * it stops and asks for a rebuild instead (nothing is changed, the transaction is rolled back).
+ */
+async function refuseOldStructure(tx: Tx): Promise<void> {
+  const levelOfRole = new Map(ROLES.map((r) => [r.key, r.level]));
+  const people = await tx.employee.findMany({ select: { empId: true, level: { select: { number: true } }, role: { select: { key: true } } } });
+  const stale = people.filter((p) => levelOfRole.get(p.role.key) !== p.level.number);
+  if (stale.length) {
+    const list = stale.map((p) => `${p.empId} (role ${p.role.key}, Level ${p.level.number})`).join(', ');
+    throw new Error(
+      `This database still has the old company structure: ${list}. Rebuild it with "npm run db:reset -w backend", ` +
+        'then run "npm run db:seed" (see docs/SETUP.md).',
+    );
+  }
+}
+
 export async function seedDatabase(prisma: PrismaClient): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('Refusing to seed demo data in production.');
@@ -137,26 +154,46 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
         return id;
       };
 
-      // Roles and role permissions
+      // Roles and role permissions. The catalogue is the source of truth, so an older database is brought in line too:
+      // each role gets its level, name and default flag, and EXACTLY the listed permissions.
+      await refuseOldStructure(tx);
+      // Every level has exactly one default role (a unique index), and the default of a level can move: clear them first.
+      await tx.role.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
       for (const r of ROLES) {
         const role = await tx.role.upsert({
           where: { key: r.key },
-          update: { name: r.name, isDefault: r.isDefault },
+          update: { name: r.name, isDefault: r.isDefault, levelId: levels.get(r.level)! },
           create: { key: r.key, name: r.name, isDefault: r.isDefault, levelId: levels.get(r.level)! },
         });
+        const wanted = r.permissions.map(permId);
+        await tx.rolePermission.deleteMany({ where: { roleId: role.id, permissionId: { notIn: wanted } } });
         await tx.rolePermission.createMany({
-          data: r.permissions.map((k) => ({ roleId: role.id, permissionId: permId(k) })),
+          data: wanted.map((permissionId) => ({ roleId: role.id, permissionId })),
           skipDuplicates: true,
         });
       }
 
-      // Allowed same-level reporting lines
+      // Roles that are no longer part of the structure (the old ceo, level3_default and level4_default) are removed.
+      // Nobody holds them any more (refuseOldStructure checked that).
+      const removed = (await tx.role.findMany({ where: { key: { notIn: ROLES.map((r) => r.key) } }, select: { id: true } })).map((r) => r.id);
+      if (removed.length) {
+        await tx.sameLevelReportingRule.deleteMany({ where: { OR: [{ managerRoleId: { in: removed } }, { employeeRoleId: { in: removed } }] } });
+        await tx.rolePermission.deleteMany({ where: { roleId: { in: removed } } });
+        await tx.role.deleteMany({ where: { id: { in: removed } } });
+      }
+
+      // Allowed same-level reporting lines: exactly the configured ones (none today).
       const roleIds = new Map((await tx.role.findMany()).map((r) => [r.key, r.id]));
-      for (const rule of SAME_LEVEL_RULES) {
+      const configured = SAME_LEVEL_RULES.map((rule) => ({ managerRoleId: roleIds.get(rule.manager)!, employeeRoleId: roleIds.get(rule.employee)!, reason: rule.reason }));
+      for (const existing of await tx.sameLevelReportingRule.findMany()) {
+        const keep = configured.some((c) => c.managerRoleId === existing.managerRoleId && c.employeeRoleId === existing.employeeRoleId);
+        if (!keep) await tx.sameLevelReportingRule.delete({ where: { id: existing.id } });
+      }
+      for (const rule of configured) {
         await tx.sameLevelReportingRule.upsert({
-          where: { managerRoleId_employeeRoleId: { managerRoleId: roleIds.get(rule.manager)!, employeeRoleId: roleIds.get(rule.employee)! } },
+          where: { managerRoleId_employeeRoleId: { managerRoleId: rule.managerRoleId, employeeRoleId: rule.employeeRoleId } },
           update: {},
-          create: { managerRoleId: roleIds.get(rule.manager)!, employeeRoleId: roleIds.get(rule.employee)!, reason: rule.reason },
+          create: rule,
         });
       }
 
@@ -167,8 +204,10 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
           update: { name: d.name, requiresTwoFactor: d.requiresTwoFactor },
           create: { key: d.key, name: d.name, requiresTwoFactor: d.requiresTwoFactor },
         });
+        const wanted = d.permissions.map(permId);
+        await tx.dutyPermission.deleteMany({ where: { dutyId: duty.id, permissionId: { notIn: wanted } } });
         await tx.dutyPermission.createMany({
-          data: d.permissions.map((k) => ({ dutyId: duty.id, permissionId: permId(k) })),
+          data: wanted.map((permissionId) => ({ dutyId: duty.id, permissionId })),
           skipDuplicates: true,
         });
       }
@@ -229,6 +268,9 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
       await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 14))`;
 
       await rebuildReportingClosure(tx);
+
+      // Module 5: the demo projects and the company holidays (the size table itself is inserted by the migration).
+      await seedTaskReferenceData(tx);
     },
     { timeout: 60000 },
   );

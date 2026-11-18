@@ -51,7 +51,8 @@ export class StandInsService {
 
   /**
    * A manager names a stand-in (or nobody) for a set of dates. The stand-in must be authorized:
-   * an active employee who may approve, at the manager's level or higher, and not the manager.
+   * an active employee who may approve, at the manager's level or higher, and not the manager. The CEO / Founder / Owner
+   * is never a stand-in: he approves only the Director's own leave and corrections.
    */
   async create(actor: Actor, dto: CreateStandInRequest, client: RequestInfo): Promise<StandInView> {
     if (dto.endsOn < isoDay(new Date())) {
@@ -70,6 +71,9 @@ export class StandInsService {
         if (standIn.status === 'left') throw new BadRequestException('The stand-in has left the company');
         if (standIn.level.number > actor.levelNumber) {
           throw new BadRequestException('A stand-in must be at your level or above');
+        }
+        if (standIn.level.number === 1) {
+          throw new BadRequestException('The CEO / Founder / Owner approves only the Director\'s own requests, so cannot be a stand-in');
         }
         if (!(await this.permissions.canApprove(standIn.id, tx))) {
           throw new BadRequestException(`${standIn.empId} is not authorized to approve, so cannot be a stand-in`);
@@ -130,7 +134,7 @@ export class StandInsService {
     return rows.map(view);
   }
 
-  /** The manager can end their own period early; Owner or CEO can end the period of anyone below them. */
+  /** The manager can end their own period early; the Director (org.manage) can end the period of anyone below them. */
   async revoke(actor: Actor, id: string, dto: RevokeStandInRequest, client: RequestInfo): Promise<StandInView> {
     return this.prisma.$transaction(async (tx) => {
       const period = await tx.standIn.findUnique({ where: { id }, select: { ...select, managerId: true } });

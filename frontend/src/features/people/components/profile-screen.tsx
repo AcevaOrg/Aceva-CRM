@@ -74,10 +74,17 @@ export function ProfileScreen({ empId }: { empId: string }) {
   const below = descendantsOf(viewer.employee.empId, lookup.employees).includes(e.empId);
   const locked = locks.data?.some((l) => l.empId === e.empId);
   // Unlocking and offboarding only go downward: a manager for people below them in the reporting line.
-  const canUnlock = viewer.can("auth.unlock_account") && below && !!locked;
+  // The CEO / Founder / Owner unlocks only his direct report, the Director.
+  const canUnlock = viewer.can("auth.unlock_account") && below && !!locked && (viewer.employee.level > 1 || e.reportsTo === viewer.employee.empId);
   const canOffboard = viewer.can("people.manage") && view.access.edit.job;
-  // Lost authenticator: Owner/CEO, Director or the HR duty, for people of lower rank. The server makes the final decision.
-  const canResetTwoFactor = isLive("m2") && !view.access.isSelf && e.status !== "left" && e.level > viewer.employee.level && (viewer.employee.level <= 2 || viewer.can("people.manage"));
+  // Lost authenticator: the Director (people below), the HR duty (lower rank) or the CEO / Founder / Owner (the Director only). The server makes the final decision.
+  const canResetTwoFactor =
+    isLive("m2") &&
+    !view.access.isSelf &&
+    e.status !== "left" &&
+    e.level > viewer.employee.level &&
+    viewer.can("auth.reset_two_factor") &&
+    (viewer.employee.level > 1 || e.reportsTo === viewer.employee.empId);
   const dept = lookup.department(e.departmentId);
   const office = lookup.office(e.officeId);
 

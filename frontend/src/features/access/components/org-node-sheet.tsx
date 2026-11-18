@@ -25,8 +25,9 @@ import { canReportTo, descendantIds, REPORTS_TO_HINT } from "../logic";
 const DUTIES: Duty[] = ["finance", "hr", "sales_manager"];
 
 /**
- * Side sheet for one org chart node (spec §9.1). The Owner and CEO (org.manage) can move someone under a different
- * manager or change their level; the Director (duty.assign) gives extra duties. The server checks every one of these.
+ * Side sheet for one org chart node (spec §9.1). The Director (org.manage) can move someone under a different manager or
+ * change their level, and (duty.assign) gives extra duties. The CEO / Founder / Owner sees the chart, view only.
+ * The server checks every one of these.
  */
 export function OrgNodeSheet({ empId, onClose }: { empId: string | null; onClose: () => void }) {
   // Keyed by person so the forms reset when another node is opened.
@@ -37,7 +38,7 @@ function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => vo
   const lookup = useLookup();
   const tree = useOrgTree();
   const canManage = useCan("org.manage");
-  const canDuties = useCan("roles.manage");
+  const canDuties = useCan("duty.assign");
   const viewer = useViewer();
   const move = useMoveEmployee();
   const changeLevel = useChangeLevel();
@@ -180,7 +181,7 @@ function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => vo
           )}
 
           {!canManage && e.reportsTo && (
-            <p className="rounded-xl border border-dashed border-border px-4 py-3 text-[12.5px] text-muted-foreground">View only. The Owner and the CEO change levels and reporting lines.</p>
+            <p className="rounded-xl border border-dashed border-border px-4 py-3 text-[12.5px] text-muted-foreground">View only. The Director changes levels and reporting lines.</p>
           )}
           {canManage && me?.empId === e.empId && (
             <p className="rounded-xl border border-dashed border-border px-4 py-3 text-[12.5px] text-muted-foreground">Nobody changes their own level or reporting line.</p>
@@ -194,7 +195,7 @@ function NodeSheet({ empId, onClose }: { empId: string | null; onClose: () => vo
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-[13px] font-medium">Change level or reporting line</p>
-                    <p className="text-[12px] text-muted-foreground">Only the Owner and the CEO can do this. A reason is required.</p>
+                    <p className="text-[12px] text-muted-foreground">Only the Director can do this. A reason is required.</p>
                   </div>
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" onClick={() => setMode("level")} disabled={!levelChoices.length}>

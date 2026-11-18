@@ -13,12 +13,13 @@ import { useCan } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 
 /**
- * Hire requests: Director or HR start a hire; only the Owner or CEO authorize the level and reporting line.
- * Shown to people who can start or authorize hires (live mode only).
+ * Hire requests: HR starts a hire; only the Director authorizes the level and reporting line (the Director can also
+ * hire directly). Shown to people who can start or authorize hires, and to the CEO / Founder / Owner (view only, as the
+ * server allows: people.view_personal). Live mode only.
  */
 export function HireRequestsPanel() {
   const authorize = useCan("org.manage");
-  const manage = useCan("people.manage");
+  const manage = useCan(["people.manage", "people.view_personal"]);
   const qc = useQueryClient();
   const askReason = useReason();
   const query = useQuery({
@@ -41,7 +42,7 @@ export function HireRequestsPanel() {
         <UserCheck className="size-4" /> Hires waiting for approval ({rows.length})
       </p>
       <p className="mb-3 text-[12.5px] text-muted-foreground">
-        {authorize ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve." : "The Owner or CEO authorize the level and reporting line. The Emp-ID and welcome email follow after that."}
+        {authorize ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve." : "The Director authorizes the level and reporting line. The Emp-ID and welcome email follow after that."}
       </p>
       <ul className="grid gap-2">
         {rows.map((r) => (
@@ -93,10 +94,10 @@ export function HireRequestsPanel() {
   );
 }
 
-/** People who still report to someone who has left. Nothing moves them automatically; the Owner or CEO assign a new manager. */
+/** People who still report to someone who has left. Nothing moves them automatically; the Director assigns a new manager. */
 export function UnresolvedReportsPanel() {
   const authorize = useCan("org.manage");
-  const manage = useCan("people.manage");
+  const manage = useCan(["people.manage", "people.view_personal"]);
   const query = useQuery({
     queryKey: ["people", "unresolved-reports"],
     queryFn: () => http.get<UnresolvedReport[]>("/employees/unresolved-reports"),
@@ -111,7 +112,7 @@ export function UnresolvedReportsPanel() {
         <UserX className="size-4" /> Need a new manager ({rows.length})
       </p>
       <p className="mb-3 text-[12.5px] text-muted-foreground">
-        These people still report to someone who has left. Nothing is moved automatically. {authorize ? "Open each profile, then Job, to choose the new manager." : "The Owner or CEO assign the new manager."}
+        These people still report to someone who has left. Nothing is moved automatically. {authorize ? "Open each profile, then Job, to choose the new manager." : "The Director assigns the new manager."}
       </p>
       <ul className="grid gap-1.5 text-[13px]">
         {rows.map((r) => (

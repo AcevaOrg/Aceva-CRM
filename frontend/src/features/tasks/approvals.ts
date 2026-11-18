@@ -1,8 +1,12 @@
 /**
  * Approvals provider for Module 5: task reviews and deadline extensions.
  * Reviewer = the person who assigned the task (plan §10).
+ * Live (Module 5 switched on) the server's inbox holds these items (GET /approvals, POST /approvals/:id/approve|reject:
+ * see features/approvals/api.ts), so this mock provider gives none and decides nothing: the same item must never
+ * appear twice.
  */
 import type { ApprovalProvider } from "@/features/approvals/types";
+import { isLive } from "@/lib/api/http";
 import { employeeName } from "@/lib/directory";
 import { formatDate } from "@/lib/dates";
 import { extensionsTable, tasksTable } from "./api";
@@ -11,6 +15,7 @@ import { sizeRule } from "./logic";
 export const taskApprovals: ApprovalProvider = {
   key: "tasks",
   list: (viewer) => {
+    if (isLive("m5")) return [];
     const me = viewer.employee.empId;
     const tasks = tasksTable();
     const reviews = tasks
@@ -49,6 +54,7 @@ export const taskApprovals: ApprovalProvider = {
     return [...reviews, ...extensions];
   },
   decide: (item, decision, viewer, opts) => {
+    if (isLive("m5")) return;
     const me = viewer.employee.empId;
     const now = new Date().toISOString();
     if (item.type === "task_review") {

@@ -2,8 +2,8 @@
 /** Home widgets from Attendance & leave (M7) and Performance (M6). */
 import { CalendarDays, Gauge } from "lucide-react";
 import { Progress } from "@/components/ui/misc";
-import { ScoreDial } from "@/components/shared/metrics";
 import { useLeaveBalances } from "@/features/attendance/hooks";
+import { ScoreDialOrNone } from "@/features/performance/components/parts";
 import { useLatestScorecard, useLivePerformance } from "@/features/performance/hooks";
 import { formatMonthKey } from "@/lib/dates";
 import { Widget, WidgetEmpty, WidgetSkeleton } from "./widget";
@@ -54,7 +54,7 @@ export function PerformanceWidget() {
         <WidgetEmpty>No figures yet this month.</WidgetEmpty>
       ) : (
         <div className="flex items-center gap-5">
-          <ScoreDial score={p.score} size={124} />
+          <ScoreDialOrNone score={p.score} size={124} />
           <div className="grid gap-1 text-[13px]">
             <p className="font-medium">{formatMonthKey(p.month)} so far</p>
             <p className="text-muted-foreground">
@@ -63,7 +63,7 @@ export function PerformanceWidget() {
             </p>
             {latest.data && (
               <p className="text-muted-foreground">
-                Last scorecard ({formatMonthKey(latest.data.month)}): <span className="font-semibold text-foreground tabular">{Math.round(latest.data.score)}</span>
+                Last scorecard ({formatMonthKey(latest.data.month)}): <span className="font-semibold text-foreground tabular">{latest.data.score === null ? "no score yet" : Math.round(latest.data.score)}</span>
               </p>
             )}
           </div>

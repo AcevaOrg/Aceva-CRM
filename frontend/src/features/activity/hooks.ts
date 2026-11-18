@@ -30,6 +30,7 @@ export function useOnlineNow() {
 /**
  * Security alerts. Returns SecurityAlert[] filtered by status (default "open"):
  * { id, rule, severity: "low" | "medium" | "high", empId, at, details, status, checkedBy?, note?, kind? }.
+ * The server sends every open alert (never cut off) plus the newest checked ones, so the open list and its count are complete.
  * CTO, Director and CEO / Founder / Owner (activity.security; only the Director and CTO check them). Disabled for everyone else.
  */
 export function useSecurityAlerts(status: "open" | "checked" | "all" = "open") {
@@ -39,7 +40,7 @@ export function useSecurityAlerts(status: "open" | "checked" | "all" = "open") {
     queryKey: activityKeys.alerts(empId),
     queryFn: activityApi.alerts,
     enabled: !!empId && allowed,
-    select: (list) => (status === "all" ? list : list.filter((a) => a.status === status)).sort((a, b) => b.at.localeCompare(a.at)),
+    select: (list) => list.filter((a) => status === "all" || a.status === status).sort((a, b) => b.at.localeCompare(a.at)),
   });
 }
 

@@ -51,18 +51,23 @@ export class ApprovalsService {
       endsOn: isoDay(p.endsOn),
     }));
 
-    // A stand-in is only used while they are still active and still allowed to approve.
+    // A stand-in is only used while they are still active and still allowed to approve. The CEO / Founder / Owner
+    // (Level 1) is never a stand-in: he approves only the Director's own items.
     const authorized = new Set<string>();
     for (const id of new Set(away.map((a) => a.standInId).filter((v): v is string => !!v))) {
-      const person = await this.prisma.employee.findUnique({ where: { id }, select: { status: true } });
-      if (person && person.status !== 'left' && (await this.permissions.canApprove(id))) authorized.add(id);
+      const person = await this.prisma.employee.findUnique({ where: { id }, select: { status: true, level: { select: { number: true } } } });
+      if (person && person.status !== 'left' && person.level.number > 1 && (await this.permissions.canApprove(id))) authorized.add(id);
     }
 
-    const inactive = new Set((await this.prisma.employee.findMany({ where: { id: { in: chain }, status: 'left' }, select: { id: true } })).map((p) => p.id));
+    const seats = await this.prisma.employee.findMany({ where: { id: { in: chain } }, select: { id: true, status: true, level: { select: { number: true } } } });
+    const inactive = new Set(seats.filter((p) => p.status === 'left').map((p) => p.id));
+    // The CEO / Founder / Owner approves only for the people who report to him directly (the Director).
+    const directReportsOnly = new Set(seats.filter((p) => p.level.number === 1).map((p) => p.id));
 
     const result = resolveApprover({
       requesterId: requester.id,
       inactiveIds: inactive,
+      directReportsOnlyIds: directReportsOnly,
       chain,
       away,
       onDate,

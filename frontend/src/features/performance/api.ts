@@ -1,7 +1,13 @@
 /**
- * Module 6 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
- * Live figures are computed from Module 5 tasks and Module 7 attendance; nobody types a score in.
+ * Module 6 service functions. Each one talks to the real API when Module 6 is live (NEXT_PUBLIC_LIVE_MODULES contains
+ * m6, or NEXT_PUBLIC_API_MODE=live) and to the in-browser mock otherwise; each JSDoc names the real endpoint (spec §7.3).
+ * Live figures are computed from Module 5 tasks (and from attendance and sales figures once those modules exist: until
+ * then the server says "not available" and no number is made up); nobody types a score in.
+ * Live, the server decides everything (who sees whose results, who reviews, releases and decides, the maths, the weights
+ * a scorecard keeps); the checks in the mock branches only mirror it so the demo behaves the same.
  */
+import type { LivePerformanceView, RatingDisputeView, ScoreWeightsVersionView, ScorecardDetailView, ScorecardView, TeamPerformanceRowView } from "@aceva/contracts";
+import { http, isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { chainAbove, descendantsOf, isInScope } from "@/lib/auth/scope";
 import { getViewer } from "@/lib/auth/viewer";
@@ -15,10 +21,14 @@ import { attendanceRate } from "@/features/attendance/api";
 import { tasksTable } from "@/features/tasks/api";
 import { openHours } from "@/features/tasks/logic";
 import type { Task } from "@/features/tasks/types";
+import { mapDetail, mapDispute, mapLive, mapScorecard, mapTeamRow, mapWeights } from "./live";
 import { bandOf, canReviewWork, computeScore, salesMetrics, SMALL_SAMPLE, taskMetrics } from "./logic";
 import type {
   LivePerformance, MetricSet, RatingDispute, SalesDetail, Scorecard, ScorecardDetail, ScorecardTask, TeamPerformanceRow, TrendPoint, WeightsVersion,
 } from "./types";
+
+/** Is Module 6 talking to the real server? (NEXT_PUBLIC_LIVE_MODULES contains m6, or NEXT_PUBLIC_API_MODE=live) */
+const m6Live = () => isLive("m6");
 
 export const scorecardsTable = () => table<Scorecard>("performance.scorecards", seedScorecards);
 export const disputesTable = () => table<RatingDispute>("performance.disputes", () => seedDisputes(scorecardsTable()));
@@ -108,7 +118,7 @@ function computeLive(empId: string): LivePerformance {
   const kind = sales ? "sales" : "standard";
   const weights = currentWeights(kind);
   const latest = latestFor(empId, true);
-  const att = attendanceRate(empId, month).rate ?? (latest ? (latest.metrics as MetricSet).attendance : 100);
+  const att = attendanceRate(empId, month).rate ?? (latest ? ((latest.metrics as MetricSet).attendance ?? 100) : 100);
   let metrics: LivePerformance["metrics"];
   let tasks: ScorecardTask[] = [];
   let salesDetail: SalesDetail | undefined;
@@ -137,11 +147,11 @@ function computeLive(empId: string): LivePerformance {
   }
   const score = computeScore(kind, metrics, weights.weights);
   const trend: TrendPoint[] = scorecardsTable()
-    .filter((s) => s.empId === empId)
+    .filter((s) => s.empId === empId && s.score !== null)
     .sort((a, b) => a.month.localeCompare(b.month))
     .slice(-6)
-    .map((s) => ({ month: s.month, score: s.score }));
-  trend.push({ month, score });
+    .map((s) => ({ month: s.month, score: s.score as number }));
+  if (score !== null) trend.push({ month, score });
   return { empId, month, kind, metrics, salesDetail, weights, score, band: bandOf(score), taskCount, smallSample: !sales && taskCount < SMALL_SAMPLE, trend, tasks };
 }
 
@@ -182,7 +192,23 @@ export function applyRelease(sc: Scorecard, remark?: string) {
   sc.releasedAt = now;
 }
 
-export const performanceApi = {
+/** The functions every screen uses; the mock and the live versions below both have exactly this shape. */
+export interface PerformanceApi {
+  live(empId?: string): Promise<LivePerformance>;
+  latest(empId?: string): Promise<Scorecard | null>;
+  list(empId?: string): Promise<Scorecard[]>;
+  get(id: string): Promise<ScorecardDetail>;
+  team(): Promise<TeamPerformanceRow[]>;
+  remark(id: string, remark: string): Promise<void>;
+  release(id: string, remark?: string): Promise<void>;
+  acknowledge(id: string, comment?: string): Promise<void>;
+  disputes(): Promise<RatingDispute[]>;
+  raiseDispute(scorecardId: string, taskNumber: string, reason: string): Promise<RatingDispute>;
+  decideDispute(id: string, change: boolean, decision: string, newRating?: number): Promise<void>;
+  weights(): Promise<WeightsVersion[]>;
+}
+
+const mockPerformanceApi: PerformanceApi = {
   /** GET /performance/live?empId */
   live: (empId?: string) =>
     mock(() => {
@@ -262,7 +288,7 @@ export const performanceApi = {
       const sc = scorecardsTable().find((s) => s.id === id);
       if (!sc) notFound("Scorecard");
       const v = getViewer();
-      if (!sc.reviewerEmpId || sc.reviewerEmpId !== v.employee.empId || !v.can("task.review")) throw new ApiError("forbidden", "View only. Only the person's manager releases a scorecard.", 403);
+      if (!sc.reviewerEmpId || sc.reviewerEmpId !== v.employee.empId || !v.can("task.review")) throw new ApiError("forbidden", "View only. Only the reviewer of this scorecard releases it.", 403);
       if (sc.empId === sc.reviewerEmpId) throw new ApiError("forbidden", "Nobody releases their own scorecard.", 403);
       applyRelease(sc, remark);
     }),
@@ -332,3 +358,63 @@ export const performanceApi = {
   /** GET /settings/score-weights */
   weights: () => mock(() => weightsTable(), { delay: 60 }),
 };
+
+const enc = encodeURIComponent;
+
+/**
+ * Module 6 against the REAL API. Same names and result shapes as the mock above, so the screens do not change (live.ts
+ * maps the server's answers; the weights come as whole percents and are turned into fractions there). The server decides
+ * who sees whose results and drafts, who reviews, releases and decides, and what the numbers are: nothing here computes a score.
+ */
+const livePerformanceApi: PerformanceApi = {
+  /** GET /performance/live?empId= — this month so far for me, or for someone below me (403 for anyone else) */
+  live: async (empId) => mapLive(await http.get<LivePerformanceView>("/performance/live", { empId })),
+
+  /** GET /scorecards?empId=&latest=1 — a list of at most one: the newest scorecard the viewer may see (never a draft of their own) */
+  latest: async (empId) => {
+    const rows = await http.get<ScorecardView[]>("/scorecards", { empId, latest: 1 });
+    return rows[0] ? mapScorecard(rows[0]) : null;
+  },
+
+  /** GET /scorecards?empId= — newest month first */
+  list: async (empId) => (await http.get<ScorecardView[]>("/scorecards", { empId })).map(mapScorecard),
+
+  /** GET /scorecards/:id — the scorecard, the weights version it was made with, its disputes and its remark history */
+  get: async (id) => mapDetail(await http.get<ScorecardDetailView>(`/scorecards/${enc(id)}`)),
+
+  /** GET /performance/team — the people below me, sorted by name (never by score) */
+  team: async () => (await http.get<TeamPerformanceRowView[]>("/performance/team")).map(mapTeamRow),
+
+  /** POST /scorecards/:id/remark { remark } — the reviewer only; the numbers can never be changed */
+  remark: async (id, remark) => {
+    await http.post<ScorecardView>(`/scorecards/${enc(id)}/remark`, { remark: remark.trim() });
+  },
+
+  /** POST /scorecards/:id/release { remark? } — the reviewer only, never their own */
+  release: async (id, remark) => {
+    const text = remark?.trim();
+    await http.post<ScorecardView>(`/scorecards/${enc(id)}/release`, text ? { remark: text } : {});
+  },
+
+  /** POST /scorecards/:id/acknowledge { comment? } — the employee, once it is released */
+  acknowledge: async (id, comment) => {
+    const text = comment?.trim();
+    await http.post<ScorecardView>(`/scorecards/${enc(id)}/acknowledge`, text ? { comment: text } : {});
+  },
+
+  /** GET /disputes — mine, the ones I decide, and the ones of people below me */
+  disputes: async () => (await http.get<RatingDisputeView[]>("/disputes")).map(mapDispute),
+
+  /** POST /disputes { scorecardId, taskNumber, reason } — the employee, on their own released scorecard; one open dispute per task */
+  raiseDispute: async (scorecardId, taskNumber, reason) => mapDispute(await http.post<RatingDisputeView>("/disputes", { scorecardId, taskNumber, reason: reason.trim() })),
+
+  /** POST /disputes/:id/decide { change, decision, newRating? } — the decider only; a changed rating recomputes the scorecard with its own weights version */
+  decideDispute: async (id, change, decision, newRating) => {
+    await http.post<RatingDisputeView>(`/disputes/${enc(id)}/decide`, { change, decision: decision.trim(), ...(change && newRating ? { newRating } : {}) });
+  },
+
+  /** GET /settings/score-weights — every version, newest first (whole percents on the server, fractions here) */
+  weights: async () => (await http.get<ScoreWeightsVersionView[]>("/settings/score-weights")).map(mapWeights),
+};
+
+export const performanceApi: PerformanceApi = m6Live() ? livePerformanceApi : mockPerformanceApi;

@@ -3,15 +3,18 @@ import { Controller, Get } from '@nestjs/common';
 import { outboxEventSchema } from '@aceva/contracts';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { ActivityRecorder } from '../src/activity/activity-recorder.service';
 import { Authenticated, FinanceScreen } from '../src/access/decorators';
 import { CryptoService } from '../src/auth/crypto.service';
 import { SessionService } from '../src/auth/session/session.service';
 import { clearCookieOptions, sessionCookieOptions } from '../src/auth/session/session-cookie';
 import { loadEnv } from '../src/config/env';
+import { OutboxDispatcher } from '../src/events/outbox-dispatcher.service';
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { RedisService } from '../src/redis/redis.service';
 import { createTestApp, TEST_PASSWORD, type TestApp } from './helpers/app';
 import { baseEnv } from './helpers/base-env';
+import { seedDevPasswords } from '../prisma/seed-dev-passwords';
 import { createEmployee } from './helpers/people';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
@@ -28,7 +31,6 @@ class FinanceScreenController {
 }
 
 const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 const FINANCE = 'ACV-0010';
@@ -53,7 +55,6 @@ beforeAll(async () => {
   t = await createTestApp({ extraControllers: [FinanceScreenController] });
   prisma = createTestPrisma();
   await t.ensureFixtures();
-  CEO = t.fixtures.CEO;
   redis = t.app.get(RedisService);
   sessions = t.app.get(SessionService);
 });
@@ -269,6 +270,8 @@ describe('M2 My devices', () => {
     const phoneId = (list.find((s) => s.device === 'Android phone') as { id: string }).id;
     await windows.delete(`/api/v1/auth/sessions/${phoneId}`).expect(200);
     await get('/api/v1/auth/me', phone.cookie).expect(401);
+    // Module 4 must not take it as a signal from that device (a shut laptop), so it has its own end reason
+    expect((await ended(phone.cookie)).revokedReason).toBe('user_other_device');
     await get('/api/v1/auth/me', iphone.cookie).expect(200);
     // you cannot end the session you are using this way
     const currentId = (list.find((s) => s.current) as { id: string }).id;
@@ -277,8 +280,13 @@ describe('M2 My devices', () => {
     // log out all my other devices
     expect((await windows.delete('/api/v1/auth/sessions').expect(200)).body.ended).toBe(1);
     await get('/api/v1/auth/me', iphone.cookie).expect(401);
+    expect((await ended(iphone.cookie)).revokedReason).toBe('user_other_device');
     await get('/api/v1/auth/me', windows.cookie).expect(200);
     expect(((await windows.get('/api/v1/auth/sessions').expect(200)).body as unknown[]).length).toBe(1);
+    // My recent logins still shows them as logged out by the person
+    const history = (await windows.get('/api/v1/auth/login-history').expect(200)).body as Array<{ id: string; endReason?: string }>;
+    const phoneRow = history.find((h) => h.id === phoneId);
+    expect(phoneRow?.endReason).toBe('clicked');
   });
 
   it('shows my recent logins and failed attempts with how each ended', async () => {
@@ -337,13 +345,30 @@ describe('M2 two-step login (TOTP)', () => {
   });
 
   it('five wrong codes end the session and are recorded', async () => {
-    const login = await t.rawLogin({ empId: CEO, password: TEST_PASSWORD }).expect(200);
+    // a fresh person for whom 2FA is mandatory (Finance duty) and who has not set it up yet
+    const person = await createEmployee(prisma, { name: 'Two Step Person' });
+    const duty = await prisma.duty.findUniqueOrThrow({ where: { key: 'finance' }, select: { id: true } });
+    await prisma.employeeDuty.create({ data: { employeeId: person.id, dutyId: duty.id, reason: 'Test fixture' } });
+    await seedDevPasswords(prisma, TEST_PASSWORD);
+    const login = await t.rawLogin({ empId: person.empId, password: TEST_PASSWORD }).expect(200);
+    expect(login.body.status).toBe('2fa_setup_required');
     const headers = { Cookie: (login.headers['set-cookie'] as unknown as string[])[0].split(';')[0], 'X-CSRF-Token': login.body.csrfToken };
     await request(t.app.getHttpServer()).post('/api/v1/auth/2fa/setup').set(headers).send({}).expect(200);
     for (let i = 0; i < 4; i++) await request(t.app.getHttpServer()).post('/api/v1/auth/2fa/verify').set(headers).send({ code: '000000' }).expect(400);
     const last = await request(t.app.getHttpServer()).post('/api/v1/auth/2fa/verify').set(headers).send({ code: '000000' }).expect(403);
     expect(last.body.code).toBe('too_many_wrong_codes');
     await request(t.app.getHttpServer()).get('/api/v1/auth/me').set(headers).expect(401);
+    // Module 4 words it as "too many wrong codes", not "by an administrator" (still a forced logout)
+    const endedSession = await ended(headers.Cookie);
+    expect(endedSession.revokedReason).toBe('too_many_wrong_codes');
+    let logoutRecord: { description: string; details: unknown } | null = null;
+    for (let i = 0; i < 60 && !logoutRecord; i++) {
+      await t.app.get(ActivityRecorder).flush();
+      await t.app.get(OutboxDispatcher).tick();
+      logoutRecord = await prisma.activityEvent.findFirst({ where: { action: 'logout', sessionId: endedSession.id } });
+    }
+    expect(logoutRecord?.description).toBe('Signed out after too many wrong codes');
+    expect(logoutRecord?.details).toMatchObject({ how: 'forced', reason: 'too_many_wrong_codes' });
     expect(await prisma.outboxEvent.count({ where: { type: 'auth.login_failed', payload: { path: ['reason'], equals: 'two_factor_failed' } } })).toBeGreaterThanOrEqual(5);
   });
 
@@ -454,7 +479,7 @@ describe('M2 events for Module 4 (activity tracking)', () => {
   it('logout events cover every way a session can end, and never contain secrets', async () => {
     const logouts = await prisma.outboxEvent.findMany({ where: { type: 'auth.logout' } });
     const reasons = new Set(logouts.map((l) => (l.payload as { reason: string }).reason));
-    for (const reason of ['user', 'idle_timeout', 'max_duration', 'forced', 'employee_left']) expect(reasons.has(reason)).toBe(true);
+    for (const reason of ['user', 'idle_timeout', 'max_duration', 'forced', 'employee_left', 'user_other_device', 'too_many_wrong_codes']) expect(reasons.has(reason)).toBe(true);
     const everything = JSON.stringify(await prisma.outboxEvent.findMany());
     expect(everything).not.toContain(TEST_PASSWORD);
     expect(everything).not.toMatch(/aceva_session|csrf|secret/i);

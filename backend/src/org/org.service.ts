@@ -261,7 +261,7 @@ export class OrgService {
 
   // ---------------------------------------------------------------- changing levels and lines
 
-  /** Owner or CEO changes someone's level (and role). Everything is validated before saving. */
+  /** The Director changes someone's level (and role). Everything is validated before saving. */
   async changeLevel(actor: Actor, targetEmpId: string, dto: ChangeLevelRequest, client: RequestInfo) {
     return this.prisma.$transaction(async (tx) => {
       await this.hierarchy.lock(tx);
@@ -332,7 +332,7 @@ export class OrgService {
     });
   }
 
-  /** Owner or CEO moves someone under a different reporting person. */
+  /** The Director moves someone under a different reporting person. */
   async changeReportingLine(actor: Actor, targetEmpId: string, dto: ChangeReportingLineRequest, client: RequestInfo) {
     return this.prisma.$transaction(async (tx) => {
       await this.hierarchy.lock(tx);

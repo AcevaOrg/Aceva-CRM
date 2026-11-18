@@ -271,7 +271,7 @@ export const payrollApi = {
       const v = requireView();
       if (!canPrepare(v)) throw new ApiError("forbidden", "Only Finance records salary advances.", 403);
       const target = employeesTable().find((e) => e.empId === input.empId);
-      if (!target || isTopLevelRole(target.role)) throw new ApiError("validation", "Salary advances are for employees, not the Owner or CEO.");
+      if (!target || isTopLevelRole(target.role)) throw new ApiError("validation", "Salary advances are for employees, not the CEO / Founder / Owner.");
       const adv: SalaryAdvance = {
         id: uid("adv"),
         empId: input.empId,

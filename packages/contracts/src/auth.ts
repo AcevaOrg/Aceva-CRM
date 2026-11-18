@@ -21,6 +21,21 @@ export const loginRequestSchema = z.object({
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
+/**
+ * POST /auth/logout. No body (or an empty one) is a normal, clicked logout. The browser's own idle timer always runs
+ * out before the server's, so it says why it is logging out: { reason: "idle_timeout" }, with `financeScreen: true`
+ * when the person was on a finance screen (10 minutes instead of 30). The server believes the reason only when the
+ * session really was idle for about that long; otherwise it records a clicked logout. Unknown fields are refused.
+ */
+export const logoutRequestSchema = z
+  .object({
+    reason: z.literal('idle_timeout').optional(),
+    financeScreen: z.boolean().optional(),
+  })
+  .strict()
+  .default({});
+export type LogoutRequest = z.infer<typeof logoutRequestSchema>;
+
 /** POST /auth/2fa/verify */
 export const verifyTwoFactorRequestSchema = z.object({ code });
 export type VerifyTwoFactorRequest = z.infer<typeof verifyTwoFactorRequestSchema>;

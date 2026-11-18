@@ -5,10 +5,9 @@ import { createTestApp, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
-const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
-const DIRECTOR = 'ACV-0003';
-const CTO = 'ACV-0004';
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner (Level 1): sees everything, changes nothing
+const DIRECTOR = 'ACV-0003'; // Level 2: the org administrator and the only approver
+const CTO = 'ACV-0004'; // Level 3, reports to the Director
 let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const FINANCE = 'ACV-0010';
 const SALES1 = 'ACV-0009';
@@ -25,7 +24,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
+  HR = t.fixtures.HR;
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -54,13 +53,13 @@ async function expectClosureMatchesTree() {
   expect({ missing: Number(rows[0].missing), extra: Number(rows[0].extra) }).toEqual({ missing: 0, extra: 0 });
 }
 
-describe('M1 reporting-line changes (Owner or CEO)', () => {
+describe('M1 reporting-line changes (the Director)', () => {
   it('moves a person and updates visibility immediately for everyone (no stale hierarchy)', async () => {
     expect(await teamOf(CTO)).toContain(DEV5);
     expect(await teamOf(FINANCE)).not.toContain(DEV5);
 
     const res = await t
-      .as(CEO)
+      .as(DIRECTOR)
       .patch(`/api/v1/org/employees/${DEV5}/reporting-line`)
       .send({ reportsToEmpId: FINANCE, reason: 'Moved to the finance team for the audit project' })
       .expect(200);
@@ -75,29 +74,28 @@ describe('M1 reporting-line changes (Owner or CEO)', () => {
   });
 
   it('moves a whole branch together (a manager and everyone below them)', async () => {
-    // Move the CTO (with 4 developers still below) to report to the CEO instead of the Director.
+    // Move the Finance person (with DEV5 now below them) under the CTO, then back under the Director.
     await t
-      .as(CEO)
-      .patch(`/api/v1/org/employees/${CTO}/reporting-line`)
-      .send({ reportsToEmpId: CEO, reason: 'CTO now reports directly to the CEO' })
+      .as(DIRECTOR)
+      .patch(`/api/v1/org/employees/${FINANCE}/reporting-line`)
+      .send({ reportsToEmpId: CTO, reason: 'Finance supports the development budget for a while' })
       .expect(200);
-    expect(await teamOf(DIRECTOR)).not.toContain(DEV1);
-    expect(await teamOf(CEO)).toEqual(expect.arrayContaining([CTO, DEV1, DEV2]));
+    expect(await teamOf(CTO)).toEqual(expect.arrayContaining([FINANCE, DEV5]));
     await expectClosureMatchesTree();
 
-    // and put the CTO back under the Director (the explicitly configured same-level line)
     await t
-      .as(CEO)
-      .patch(`/api/v1/org/employees/${CTO}/reporting-line`)
+      .as(DIRECTOR)
+      .patch(`/api/v1/org/employees/${FINANCE}/reporting-line`)
       .send({ reportsToEmpId: DIRECTOR, reason: 'Restoring the documented structure' })
       .expect(200);
-    expect(await teamOf(DIRECTOR)).toContain(DEV1);
+    expect(await teamOf(CTO)).not.toContain(FINANCE);
+    expect(await teamOf(CTO)).not.toContain(DEV5);
     await expectClosureMatchesTree();
   });
 
   it('records who changed what and why, in the audit log, history and profile changes', async () => {
     const [entry] = await auditFor('org.reporting_line.changed', DEV5);
-    expect(entry.actor?.empId).toBe(CEO);
+    expect(entry.actor?.empId).toBe(DIRECTOR);
     expect(entry.reason).toBe('Moved to the finance team for the audit project');
     expect(entry.details).toEqual({ before: { reportsTo: CTO }, after: { reportsTo: FINANCE } });
     const history = await prisma.employmentHistory.findFirstOrThrow({
@@ -109,8 +107,8 @@ describe('M1 reporting-line changes (Owner or CEO)', () => {
   });
 
   it('requires a reason', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: CTO }).expect(400);
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: CTO, reason: 'no' }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: CTO }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: CTO, reason: 'no' }).expect(400);
   });
 
   const violation = async (actor: string, target: string, manager: string) => {
@@ -123,46 +121,52 @@ describe('M1 reporting-line changes (Owner or CEO)', () => {
   };
 
   it('prevents reporting cycles', async () => {
-    expect(await violation(OWNER, DIRECTOR, CTO)).toEqual(['cycle']); // the CTO is below the Director
-    expect(await violation(OWNER, CEO, DEV1)).toEqual(['cycle']);
+    expect(await violation(DIRECTOR, CTO, DEV1)).toEqual(['cycle']); // the developer is below the CTO
+    expect(await violation(DIRECTOR, FINANCE, DEV5)).toEqual(['cycle']); // DEV5 now reports to Finance
     await expectClosureMatchesTree();
   });
 
   it('prevents a person reporting to themselves', async () => {
-    expect(await violation(CEO, DEV1, DEV1)).toEqual(['self']);
+    expect(await violation(DIRECTOR, DEV1, DEV1)).toEqual(['self']);
   });
 
   it('prevents reporting to someone at a lower level', async () => {
-    expect(await violation(CEO, SALES1, DEV1)).toEqual(['manager_below_employee']);
+    expect(await violation(DIRECTOR, SALES1, DEV1)).toEqual(['manager_below_employee']);
   });
 
-  it('allows same-level reporting ONLY where it is configured (CTO to Director)', async () => {
-    expect(await violation(CEO, SALES1, SALES2)).toEqual(['same_level_not_allowed']);
-    expect(await violation(CEO, DIRECTOR, CTO)).toEqual(['cycle']);
-    // The configured pair is allowed: a second Level 3 role "cto" under the Director.
+  it('refuses every same-level line: none is configured any more (not even CTO to Director)', async () => {
+    expect(await prisma.sameLevelReportingRule.count()).toBe(0);
+    expect(await violation(DIRECTOR, SALES1, SALES2)).toEqual(['same_level_not_allowed']);
+    expect(await violation(DIRECTOR, FINANCE, SALES1)).toEqual(['same_level_not_allowed']);
+    expect(await violation(DIRECTOR, DEV1, DEV2)).toEqual(['same_level_not_allowed']);
     await expectClosureMatchesTree();
   });
 
   it('refuses a move that would put someone under a manager the caller cannot reach', async () => {
-    // The Owner is above the CEO, so the CEO cannot place people under the Owner.
-    await t.as(CEO).patch(`/api/v1/org/employees/${HR}/reporting-line`).send({ reportsToEmpId: OWNER, reason: 'out of scope test' }).expect(403);
+    // The owner is above the Director, so the Director cannot place people under the owner.
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${HR}/reporting-line`).send({ reportsToEmpId: OWNER, reason: 'out of scope test' }).expect(403);
   });
 
-  it('refuses to change the Owner or a person above the caller', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${OWNER}/reporting-line`).send({ reportsToEmpId: CEO, reason: 'attack on the Owner' }).expect(403);
-    await t.as(CEO).patch(`/api/v1/org/employees/${CEO}/reporting-line`).send({ reportsToEmpId: DIRECTOR, reason: 'self change' }).expect(403);
+  it('refuses to change the owner, a person above the caller, or the caller themselves', async () => {
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${OWNER}/reporting-line`).send({ reportsToEmpId: DIRECTOR, reason: 'attack on the owner' }).expect(403);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DIRECTOR}/reporting-line`).send({ reportsToEmpId: CTO, reason: 'self change' }).expect(403);
+  });
+
+  it('the CEO / Founder / Owner changes no reporting line at all (view only)', async () => {
+    await t.as(OWNER).patch(`/api/v1/org/employees/${DEV1}/reporting-line`).send({ reportsToEmpId: DIRECTOR, reason: 'the owner tries a move' }).expect(403);
+    await t.as(OWNER).patch(`/api/v1/org/employees/${DIRECTOR}/reporting-line`).send({ reportsToEmpId: OWNER, reason: 'the owner tries a move' }).expect(403);
   });
 
   it('rejects "no change" requests', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV1}/reporting-line`).send({ reportsToEmpId: CTO, reason: 'same manager again' }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV1}/reporting-line`).send({ reportsToEmpId: CTO, reason: 'same manager again' }).expect(400);
   });
 
   it('serialises simultaneous changes so the tree can never be corrupted', async () => {
-    // Two opposite moves at once: HR under Sales1 (not allowed anyway), plus valid moves racing each other.
+    // Several moves racing each other; each is valid on its own.
     const moves = [
-      t.as(CEO).patch(`/api/v1/org/employees/${DEV2}/reporting-line`).send({ reportsToEmpId: SALES1, reason: 'parallel move 1' }),
-      t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/reporting-line`).send({ reportsToEmpId: SALES2, reason: 'parallel move 2' }),
-      t.as(CEO).patch(`/api/v1/org/employees/${DEV2}/reporting-line`).send({ reportsToEmpId: SALES2, reason: 'parallel move 3' }),
+      t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV2}/reporting-line`).send({ reportsToEmpId: SALES1, reason: 'parallel move 1' }),
+      t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/reporting-line`).send({ reportsToEmpId: SALES2, reason: 'parallel move 2' }),
+      t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV2}/reporting-line`).send({ reportsToEmpId: SALES2, reason: 'parallel move 3' }),
     ];
     const results = await Promise.all(moves.map((m) => m.then((r) => r.status)));
     expect(results.every((s) => s === 200 || s === 400)).toBe(true);
@@ -170,53 +174,65 @@ describe('M1 reporting-line changes (Owner or CEO)', () => {
   });
 });
 
-describe('M1 level changes (Owner or CEO)', () => {
+describe('M1 level changes (the Director)', () => {
   it('changes level and role, and the new permissions apply on the very next request', async () => {
-    expect((await t.as(DEV1).get('/api/v1/access/me').expect(200)).body.permissions).not.toContain('task.assign');
+    expect((await t.as(DEV1).get('/api/v1/access/me').expect(200)).body.permissions).not.toContain('sales.own');
 
     const res = await t
-      .as(CEO)
+      .as(DIRECTOR)
       .patch(`/api/v1/org/employees/${DEV1}/level`)
-      .send({ level: 4, reason: 'Promoted to team lead' })
+      .send({ level: 4, reason: 'Moves to the sales team' })
       .expect(200);
-    expect(res.body).toEqual({ empId: DEV1, level: 4, roleKey: 'level4_default' });
+    expect(res.body).toEqual({ empId: DEV1, level: 4, roleKey: 'sales' }); // the default Level 4 role
 
     const me = (await t.as(DEV1).get('/api/v1/access/me').expect(200)).body;
     expect(me.level).toBe(4);
-    expect(me.permissions).toContain('task.assign');
+    expect(me.permissions).toContain('sales.own');
   });
 
   it('records who, what and why (before and after), plus history', async () => {
     const [entry] = await auditFor('org.level.changed', DEV1);
-    expect(entry.actor?.empId).toBe(CEO);
-    expect(entry.reason).toBe('Promoted to team lead');
-    expect(entry.details).toEqual({ before: { level: 5, role: 'employee' }, after: { level: 4, role: 'level4_default' } });
+    expect(entry.actor?.empId).toBe(DIRECTOR);
+    expect(entry.reason).toBe('Moves to the sales team');
+    expect(entry.details).toEqual({ before: { level: 5, role: 'employee' }, after: { level: 4, role: 'sales' } });
     const history = await prisma.employmentHistory.findFirstOrThrow({ where: { employee: { empId: DEV1 }, eventType: 'level_changed' } });
-    expect(history.reason).toBe('Promoted to team lead');
+    expect(history.reason).toBe('Moves to the sales team');
+  });
+
+  it('can name a non-default role of the level (the Level 4 finance role)', async () => {
+    const res = await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV4}/level`).send({ level: 4, roleKey: 'finance', reason: 'Joins the finance team' }).expect(200);
+    expect(res.body).toEqual({ empId: DEV4, level: 4, roleKey: 'finance' });
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV4}/level`).send({ level: 5, reason: 'Back to development' }).expect(200);
   });
 
   it('rejects a level change that would break the reporting lines', async () => {
-    // Demoting the Director to Level 5 would leave the CTO (Level 3) reporting to someone below them.
-    const res = await t.as(CEO).patch(`/api/v1/org/employees/${DIRECTOR}/level`).send({ level: 5, reason: 'validation test' }).expect(400);
-    expect(res.body.violations.length).toBeGreaterThan(0);
-    // A developer made a CTO-role Level 3 would sit beside the CTO manager without a configured rule.
-    const res2 = await t.as(CEO).patch(`/api/v1/org/employees/${DEV2}/level`).send({ level: 3, roleKey: 'cto', reason: 'validation test' }).expect(400);
+    // Demoting the CTO to Level 5 would leave the developers (Level 5) reporting to someone at their own level.
+    const res = await t.as(DIRECTOR).patch(`/api/v1/org/employees/${CTO}/level`).send({ level: 5, reason: 'validation test' }).expect(400);
+    expect(res.body.violations.map((v: { code: string }) => v.code)).toContain('same_level_not_allowed');
+    // A developer who now reports to a Level 4 sales person cannot become Level 3.
+    const res2 = await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV2}/level`).send({ level: 3, roleKey: 'cto', reason: 'validation test' }).expect(400);
     expect(res2.body.violations.map((v: { code: string }) => v.code)).toContain('manager_below_employee');
   });
 
   it('rejects a role that does not belong to the requested level', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4, roleKey: 'director', reason: 'validation test' }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4, roleKey: 'director', reason: 'validation test' }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4, roleKey: 'level4_default', reason: 'a removed role' }).expect(400);
   });
 
-  it('stops anyone assigning a level at or above their own (privilege escalation)', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 2, reason: 'make a second CEO' }).expect(403);
+  it('stops anyone assigning a level at or above their own (privilege escalation): the Director assigns Levels 3 to 5 only', async () => {
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 2, reason: 'make a second Director' }).expect(403);
     expect(await prisma.auditLog.count({ where: { action: 'access.denied', reason: 'level_not_assignable' } })).toBeGreaterThan(0);
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 1, reason: 'make an owner' }).expect(400); // not even a valid request
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 1, reason: 'make an owner' }).expect(400); // not even a valid request
+  });
+
+  it('the CEO / Founder / Owner changes no level at all (view only)', async () => {
+    await t.as(OWNER).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4, reason: 'the owner tries a promotion' }).expect(403);
+    await t.as(OWNER).patch(`/api/v1/org/employees/${DIRECTOR}/level`).send({ level: 3, reason: 'the owner tries a demotion' }).expect(403);
   });
 
   it('requires a reason and rejects no-op changes', async () => {
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4 }).expect(400);
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 5, reason: 'already level five' }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 4 }).expect(400);
+    await t.as(DIRECTOR).patch(`/api/v1/org/employees/${DEV3}/level`).send({ level: 5, reason: 'already level five' }).expect(400);
   });
 
   it('keeps the database rule: a role must belong to the level', async () => {
@@ -247,11 +263,11 @@ describe('M1 additional duties (Director)', () => {
   });
 
   it('only the Director may assign duties, and never to themselves or to people above', async () => {
-    for (const actor of [CTO, HR, FINANCE, DEV1]) {
+    for (const actor of [OWNER, CTO, HR, FINANCE, DEV1]) {
       await t.as(actor).post(`/api/v1/org/employees/${DEV3}/duties`).send({ dutyKey: 'finance', reason: 'not allowed' }).expect(403);
     }
     await t.as(DIRECTOR).post(`/api/v1/org/employees/${DIRECTOR}/duties`).send({ dutyKey: 'finance', reason: 'self grant' }).expect(403);
-    await t.as(DIRECTOR).post(`/api/v1/org/employees/${CEO}/duties`).send({ dutyKey: 'finance', reason: 'above me' }).expect(403);
+    await t.as(DIRECTOR).post(`/api/v1/org/employees/${OWNER}/duties`).send({ dutyKey: 'finance', reason: 'above me' }).expect(403);
   });
 
   it('removes the permissions when the duty ends, keeping the record', async () => {
@@ -295,31 +311,43 @@ describe('M1 stand-in approvals', () => {
     expect((await route(DEV4, day(41))).approver).toBe(CTO);
   });
 
-  it('moves up one reporting relationship at a time', async () => {
+  it('moves up one reporting relationship at a time, and stops at the Director (the owner approves only for him)', async () => {
     const first = await route(DEV4, during);
     const second = await route(DEV4, during, first.seat);
     expect(second).toMatchObject({ seat: DIRECTOR, approver: DIRECTOR, via: 'manager' });
     const third = await route(DEV4, during, second.seat);
-    expect(third.approver).toBe(CEO);
-    expect((await route(DEV4, during, third.seat)).approver).toBe(OWNER);
-    expect((await route(DEV4, during, OWNER)).approver).toBeNull();
+    expect(third.approver).toBeNull();
+    expect(third.skipped).toEqual([{ seat: OWNER, reason: 'direct_reports_only' }]);
   });
 
-  it('validates the stand-in: must be authorized, active and at the manager\'s level or above', async () => {
+  it("sends the Director's OWN request to the CEO / Founder / Owner", async () => {
+    expect(await route(DIRECTOR, during)).toMatchObject({ approver: OWNER, seat: OWNER, via: 'manager', skipped: [] });
+  });
+
+  it("validates the stand-in: must be authorized, active and at the manager's level or above, and never the owner", async () => {
     // a developer (Level 5) cannot stand in for a Level 3 manager
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: DEV4, startsOn: day(50), endsOn: day(55) }).expect(400);
     // a Level 4 person cannot stand in for the CTO either
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: HR, startsOn: day(50), endsOn: day(55) }).expect(400);
+    // the CEO / Founder / Owner approves only the Director's own items, so is never a stand-in
+    const owner = await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: OWNER, startsOn: day(50), endsOn: day(55) }).expect(400);
+    expect(JSON.stringify(owner.body)).toMatch(/cannot be a stand-in/);
     // not yourself, not an unknown person, not someone who left
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(50), endsOn: day(55) }).expect(400);
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: 'ACV-9999', startsOn: day(50), endsOn: day(55) }).expect(404);
-    await prisma.employee.update({ where: { empId: SALES2 }, data: { status: 'left' } });
-    await t.as(HR).post('/api/v1/stand-ins').send({ standInEmpId: SALES2, startsOn: day(50), endsOn: day(55) }).expect(400);
-    await prisma.employee.update({ where: { empId: SALES2 }, data: { status: 'active' } });
+    await prisma.employee.update({ where: { empId: DIRECTOR }, data: { status: 'left' } });
+    try {
+      await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: DIRECTOR, startsOn: day(50), endsOn: day(55) }).expect(400);
+    } finally {
+      await prisma.employee.update({ where: { empId: DIRECTOR }, data: { status: 'active' } });
+    }
     // someone without the approval permission
-    await prisma.rolePermission.deleteMany({ where: { role: { key: 'level4_default' }, permission: { key: 'approval.approve' } } });
-    await t.as(HR).post('/api/v1/stand-ins').send({ standInEmpId: FINANCE, startsOn: day(50), endsOn: day(55) }).expect(400); // same level, but no longer allowed to approve
-    await prisma.rolePermission.create({ data: { role: { connect: { key: 'level4_default' } }, permission: { connect: { key: 'approval.approve' } } } });
+    await prisma.rolePermission.deleteMany({ where: { role: { key: 'director' }, permission: { key: 'approval.approve' } } });
+    try {
+      await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: DIRECTOR, startsOn: day(50), endsOn: day(55) }).expect(400); // higher level, but not allowed to approve
+    } finally {
+      await prisma.rolePermission.create({ data: { role: { connect: { key: 'director' } }, permission: { connect: { key: 'approval.approve' } } } });
+    }
   });
 
   it('validates the dates (no end before start, nothing already over) and overlaps', async () => {
@@ -328,36 +356,45 @@ describe('M1 stand-in approvals', () => {
     await t.as(CTO).post('/api/v1/stand-ins').send({ standInEmpId: DIRECTOR, startsOn: day(38), endsOn: day(45) }).expect(409);
   });
 
-  it('only people allowed to manage stand-ins can create them', async () => {
+  it('only people allowed to manage stand-ins can create them (not employees, not the owner)', async () => {
     await t.as(DEV4).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(60), endsOn: day(61) }).expect(403);
+    await t.as(OWNER).post('/api/v1/stand-ins').send({ startsOn: day(60), endsOn: day(61) }).expect(403);
   });
 
-  it('never lets the requester approve their own request: the stand-in is the requester, so it goes one level up', async () => {
-    // The Director is away and names the CTO as stand-in; the CTO's own request must not go to the CTO.
-    const created = await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(80), endsOn: day(85) }).expect(201);
-    const step = await route(CTO, day(82), undefined, CTO);
-    expect(step.approver).toBe(CEO);
-    expect(step.skipped).toEqual([{ seat: DIRECTOR, reason: 'stand_in_is_requester' }]);
-    await t.as(DIRECTOR).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'cleanup for test' }).expect(200);
+  it('gives the Director no possible stand-in: the CTO is below him and the owner is never a stand-in', async () => {
+    // (A stand-in who is also the requester is covered by the pure routing tests; with strictly higher reporting lines
+    // nobody below a manager can be that manager's stand-in.)
+    await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: CTO, startsOn: day(80), endsOn: day(85) }).expect(400);
+    await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ standInEmpId: OWNER, startsOn: day(80), endsOn: day(85) }).expect(400);
   });
 
   it('routes to the next level up when the manager is away with no stand-in', async () => {
-    const created = await t.as(HR).post('/api/v1/stand-ins').send({ startsOn: START, endsOn: END, reason: 'Away, nobody covering' }).expect(201);
+    const created = await t.as(CTO).post('/api/v1/stand-ins').send({ startsOn: day(90), endsOn: day(95), reason: 'Away, nobody covering' }).expect(201);
     expect(created.body.standIn).toBeNull();
-    // HR has nobody reporting to them in the seed, so route a request from someone below them
-    await t.as(CEO).patch(`/api/v1/org/employees/${DEV5}/reporting-line`).send({ reportsToEmpId: HR, reason: 'test setup for no-stand-in routing' }).expect(200);
-    const step = await route(DEV5, during);
+    const step = await route(DEV4, day(92));
     expect(step).toMatchObject({ approver: DIRECTOR, seat: DIRECTOR });
-    expect(step.skipped).toEqual([{ seat: HR, reason: 'away_no_stand_in' }]);
-    await t.as(HR).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'back from leave' }).expect(200);
-    expect((await route(DEV5, during)).approver).toBe(HR); // revoked period is ignored
+    expect(step.skipped).toEqual([{ seat: CTO, reason: 'away_no_stand_in' }]);
+
+    // When the Director is away with nobody covering, the CTO's request waits: it never goes up to the owner.
+    const directorAway = await t.as(DIRECTOR).post('/api/v1/stand-ins').send({ startsOn: day(90), endsOn: day(95), reason: 'Away, nobody covering' }).expect(201);
+    const waiting = await route(CTO, day(92));
+    expect(waiting.approver).toBeNull();
+    expect(waiting.skipped).toEqual([
+      { seat: DIRECTOR, reason: 'away_no_stand_in' },
+      { seat: OWNER, reason: 'direct_reports_only' },
+    ]);
+
+    await t.as(DIRECTOR).delete(`/api/v1/stand-ins/${directorAway.body.id}`).send({ reason: 'back from leave' }).expect(200);
+    await t.as(CTO).delete(`/api/v1/stand-ins/${created.body.id}`).send({ reason: 'back from leave' }).expect(200);
+    expect((await route(DEV4, day(92))).approver).toBe(CTO); // revoked periods are ignored
   });
 
-  it('lets only the manager (or the Owner/CEO above) end a period, and records why', async () => {
+  it('lets only the manager (or the Director above) end a period, and records why', async () => {
     await t.as(DEV4).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'not my period' }).expect(403);
-    await t.as(CEO).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'CTO is back early' }).expect(200);
+    await t.as(OWNER).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'the owner manages nothing' }).expect(403);
+    await t.as(DIRECTOR).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'CTO is back early' }).expect(200);
     expect((await auditFor('standin.revoked', periodId))[0]).toMatchObject({ reason: 'CTO is back early' });
-    await t.as(CEO).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'twice is an error' }).expect(409);
+    await t.as(DIRECTOR).delete(`/api/v1/stand-ins/${periodId}`).send({ reason: 'twice is an error' }).expect(409);
     expect((await route(DEV4, during)).approver).toBe(CTO);
   });
 
@@ -387,7 +424,14 @@ describe('M1 fixed business rules', () => {
     await t.as(CTO).get(`/api/v1/approvals/can-approve/${CTO}`).expect(403);
   });
 
-  it('approvals go to a manager above, and the CTO\'s own requests go to the Director (same level, configured)', async () => {
+  it("the CEO / Founder / Owner may approve only the Director's own items", async () => {
+    expect((await t.as(OWNER).get(`/api/v1/approvals/can-approve/${DIRECTOR}`).expect(200)).body).toEqual({ allowed: true });
+    for (const requester of [CTO, DEV4, FINANCE, SALES1]) {
+      expect((await t.as(OWNER).get(`/api/v1/approvals/can-approve/${requester}`).expect(200)).body, requester).toEqual({ allowed: false, reason: 'not_the_routed_approver' });
+    }
+  });
+
+  it("the CTO's own requests go to the Director (strictly one level up; no same-level rule is needed)", async () => {
     const step = (await t.as(CTO).get(`/api/v1/approvals/route/${CTO}?date=${new Date().toISOString().slice(0, 10)}`).expect(200)).body;
     expect(step).toMatchObject({ approver: DIRECTOR, via: 'manager' });
   });
@@ -397,7 +441,7 @@ describe('M1 fixed business rules', () => {
       (await t.as(actor).get(`/api/v1/access/can-assign-task/${assignee}`).expect(200)).body.allowed;
     expect(await can(CTO, DEV4)).toBe(true); // down
     expect(await can(DIRECTOR, DEV4)).toBe(true); // down, two levels
-    expect(await can(OWNER, DEV4)).toBe(true);
+    expect(await can(OWNER, DEV4)).toBe(true); // the direction rule only: assigning also needs task.assign, which the owner does not have
     expect(await can(DEV4, CTO)).toBe(false); // up
     expect(await can(CTO, SALES1)).toBe(false); // beside / other branch
     expect(await can(CTO, CTO)).toBe(false); // not to yourself
@@ -417,11 +461,14 @@ describe('M1 people who have left cannot act', () => {
 
 describe('M1 recent changes feed', () => {
   it('describes the changes made above in plain words, with who and why', async () => {
-    const feed = (await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200)).body as Array<{ kind: string; summary: string; reason: string; by: string }>;
-    expect(feed.length).toBeGreaterThan(5);
+    // The screen shows the newest 12; this file makes more changes than that (departments and offices too), so ask for more.
+    const latest = (await t.as(DIRECTOR).get('/api/v1/org/changes').expect(200)).body as unknown[];
+    expect(latest).toHaveLength(12);
+    const feed = (await t.as(DIRECTOR).get('/api/v1/org/changes?limit=50').expect(200)).body as Array<{ kind: string; summary: string; reason: string; by: string }>;
+    expect(feed.length).toBeGreaterThan(12);
     expect(feed.map((f) => f.kind)).toEqual(expect.arrayContaining(['level', 'reporting_line', 'duty', 'stand_in']));
     const line = feed.find((f) => f.kind === 'reporting_line' && f.summary.includes('Nida Aslam'));
-    expect(line).toMatchObject({ by: CEO });
+    expect(line).toMatchObject({ by: DIRECTOR });
     expect(line?.reason).toBeTruthy();
   });
 });

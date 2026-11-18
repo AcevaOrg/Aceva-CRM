@@ -17,8 +17,6 @@ function rng(seed: number) {
 /** Screens each role opens (one person per role in Management, so this is keyed by role, not department). */
 const SCREENS: Record<RoleKey, string[]> = {
   owner: ["Home", "Insights", "Statements", "Payroll", "Activity", "Sales reports"],
-  ceo: ["Home", "Insights", "Statements", "Payroll", "Activity", "Approvals"],
-  level4_default: ["Home", "Task board", "Messages", "Leave", "Attendance"],
   director: ["Home", "Approvals", "People", "Payroll", "Ledger", "Leave"],
   cto: ["Task board", "Approvals", "Activity", "Integrations", "Backups", "Messages"],
   finance: ["Ledger", "Journal entry", "Banking", "Payroll", "Statements", "Bills and expenses"],
@@ -35,14 +33,8 @@ const ACTIONS: Record<RoleKey, [ActivityEvent["action"], string, string][]> = {
     ["export", "Statements", "Exported the income statement (PDF)"],
     ["download", "Insights", "Downloaded the monthly insights report"],
     ["print", "Payroll", "Printed the October payroll summary"],
-  ],
-  ceo: [
-    ["export", "Statements", "Exported the income statement (PDF)"],
-    ["approve", "Leave", "Signed off the Director's leave request"],
-  ],
-  level4_default: [
-    ["comment", "Tasks", "Commented on TSK-0120"],
-    ["edit", "Leave", "Reviewed a team leave request"],
+    // the one thing he approves: the Director's own leave (nobody approves their own request)
+    ["approve", "Leave", "Signed off the Director's own leave request"],
   ],
   director: [
     ["approve", "Approvals", "Approved journal entry JE-2026-0309"],

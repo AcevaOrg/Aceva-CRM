@@ -14,8 +14,8 @@ const slug = (name: string): string =>
     .slice(0, 40);
 
 /**
- * Departments and offices (plan section 5), changed by the Owner or CEO only.
- * Each department has an explicit head (`head_employee_id`) chosen by them; heads are never worked out from
+ * Departments and offices (plan section 5), changed by the Director only (org.manage).
+ * Each department has an explicit head (`head_employee_id`) chosen by the Director; heads are never worked out from
  * reporting lines. "Removing" a department or office archives it (nothing is deleted). Every change is audited.
  */
 @Injectable()

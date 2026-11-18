@@ -16,10 +16,17 @@ export interface ResolvedIdentity {
   csrfHash: string;
 }
 
+export interface ResolveOptions {
+  /** A finance screen has the shorter idle limit. */
+  financeScreen: boolean;
+  /** Does this request count as activity (moves the session's "last active" time)? Default true. */
+  touch?: boolean;
+}
+
 /**
  * "Who is making this request?"  Returning null means "not logged in" and the request gets 401.
  * The real implementation reads the session cookie (SessionIdentityProvider).
  */
 export abstract class IdentityProvider {
-  abstract resolve(request: Request, options: { financeScreen: boolean }): Promise<ResolvedIdentity | null>;
+  abstract resolve(request: Request, options: ResolveOptions): Promise<ResolvedIdentity | null>;
 }

@@ -26,6 +26,17 @@ describe('environment validation', () => {
     expect(loadEnv({ ...base, NODE_ENV: 'production' }).COOKIE_SECURE).toBeUndefined(); // defaults to Secure in production
   });
 
+  it('Module 4 settings: safe defaults, a checked local city list, the dispatcher interval and the nightly schedule', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db', REDIS_URL: 'redis://127.0.0.1:6379', DATA_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64') };
+    const env = loadEnv(base);
+    expect(env).toMatchObject({ GEOIP_RANGES: '', OUTBOX_DISPATCH_INTERVAL_MS: 5000, ACTIVITY_SUMMARY_SCHEDULE: 'on' });
+    expect(loadEnv({ ...base, GEOIP_RANGES: '39.45.0.0/16=Karachi; 182.185.0.0/16=Lahore' }).GEOIP_RANGES).toContain('Karachi');
+    expect(() => loadEnv({ ...base, GEOIP_RANGES: 'Karachi' })).toThrow(/GEOIP_RANGES/);
+    expect(loadEnv({ ...base, OUTBOX_DISPATCH_INTERVAL_MS: '0', ACTIVITY_SUMMARY_SCHEDULE: 'off' })).toMatchObject({ OUTBOX_DISPATCH_INTERVAL_MS: 0, ACTIVITY_SUMMARY_SCHEDULE: 'off' });
+    expect(() => loadEnv({ ...base, OUTBOX_DISPATCH_INTERVAL_MS: '-1' })).toThrow(/OUTBOX_DISPATCH_INTERVAL_MS/);
+    expect(() => loadEnv({ ...base, ACTIVITY_SUMMARY_SCHEDULE: 'sometimes' })).toThrow(/ACTIVITY_SUMMARY_SCHEDULE/);
+  });
+
   it('rejects an invalid port and an unknown NODE_ENV', () => {
     const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db', REDIS_URL: 'redis://127.0.0.1:6379', DATA_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64') };
     expect(() => loadEnv({ ...base, PORT: '99999' })).toThrow(/PORT/);

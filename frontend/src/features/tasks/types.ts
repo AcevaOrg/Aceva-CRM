@@ -11,8 +11,12 @@ export type Priority = "low" | "medium" | "high" | "urgent";
 
 export interface RepeatRule {
   every: "week" | "month";
-  /** 1 = Monday … 5 = Friday (weekly) or day of month (monthly). */
+  /** 1 = Monday … 5 = Friday (weekly) or day of month (monthly). The server also accepts 6 and 7 (weekend). */
   on: number;
+  /** Last day of the series (YYYY-MM-DD); empty = until it is stopped. */
+  until?: string;
+  /** Live: false once the series was stopped. */
+  active?: boolean;
 }
 
 export interface ChecklistItem {
@@ -48,6 +52,8 @@ export interface Task {
   reviewComment?: string;
   submittedAt?: string;
   extensionsCount: number;
+  /** Live: how many times the reviewer sent it back. */
+  reworkCount?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,18 +80,41 @@ export interface ExtensionRequest {
   late: boolean;
   decidedBy?: string;
   decidedAt?: string;
+  /** Live: why the request was rejected. */
+  decisionReason?: string;
   at: string;
 }
+
+/** What a history line is (live only; the mock history has status lines and "Deadline changed" notes). */
+export type HistoryKind =
+  | "created"
+  | "status"
+  | "deadline_changed"
+  | "extension_requested"
+  | "extension_approved"
+  | "extension_rejected"
+  | "reassigned"
+  | "transferred"
+  | "edited"
+  | "repeat_stopped";
 
 export interface StatusChange {
   id: string;
   taskId: string;
   from: TaskStatus | null;
   to: TaskStatus;
+  /** An Emp-ID, or "system" (repeating series, leaver hand-over, reminders). */
   by: string;
   at: string;
   reason?: string;
+  /** Live: what the line is. Everything except "status" has from = to = the status at that moment. */
+  kind?: HistoryKind;
+  /** Live: small extras, for example { fromDeadline, toDeadline } or { fromEmpId, toEmpId }. */
+  details?: Record<string, unknown>;
 }
+
+/** The status buttons the server knows: POST /tasks/:id/{action}. done and reopen are for a personal to-do only. */
+export type TaskAction = "start" | "submit" | "review" | "approve" | "rework" | "hold" | "cancel" | "resume" | "done" | "reopen";
 
 export interface SizeRule {
   size: TaskSize;
@@ -114,6 +143,10 @@ export interface TaskListParams {
   scope: "mine" | "team" | "all";
   assignee?: string;
   includePersonal?: boolean;
+  /** Open work only (nothing approved or cancelled). Live only; the mock ignores it. */
+  open?: boolean;
+  /** Live: tasks approved or cancelled more than 90 days ago are left out unless "all" is asked for. Open tasks are always all there. */
+  closed?: "recent" | "all";
 }
 
 export interface NewTaskInput {
@@ -129,4 +162,6 @@ export interface NewTaskInput {
   checklist: string[];
   repeat?: RepeatRule;
   personal?: boolean;
+  /** Live: true once the person has seen the soft warnings (deadline shorter than usual, overloaded week) and pressed Assign. */
+  confirmWarnings?: boolean;
 }

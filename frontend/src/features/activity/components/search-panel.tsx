@@ -15,10 +15,9 @@ import { descendantsOf } from "@/lib/auth/scope";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, isoDay } from "@/lib/dates";
 import { useActivityEvents, useLogExport } from "../hooks";
+import { ACTIVITY_MODULES } from "../logic";
 import type { ActivityAction, ActivityEvent, ActivityQuery, ActivitySource } from "../types";
 import { ACTION_META, ActionBadge, SOURCES, SourceChip } from "./activity-bits";
-
-const MODULES = ["Login", "Tasks", "Ledger", "Banking", "Payroll", "Statements", "People", "Leave", "Sales", "Approvals", "Activity", "Announcements"];
 
 /** Activity search with export (plan §8). The export itself is logged. */
 export function SearchPanel() {
@@ -50,7 +49,7 @@ export function SearchPanel() {
         <Field label="Module" htmlFor="s-mod">
           <NativeSelect id="s-mod" value={q.module ?? ""} onChange={(e) => set({ module: e.target.value || undefined })}>
             <option value="">Any module</option>
-            {MODULES.map((m) => <option key={m}>{m}</option>)}
+            {ACTIVITY_MODULES.map((m) => <option key={m}>{m}</option>)}
           </NativeSelect>
         </Field>
         <Field label="Action" htmlFor="s-act">

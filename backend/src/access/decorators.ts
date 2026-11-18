@@ -9,6 +9,7 @@ export const REQUIRED_PERMISSIONS = 'access:permissions';
 export const SCOPE_RULE = 'access:scope';
 export const ALLOW_INCOMPLETE = 'access:allow-incomplete';
 export const FINANCE_SCREEN = 'access:finance-screen';
+export const SESSION_ACTIVITY = 'access:session-activity';
 
 /** No login needed (for example the health check, or the login itself). Use very sparingly. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -24,6 +25,14 @@ export const AllowIncomplete = () => SetMetadata(ALLOW_INCOMPLETE, true);
 
 /** A finance screen: the session is ended after 10 minutes without activity here (30 minutes elsewhere). */
 export const FinanceScreen = () => SetMetadata(FINANCE_SCREEN, true);
+
+/**
+ * Normally every request counts as the person being active, which keeps the session from timing out. A request with
+ * this decorator only counts when `when(request)` is true. The activity heartbeat uses it: the browser sends one every
+ * minute while the tab is open, but only a minute with mouse or keyboard use may keep the session alive, otherwise a
+ * forgotten open tab would never time out. (The body has not been validated yet when this runs: check it strictly.)
+ */
+export const CountsAsActivityWhen = (when: (request: Request) => boolean) => SetMetadata(SESSION_ACTIVITY, when);
 
 /** The caller's role or duties must include ALL of these permissions. */
 export const RequirePermission = (...permissions: string[]) => SetMetadata(REQUIRED_PERMISSIONS, permissions);

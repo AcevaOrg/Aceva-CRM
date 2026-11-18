@@ -6,7 +6,9 @@
 import type {
   CreateEmployeeResponse, DocumentView, RevealResponse, FieldChangeView, OffboardResponse, PayView, PersonalView, ProfileResponse,
 } from "@aceva/contracts";
-import { http } from "@/lib/api/http";
+import { tasksApi } from "@/features/tasks/api";
+import { isOpen } from "@/features/tasks/logic";
+import { http, isLive } from "@/lib/api/http";
 import { directoryApi } from "@/lib/directory";
 import { roleFromApi, fetchLiveOrgNodes } from "@/lib/live-org";
 import { isoDay } from "@/lib/dates";
@@ -19,6 +21,16 @@ import type {
 
 const API_KIND: Record<DocumentKind, DocumentView["kind"] | null> = { cv: "cv", contract: "contract", cnic: "cnic_copy", certificate: "certificate", other: null };
 const UI_KIND: Record<DocumentView["kind"], DocumentKind> = { cv: "cv", contract: "contract", cnic_copy: "cnic", certificate: "certificate" };
+
+/** Open work tasks of a person (personal to-dos stay with him, so they are not counted). 0 while Module 5 is not live. */
+async function openWorkTasksOf(empId: string): Promise<number> {
+  if (!isLive("m5")) return 0;
+  try {
+    return (await tasksApi.list({ scope: "team", assignee: empId, open: true })).filter((t) => !t.personal && isOpen(t.status)).length;
+  } catch {
+    return 0;
+  }
+}
 
 const hueFor = (empId: string) => (Number(empId.replace(/\D/g, "")) * 47) % 360;
 
@@ -151,12 +163,12 @@ export const livePeopleApi = {
 
   resendWelcome: async (empId: string) => http.post<{ welcomeEmailSent: boolean }>(`/employees/${empId}/resend-welcome`, {}),
 
-  /** What will happen on the last day. Tasks and payroll belong to later modules, so only requests are prepared. */
+  /** What will happen on the last day. Open work tasks move to the manager (Module 5); payroll belongs to a later module. */
   offboardPreview: async (empId: string): Promise<OffboardPreview> => {
     const employees = (await directoryApi.get()).employees;
     const e = employees.find((x) => x.empId === empId);
     return {
-      openTasks: 0,
+      openTasks: await openWorkTasksOf(empId),
       manager: e?.reportsTo ?? undefined,
       directReports: employees.filter((x) => x.reportsTo === empId && x.status !== "left").length,
       isSales: e?.departmentId === "dep-sales",

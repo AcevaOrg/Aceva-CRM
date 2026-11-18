@@ -89,14 +89,24 @@ function ApprovalRow({ item }: { item: ApprovalItem }) {
 
   const approve = async (rating?: number) => {
     if (item.needsStepUp && !(await stepUp({ action: `${item.approveLabel ?? "Approve"}: ${item.title}`, detail: item.amount ? undefined : item.subtitle }))) return;
-    await decide.mutateAsync({ item, decision: "approve", opts: { rating } });
-    toast.success("Approved", { description: item.title });
+    try {
+      await decide.mutateAsync({ item, decision: "approve", opts: { rating } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save the decision.");
+      return;
+    }
+    toast.success(item.type === "scorecard" ? "Scorecard released" : item.type === "dispute" ? "Rating changed" : "Approved", { description: item.title });
   };
   const reject = async () => {
     const reason = await askReason({ title: item.rejectLabel ?? "Reject", description: "The requester sees this reason. It is saved in the audit log.", destructive: item.type !== "task_review", confirmLabel: item.rejectLabel ?? "Reject" });
     if (!reason) return;
-    await decide.mutateAsync({ item, decision: "reject", opts: { reason } });
-    toast(item.type === "task_review" ? "Sent back for rework" : "Rejected", { description: item.title });
+    try {
+      await decide.mutateAsync({ item, decision: "reject", opts: { reason } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save the decision.");
+      return;
+    }
+    toast(item.type === "task_review" ? "Sent back for rework" : item.type === "scorecard" ? "Remark added, the scorecard stays a draft" : item.type === "dispute" ? "Rating kept" : "Rejected", { description: item.title });
   };
 
   return (

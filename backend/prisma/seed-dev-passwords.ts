@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as argon2 from 'argon2';
 import { PrismaClient } from '../src/generated/prisma/client';
+import { utcPoolConfig } from '../src/prisma/connection';
 
 /**
  * DEVELOPMENT AND TESTS ONLY. Gives every demo employee a login with one known password, so people can sign in to
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
   const password = process.env.DEMO_PASSWORD;
   if (!url) throw new Error('DATABASE_URL is not set');
   if (!password) throw new Error('Set DEMO_PASSWORD (at least 10 characters) to the password you want the demo people to use.');
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(utcPoolConfig(url)) });
   try {
     console.log(`Created ${await seedDevPasswords(prisma, password)} demo login(s).`);
   } finally {

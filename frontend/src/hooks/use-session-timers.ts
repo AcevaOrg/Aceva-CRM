@@ -25,10 +25,11 @@ const IDLE_AFTER_MS = 5 * 60_000;
 export function useSessionTimers() {
   const pathname = usePathname();
   const empId = useSession((s) => s.empId);
-  const signOut = useSession((s) => s.signOut);
+  const signOutIdle = useSession((s) => s.signOutIdle);
   const lastInput = useRef(0);
   const activeThisMinute = useRef(false);
-  const limitMin = isFinanceRoute(pathname) ? 10 : 30;
+  const onFinanceScreen = isFinanceRoute(pathname);
+  const limitMin = onFinanceScreen ? 10 : 30;
   const [state, setState] = useState({ secondsLeft: limitMin * 60, isIdle: false });
 
   const compute = useCallback(() => {
@@ -63,13 +64,14 @@ export function useSessionTimers() {
 
   // Screen view events.
   useEffect(() => {
-    if (empId) trackScreen(empId, matchNav(pathname)?.label ?? pathname);
+    if (empId) trackScreen(empId, matchNav(pathname)?.label ?? pathname, pathname);
   }, [pathname, empId]);
 
-  // Time's up: end the session (an external store, not React state).
+  // Time's up: end the session (an external store, not React state). The server is told it was the idle timer, so the
+  // logout is recorded as "timed out" (it believes this only if the session really was idle that long).
   useEffect(() => {
-    if (state.secondsLeft === 0 && empId) signOut();
-  }, [state.secondsLeft, empId, signOut]);
+    if (state.secondsLeft === 0 && empId) signOutIdle(onFinanceScreen);
+  }, [state.secondsLeft, empId, signOutIdle, onFinanceScreen]);
 
   const stay = useCallback(() => {
     lastInput.current = Date.now();

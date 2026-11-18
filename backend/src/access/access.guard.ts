@@ -8,7 +8,7 @@ import { IdentityProvider } from '../identity/identity.provider';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Actor } from './access.types';
 import { AuditService } from './audit.service';
-import { ALLOW_INCOMPLETE, AUTHENTICATED_ONLY, FINANCE_SCREEN, IS_PUBLIC, REQUIRED_PERMISSIONS, SCOPE_RULE } from './decorators';
+import { ALLOW_INCOMPLETE, AUTHENTICATED_ONLY, FINANCE_SCREEN, IS_PUBLIC, REQUIRED_PERMISSIONS, SCOPE_RULE, SESSION_ACTIVITY } from './decorators';
 import { PermissionService } from './permission.service';
 import { ScopeMode, ScopeService } from './scope.service';
 
@@ -58,7 +58,9 @@ export class AccessGuard implements CanActivate {
 
     // 1. Who is calling?
     const financeScreen = !!this.reflector.getAllAndOverride<boolean>(FINANCE_SCREEN, targets);
-    const identity = await this.identity.resolve(request, { financeScreen });
+    // Does this request keep the session alive? Yes, unless the route says when it counts (the activity heartbeat).
+    const countsWhen = this.reflector.getAllAndOverride<((r: Request) => boolean) | undefined>(SESSION_ACTIVITY, targets);
+    const identity = await this.identity.resolve(request, { financeScreen, touch: countsWhen ? countsWhen(request) === true : true });
     const actor = identity ? await this.loadActor(identity.empId) : null;
     if (!identity || !actor) {
       await this.audit.record({ actorId: null, action: 'access.denied', targetType: 'route', targetId: route, outcome: 'denied', reason: 'unauthenticated', ...client });

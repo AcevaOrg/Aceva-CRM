@@ -5,8 +5,7 @@ import { createTestApp, TEST_PASSWORD, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
-const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner: may reset only his direct report, the Director
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 const FINANCE = 'ACV-0010';
@@ -21,7 +20,7 @@ let prisma: PrismaClient;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
+  HR = t.fixtures.HR;
   prisma = createTestPrisma();
 });
 afterAll(async () => {
@@ -35,12 +34,10 @@ const reset = (actor: string, target: string, reason: string | null = 'Lost phon
 
 describe('M2 lost authenticator phone: who may reset two-step login', () => {
   it('nobody resets their own, someone of the same level, or someone above them', async () => {
-    await reset(CEO, CEO).expect(403); // self
+    await reset(OWNER, OWNER).expect(403); // self
     await reset(DIRECTOR, DIRECTOR).expect(403); // self
-    await reset(CEO, OWNER).expect(403); // upward
-    await reset(DIRECTOR, CEO).expect(403); // upward
-    await reset(DIRECTOR, CTO).expect(403); // same level, even though the CTO is below the Director in the chain
-    await reset(CTO, DIRECTOR).expect(403); // same level the other way
+    await reset(DIRECTOR, OWNER).expect(403); // upward
+    await reset(CTO, DIRECTOR).expect(403); // upward (and the CTO has no reset permission)
     await reset(HR, SALES1).expect(403); // HR is level 4, so is Sales
     await reset(HR, DIRECTOR).expect(403); // upward
     expect(await prisma.auditLog.count({ where: { action: 'auth.2fa.reset' } })).toBe(0);
@@ -50,21 +47,22 @@ describe('M2 lost authenticator phone: who may reset two-step login', () => {
     await reset(DEV1, DEV2).expect(403);
     await reset(CTO, DEV2).expect(403); // the CTO has no reset permission
     await reset(SALES1, DEV2).expect(403);
+    await reset(FINANCE, DEV2).expect(403);
+  });
+
+  it('the CEO / Founder / Owner resets nobody but his direct report (the Director): not the CTO, not anyone further down', async () => {
+    for (const target of [CTO, FINANCE, SALES1, HR, DEV1]) await reset(OWNER, target).expect(403);
+    expect(await prisma.auditLog.count({ where: { action: 'auth.2fa.reset' } })).toBe(0);
   });
 
   it('a reason is required', async () => {
     await reset(OWNER, DIRECTOR, null).expect(400);
     await reset(OWNER, DIRECTOR, 'no').expect(400);
+    await reset(DIRECTOR, CTO, null).expect(400);
   });
 
-  it('the Owner and the CEO can reset anyone of lower rank, anywhere', async () => {
-    expect((await reset(OWNER, CEO).expect(200)).body.ended).toBeGreaterThanOrEqual(1);
-    const ceo = await t.signIn(CEO); // sign back in with a fresh authenticator (the helper handles the set-up)
-    await ceo.post(`/api/v1/auth/employees/${DEV1}/reset-2fa`).send({ reason: 'Lost phone, identity confirmed' }).expect(200);
-    await ceo.post(`/api/v1/auth/employees/${CTO}/reset-2fa`).send({ reason: 'Lost phone, identity confirmed' }).expect(200);
-  });
-
-  it('the Director resets people below them, and HR duty resets people of lower rank', async () => {
+  it('the Director resets anyone below them (including the CTO), and HR duty resets people of lower rank', async () => {
+    expect((await reset(DIRECTOR, CTO).expect(200)).body.ended).toBeGreaterThanOrEqual(1); // Level 3, below the Director
     await reset(DIRECTOR, FINANCE).expect(200);
     await reset(HR, DEV2).expect(200);
     await reset(HR, DEV1).expect(200);
@@ -72,7 +70,7 @@ describe('M2 lost authenticator phone: who may reset two-step login', () => {
 
   it('people who have left cannot be reset', async () => {
     await prisma.employee.update({ where: { empId: DEV1 }, data: { status: 'left' } });
-    await reset(OWNER, DEV1).expect(400);
+    await reset(DIRECTOR, DEV1).expect(400);
     await prisma.employee.update({ where: { empId: DEV1 }, data: { status: 'active' } });
   });
 });
@@ -117,14 +115,25 @@ describe('M2 what a reset does', () => {
     expect((await t.rawLogin({ empId: SALES1, password: TEST_PASSWORD }).expect(200)).body.status).toBe('2fa_setup_required');
   });
 
+  it('the CEO / Founder / Owner can reset the Director (his direct report), who must enroll again', async () => {
+    // Done last in this file: it ends the Director's sessions.
+    expect((await reset(OWNER, DIRECTOR, 'Director lost his phone, confirmed in person').expect(200)).body.ended).toBeGreaterThanOrEqual(1);
+    expect((await t.rawLogin({ empId: DIRECTOR, password: TEST_PASSWORD }).expect(200)).body.status).toBe('2fa_setup_required');
+    await t.signIn(DIRECTOR); // sign back in with a fresh authenticator (the helper handles the set-up)
+  });
+});
+
+describe('M2 the reset audit trail', () => {
   it('records every reset in the audit log: who, whom, why, and under which rule', async () => {
     const entries = await prisma.auditLog.findMany({ where: { action: 'auth.2fa.reset' }, include: { actor: true }, orderBy: { occurredAt: 'asc' } });
-    expect(entries.length).toBeGreaterThanOrEqual(8);
+    expect(entries.length).toBeGreaterThanOrEqual(7);
     const phone = entries.find((e) => e.targetId === FINANCE && e.reason === 'Phone dropped in a river')!;
     expect(phone.actor?.empId).toBe(DIRECTOR);
     expect(phone.reason).toBe('Phone dropped in a river');
     expect(phone.details).toMatchObject({ rule: 'director' });
-    expect(entries.find((e) => e.targetId === CEO)?.details).toMatchObject({ rule: 'owner_or_ceo' });
+    const byOwner = entries.filter((e) => e.actor?.empId === OWNER);
+    expect(byOwner.map((e) => e.targetId)).toEqual([DIRECTOR]); // the owner reset nobody else
+    expect(byOwner[0].details).toMatchObject({ rule: 'owner_direct_report' });
     expect(entries.find((e) => e.actor?.empId === HR)?.details).toMatchObject({ rule: 'hr_duty' });
     // refused attempts are logged too
     expect(await prisma.auditLog.count({ where: { action: 'access.denied', details: { path: ['attempted'], equals: 'auth.reset_two_factor' } } })).toBeGreaterThan(0);

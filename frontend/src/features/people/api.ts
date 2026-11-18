@@ -2,7 +2,7 @@
  * Module 3 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
  * Employee records live in the shared directory table (employeesTable).
  */
-import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
+import { REPORTS_TO_HINT } from "@/features/access/logic";
 import { recordActivity, sessionsFor } from "@/features/activity/api";
 import { tasksTable } from "@/features/tasks/api";
 import { isOpen } from "@/features/tasks/logic";
@@ -46,10 +46,13 @@ function logField(empId: string, section: ProfileSection, field: string, oldValu
   historyTable().unshift({ id: uid("fc"), empId, section, field, oldValue, newValue, changedBy: getViewer().employee.empId, changedAt: new Date().toISOString(), reason });
 }
 
-/** The fixed structure: the manager must sit at the level each level reports to (Development → CTO; CTO, Sales and Finance → Director; Director → CEO / Founder / Owner). */
+/**
+ * The server's rule: the manager must be someone still here at a strictly higher level (no same-level lines). Normally
+ * that is the level above (Developer / SQA → CTO; CTO, Sales and Finance → Director; Director → CEO / Founder / Owner).
+ */
 function checkReportsTo(level: Level, reportsTo: string | undefined) {
   const boss = employeesTable().find((x) => x.empId === reportsTo && x.status !== "left");
-  if (!boss || boss.level !== reportsToLevel(level)) throw new ApiError("validation", `${REPORTS_TO_HINT[level]} Choose someone at that level.`);
+  if (!boss || boss.level >= level) throw new ApiError("validation", `${REPORTS_TO_HINT[level]} Choose someone at a higher level.`);
 }
 
 /** The role follows the level and the department (level 4 in Finance is the finance person, who holds finance duty). */

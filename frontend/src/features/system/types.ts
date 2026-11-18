@@ -139,12 +139,21 @@ export interface SettingsRecord {
   updatedBy: string;
 }
 
+/** A set of score weights, in WHOLE PERCENTS that add up to 100 (35, 25 ...). The performance screens use fractions (0.35) instead. */
 export interface WeightsVersion {
   id: string;
   /** standard: Software Development, and Management · sales: the Sales department. */
   kind: "standard" | "sales";
   weights: Record<string, number>;
   effectiveFrom: string;
-  createdBy: string;
+  /** Emp-ID of the Director who saved it; null = the starting version that came with the system (live only). */
+  createdBy: string | null;
   note?: string;
+  /** Live only: "Standard v2". */
+  label?: string;
+  /** Live only. */
+  versionNo?: number;
+  /** Live only: the department this set is for; absent = the company-wide set. */
+  departmentId?: string;
+  departmentName?: string;
 }

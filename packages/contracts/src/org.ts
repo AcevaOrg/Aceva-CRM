@@ -8,7 +8,7 @@ const isoDate = z.iso.date();
 
 // ---------- requests ----------
 
-/** PATCH /org/employees/:empId/level  (Owner or CEO only) */
+/** PATCH /org/employees/:empId/level  (the Director only; never at or above their own level, so Levels 3 to 5) */
 export const changeLevelRequestSchema = z.object({
   level: z.number().int().min(2).max(5),
   /** Optional: a named role at that level (for example "director"). Default: the level's default role. */
@@ -17,7 +17,7 @@ export const changeLevelRequestSchema = z.object({
 });
 export type ChangeLevelRequest = z.infer<typeof changeLevelRequestSchema>;
 
-/** PATCH /org/employees/:empId/reporting-line  (Owner or CEO only) */
+/** PATCH /org/employees/:empId/reporting-line  (the Director only) */
 export const changeReportingLineRequestSchema = z.object({
   reportsToEmpId: empIdSchema,
   reason: reasonSchema,
@@ -62,7 +62,13 @@ export const approvalRouteQuerySchema = z.object({
 });
 export type ApprovalRouteQuery = z.infer<typeof approvalRouteQuerySchema>;
 
-/** POST /org/departments (Owner or CEO) */
+/** GET /org/changes?limit=12 (the newest access changes; the screen shows the default 12) */
+export const orgChangesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(12),
+});
+export type OrgChangesQuery = z.infer<typeof orgChangesQuerySchema>;
+
+/** POST /org/departments (the Director) */
 export const createDepartmentRequestSchema = z.object({
   name: z.string().trim().min(2).max(80),
   /** The department head, chosen explicitly. */
@@ -71,7 +77,7 @@ export const createDepartmentRequestSchema = z.object({
 });
 export type CreateDepartmentRequest = z.infer<typeof createDepartmentRequestSchema>;
 
-/** PATCH /org/departments/:code (Owner or CEO). headEmpId null removes the head. */
+/** PATCH /org/departments/:code (the Director). headEmpId null removes the head. */
 export const updateDepartmentRequestSchema = z
   .object({
     name: z.string().trim().min(2).max(80).optional(),
@@ -81,7 +87,7 @@ export const updateDepartmentRequestSchema = z
   .refine((v) => v.name !== undefined || v.headEmpId !== undefined, { message: 'Nothing to change' });
 export type UpdateDepartmentRequest = z.infer<typeof updateDepartmentRequestSchema>;
 
-/** POST /org/offices (Owner or CEO) */
+/** POST /org/offices (the Director) */
 export const createOfficeRequestSchema = z.object({
   name: z.string().trim().min(2).max(80),
   city: z.string().trim().max(80).optional(),
@@ -89,7 +95,7 @@ export const createOfficeRequestSchema = z.object({
 });
 export type CreateOfficeRequest = z.infer<typeof createOfficeRequestSchema>;
 
-/** PATCH /org/offices/:code (Owner or CEO) */
+/** PATCH /org/offices/:code (the Director) */
 export const updateOfficeRequestSchema = z
   .object({ name: z.string().trim().min(2).max(80).optional(), city: z.string().trim().max(80).optional(), reason: reasonSchema })
   .refine((v) => v.name !== undefined || v.city !== undefined, { message: 'Nothing to change' });
@@ -158,13 +164,14 @@ export interface ApprovalRouteStep {
   seat: string | null;
   via: ApprovalRouteVia | null;
   /** Positions that were passed over, and why. */
-  skipped: Array<{ seat: string; reason: 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' | 'not_active' }>;
+  /** direct_reports_only: the CEO / Founder / Owner approves only for his direct report (the Director). */
+  skipped: Array<{ seat: string; reason: 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' | 'not_active' | 'direct_reports_only' }>;
 }
 
 export interface DepartmentView {
   id: string;
   name: string;
-  /** The department head, set explicitly by the Owner or CEO (null when nobody is set). */
+  /** The department head, set explicitly by the Director (null when nobody is set). */
   headEmpId: string | null;
   officeIds: string[];
 }
