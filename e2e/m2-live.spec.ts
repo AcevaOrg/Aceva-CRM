@@ -3,7 +3,7 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
 import { createEmployee } from '../backend/test/helpers/people';
 import { createTestPrisma } from '../backend/test/helpers/prisma';
 import { FIXTURE_HR } from './paths';
-import { API, PASSWORD, apiAs, loginViaUi, nextCode } from './auth-helpers';
+import { API, PASSWORD, apiAs, hasSecret, loginViaUi, nextCode } from './auth-helpers';
 
 /** Module 2 (Emp-ID login and sessions) through the real screens, backend, PostgreSQL, Redis and Mailpit. */
 
@@ -94,7 +94,12 @@ test('a temporary password must be replaced at first login, in the wizard', asyn
 });
 
 test('two-step login is mandatory for the Director, and the code is checked on the server', async ({ browser }) => {
-  // The Director already set up the authenticator in an earlier test; this is a fresh login that must ask for the code.
+  // In the full run the Director already set up the authenticator in an earlier spec (M1). When this spec runs on its
+  // own, set it up first through the real login screen, so the fresh login below must ask for the code.
+  if (!hasSecret('ACV-0003')) {
+    const setup = await loggedInContext(browser, 'ACV-0003');
+    await setup.context.close();
+  }
   const context = await browser.newContext();
   const page = await context.newPage();
   await fillLogin(page, 'ACV-0003', PASSWORD);
@@ -104,7 +109,7 @@ test('two-step login is mandatory for the Director, and the code is checked on t
   await expect(alertOf(page)).toContainText('not right');
   // nothing else works until the code is right: the app redirects back
   await page.goto('/org');
-  await page.waitForURL(/\/login/);
+  await expect(page).toHaveURL(/\/login/);
   await context.close();
 
   const ok = await browser.newContext();

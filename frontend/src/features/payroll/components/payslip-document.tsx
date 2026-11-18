@@ -4,6 +4,7 @@ import { MaskedValue } from "@/components/shared/masked-value";
 import { Money } from "@/components/shared/money";
 import { useLookup } from "@/hooks/use-directory";
 import { formatDate, formatMonthKey } from "@/lib/dates";
+import { isLive } from "@/lib/api/http";
 import { cn } from "@/lib/utils";
 import type { Payslip } from "../types";
 
@@ -90,7 +91,7 @@ export function PayslipDocument({ slip, canRevealBank, className }: { slip: Pays
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          Year to date counts from 1 July (finance year). This payslip is confidential and visible only to you, Finance, the Director and the CEO / Founder / Owner. Questions: finance@acevatech.com
+          {isLive("m8") ? "Year to date counts from 1 January." : "Year to date counts from 1 July (finance year)."} This payslip is confidential and visible only to you, Finance, the Director and the CEO / Founder / Owner. Questions: finance@acevatech.com
         </p>
       </div>
     </article>

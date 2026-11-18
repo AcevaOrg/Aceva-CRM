@@ -168,6 +168,7 @@ const ACTION_LABEL: Partial<Record<Permission, string>> = {
   "people.view_pay": "See pay details",
   "people.manage": "Add and edit employees",
   "people.manage_pay": "Edit pay",
+  "people.approve_hire": "Approve hire requests",
   "auth.unlock_account": "Unlock accounts",
   "session.force_logout": "Force a sign-out",
   "task.assign": "Assign tasks",

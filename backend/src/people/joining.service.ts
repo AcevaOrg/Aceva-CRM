@@ -133,6 +133,7 @@ export class JoiningService {
     const row = await this.prisma.hireRequest.findUnique({ where: { id: requestId } });
     if (!row) throw new NotFoundException('Hire request not found');
     if (row.status !== 'pending') throw new ConflictException({ statusCode: 409, code: 'already_decided', message: `This request was already ${row.status}` });
+    await this.assertMayDecide(actor, row.requestedBy, body.level ?? row.proposedLevel, client);
     const extra: Sensitive = row.sensitiveEncrypted ? (JSON.parse(this.crypto.decrypt(row.sensitiveEncrypted)) as Sensitive) : {};
     const dto: CreateEmployeeRequest = {
       name: row.name,
@@ -152,6 +153,9 @@ export class JoiningService {
   }
 
   async reject(actor: Actor, requestId: string, reason: string, client: RequestInfo): Promise<{ ok: true }> {
+    const found = await this.prisma.hireRequest.findUnique({ where: { id: requestId }, select: { requestedBy: true } });
+    if (!found) throw new NotFoundException('Hire request not found');
+    await this.assertMayDecide(actor, found.requestedBy, null, client);
     const { count } = await this.prisma.hireRequest.updateMany({ where: { id: requestId, status: 'pending' }, data: { status: 'rejected', decidedBy: actor.id, decidedAt: new Date(), decisionReason: reason } });
     if (count === 0) {
       if (!(await this.prisma.hireRequest.findUnique({ where: { id: requestId }, select: { id: true } }))) throw new NotFoundException('Hire request not found');
@@ -159,6 +163,29 @@ export class JoiningService {
     }
     await this.audit.record({ actorId: actor.id, action: 'hire.rejected', targetType: 'hire_request', targetId: requestId, reason, ...client });
     return { ok: true };
+  }
+
+  /**
+   * Who decides a hire request (decision D25, as the project owner decided): the Director decides every request except the
+   * Director's own, which the Owner decides. Nobody decides their own request. An approver below the Director never places
+   * a new hire at their own level or above.
+   */
+  private async assertMayDecide(actor: Actor, requestedBy: string, level: number | null, client: RequestInfo): Promise<void> {
+    const deny = async (reason: string, message: string): Promise<never> => {
+      await this.audit.record({ actorId: actor.id, action: 'access.denied', targetType: 'hire_request', targetId: null, outcome: 'denied', reason, ...client });
+      throw new ForbiddenException({ statusCode: 403, code: reason, message });
+    };
+    if (requestedBy === actor.id) await deny('self_approval', 'You made this hire request; a different person decides it');
+    const requester = await this.prisma.employee.findUnique({ where: { id: requestedBy }, select: { role: { select: { key: true } } } });
+    const madeByDirector = requester?.role.key === 'director';
+    if (actor.levelNumber === 1) {
+      if (!madeByDirector) await deny('owner_decides_director_only', 'The Owner decides only the hire requests the Director made');
+      return;
+    }
+    if (madeByDirector) await deny('owner_decides', "The Director's hire requests are decided by the Owner");
+    if (actor.levelNumber > 2 && level !== null && level <= actor.levelNumber) {
+      await deny('level_not_allowed', 'A hire at your own level or above is authorized by the Director');
+    }
   }
 
   // ===================================================================== creating the employee

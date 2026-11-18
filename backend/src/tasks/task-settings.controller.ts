@@ -1,13 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { holidaysQuerySchema, taskSizeSchema, updateSizeRuleRequestSchema } from '@aceva/contracts';
+import { taskSizeSchema, updateSizeRuleRequestSchema } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { ClientInfo, CurrentActor, RequestInfo, RequirePermission } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { TaskSettingsService } from './task-settings.service';
 
-class HolidaysQueryDto extends createZodDto(holidaysQuerySchema) {}
 class UpdateSizeRuleDto extends createZodDto(updateSizeRuleRequestSchema) {}
 class SizeParamDto extends createZodDto(z.object({ size: taskSizeSchema })) {}
 
@@ -25,13 +24,6 @@ export class TaskSettingsController {
   @ApiOperation({ summary: 'Projects and clients a task can be linked to (minimal, read only for now)' })
   projects(@CurrentActor() actor: Actor) {
     return this.settings.projects(actor);
-  }
-
-  @Get('holidays')
-  @RequirePermission('task.view_own')
-  @ApiOperation({ summary: 'The company holiday calendar for a year (default: this year)' })
-  holidays(@CurrentActor() actor: Actor, @Query() query: HolidaysQueryDto) {
-    return this.settings.holidays(actor, query.year);
   }
 
   @Get('settings/task-sizes')

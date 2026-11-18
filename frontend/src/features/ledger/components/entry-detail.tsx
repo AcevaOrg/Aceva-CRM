@@ -68,8 +68,10 @@ function EntryDetail({ id }: { id: string }) {
   const e = q.data;
   const me = viewer?.employee.empId;
   const isMaker = e.createdBy === me;
-  // Only the Director approves, any amount; never their own entry (a Director-made entry is blocked).
-  const isApprover = !e.blocked && e.approverEmpId === me && !!viewer?.can("finance.entry_approve");
+  // Live: the SERVER says whether this viewer may decide (permission, approval tier, never the maker). Mock: the Director.
+  const live = e.canApprove !== undefined;
+  const isApprover = live ? !!e.canApprove : !e.blocked && e.approverEmpId === me && !!viewer?.can("finance.entry_approve");
+  const approverText = live ? `${e.requiredApproverLabel ?? "an approver"} (level ${e.requiredLevel ?? "?"} or higher)` : undefined;
   const canPrepare = !!viewer?.can("finance.entry_create");
   const approver = lookup.employee(e.approverEmpId);
   const acc = (aid: string) => accounts.data?.find((a) => a.id === aid);
@@ -83,7 +85,7 @@ function EntryDetail({ id }: { id: string }) {
   const pendingReversal = all.data?.find((x) => x.reversalOf === e.id && x.status !== "reversed" && x.status !== "posted");
 
   const doApprove = async () => {
-    if (e.ceoNotified && !(await stepUp({ action: `Approve and post ${e.number}`, detail: `${formatMoney(Number(e.baseTotal.amount), { exact: true })} · ${e.description}` }))) return;
+    if ((live ? e.needsStepUp : e.ceoNotified) && !(await stepUp({ action: `Approve and post ${e.number}`, detail: `${formatMoney(Number(e.baseTotal.amount), { exact: true })} · ${e.description}` }))) return;
     try {
       await approve.mutateAsync(e.id);
       toast.success(`${e.number} posted`, { description: "The statements update on their own." });
@@ -143,14 +145,16 @@ function EntryDetail({ id }: { id: string }) {
         seal="highly"
         meta={
           <>
-            <EntryStatusBadge status={e.status} />
+            <EntryStatusBadge status={e.status} rejected={e.rejected} />
             <SourceBadge source={e.source} />
-            {e.status !== "posted" && e.status !== "reversed" && <ApprovalChip ceoNotified={e.ceoNotified} blocked={e.blocked} />}
+            {e.status !== "posted" && e.status !== "reversed" && !e.rejected && (
+              <ApprovalChip ceoNotified={e.ceoNotified} blocked={e.blocked} serverLabel={e.requiredApproverLabel} serverLevel={e.requiredLevel} />
+            )}
           </>
         }
         actions={
           <>
-            {e.status === "draft" && canPrepare && (
+            {e.status === "draft" && canPrepare && !e.rejected && (!live || isMaker) && (
               <>
                 <Button variant="outline" asChild>
                   <Link href={`/finance/ledger/new?edit=${e.id}`}>
@@ -187,7 +191,15 @@ function EntryDetail({ id }: { id: string }) {
             <div role="alert" className="flex items-start gap-3 rounded-xl border border-danger/30 bg-danger/8 px-4 py-3 text-[13px]">
               <CircleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
               <p>
-                <span className="font-semibold">Sent back: </span>“{e.rejectionNote}” Fix the draft and submit it again.
+                {e.rejected ? (
+                  <>
+                    <span className="font-semibold">Rejected: </span>“{e.rejectionNote}” A rejected entry never changes; make a new entry instead.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">Sent back: </span>“{e.rejectionNote}” Fix the draft and submit it again.
+                  </>
+                )}
               </p>
             </div>
           )}
@@ -262,19 +274,28 @@ function EntryDetail({ id }: { id: string }) {
           </Card>
 
           <section>
-            <SectionTitle title="Approval" description="Prepared by Finance, approved by the Director. The person who enters an entry can never approve it (maker-checker)." />
+            <SectionTitle
+              title="Approval"
+              description={
+                live
+                  ? "Approved at the level its amount needs (limits in Settings); one level up when the approver made it. The person who enters an entry can never approve it (maker-checker)."
+                  : "Prepared by Finance, approved by the Director. The person who enters an entry can never approve it (maker-checker)."
+              }
+            />
             <ApprovalRelay steps={e.chain} />
             <div className="mt-3 grid gap-2">
               {e.status === "pending_approval" && e.blocked && <MakerCheckerNote reason={DIRECTOR_MADE_IT} />}
               {e.status === "pending_approval" && isMaker && !e.blocked && (
-                <MakerCheckerNote reason={`You prepared this, so you can't approve it. It goes to ${approver?.name ?? "the Director"} (Director).`} />
+                <MakerCheckerNote reason={`You prepared this, so you can't approve it. It goes to ${approverText ?? `${approver?.name ?? "the Director"} (Director)`}.`} />
               )}
               {e.status === "pending_approval" && !isMaker && !isApprover && !e.blocked && (
                 <ViewOnlyNote>
-                  View only. Waiting for {approver?.name ?? "the Director"} (Director). The Director approves every journal entry, any amount.
+                  {live
+                    ? `View only. Waiting for ${approverText}.`
+                    : `View only. Waiting for ${approver?.name ?? "the Director"} (Director). The Director approves every journal entry, any amount.`}
                 </ViewOnlyNote>
               )}
-              {e.ceoNotified && e.status !== "draft" && (
+              {!live && e.ceoNotified && e.status !== "draft" && (
                 <ViewOnlyNote>Above PKR 500,000, or a capital or loan entry: the CEO / Founder / Owner is notified and can view it. The Director approves.</ViewOnlyNote>
               )}
               {e.status === "draft" && !canPrepare && <ViewOnlyNote>View only. The finance person prepares and submits entries; the Director approves them.</ViewOnlyNote>}

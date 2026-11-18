@@ -20,7 +20,7 @@ const SEEDS: Seed[] = [
   [EVERYONE_BELOW_CEO, "announcement", "Go-live on 30 November: please acknowledge", "Read the tracking policy and the go-live plan.", "/announcements", 60 * 5],
   [["ACV-0007"], "message_mention", "Omar mentioned you in #development", "“@Mariam can Nida test the check-in card on your branch?”", "/messages", 42],
   // CTO: manages development
-  [["ACV-0004"], "leave_requested", "Leave request from Ali Raza", "Casual leave, 2 days. Waiting for your approval, then the Director's.", "/approvals", 25],
+  [["ACV-0003"], "leave_requested", "Leave request from Ali Raza", "Casual leave, 2 days. Waiting for your approval.", "/approvals", 25],
   [["ACV-0004"], "approval_waiting", "Tasks are waiting for your review", "Submitted by Mariam Shah, Danish Iqbal and Ali Raza.", "/approvals", 70],
   [["ACV-0004"], "extension_requested", "Extension asked: Regression tests: payslip PDF", "Danish Iqbal asked for 2 more days.", "/approvals", 130],
   [["ACV-0004"], "leave_requested", "Leave request from Nida Aslam", "Sick leave, 1 day.", "/approvals", 200],

@@ -16,6 +16,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { DetailList } from "@/components/shared/pickers";
 import { formatDate, formatTime, formatWeekdayLong, isoDay } from "@/lib/dates";
 import { useCorrections, useRequestCorrection } from "../hooks";
+import { isLive } from "@/lib/api/http";
 import { correctionApprover, DAY_STATUS, minutesBetween } from "../logic";
 import type { AttendanceDay } from "../types";
 import { CorrectionCompare, CORRECTION_STATUS } from "./corrections-panel";
@@ -48,18 +49,21 @@ export function DaySheet({ day, onClose }: { day: AttendanceDay | null; onClose:
   const request = useRequestCorrection();
   const existing = day ? corrections.data?.find((c) => c.date === day.date) : undefined;
   const isPast = day ? day.date < isoDay(new Date()) : false;
-  // Corrections go to the person's manager (the Director's own to the CEO / Founder / Owner); the CEO / Founder / Owner has no one above.
-  const approver = viewer ? correctionApprover(viewer.employee.empId, lookup.employees) : null;
+  // Corrections go to the Director (decision D23; the Director's own to the CEO / Founder / Owner); the CEO / Founder / Owner has no one above.
+  // Live (m7): the server routes the request when it is sent (and refuses it if nobody is above), so no guess is made here.
+  const live = isLive("m7");
+  const approver = viewer && !live ? correctionApprover(viewer.employee.empId, lookup.employees) : null;
   const correctable = !!day && isPast && !["holiday", "leave", "weekend", "future"].includes(day.status) && existing?.status !== "pending";
-  const canCorrect = correctable && !!approver;
+  const canCorrect = correctable && (live || !!approver);
 
   const form = useForm<FormValues>({ resolver: zodResolver(schema), values: { checkIn: toClock(day?.checkIn), checkOut: toClock(day?.checkOut), reason: "" } });
 
   const submit = form.handleSubmit(async (v) => {
     if (!day) return;
     try {
-      await request.mutateAsync({ date: day.date, checkIn: toIso(day.date, v.checkIn), checkOut: toIso(day.date, v.checkOut), reason: v.reason });
-      toast.success(`Correction sent to ${approver?.name ?? "your manager"}`, { description: "The original record is kept next to your request." });
+      const sent = await request.mutateAsync({ date: day.date, checkIn: toIso(day.date, v.checkIn), checkOut: toIso(day.date, v.checkOut), reason: v.reason });
+      const to = approver ?? (sent?.approverEmpId ? lookup.employees.find((e) => e.empId === sent.approverEmpId) : undefined);
+      toast.success(`Correction sent to ${to?.name ?? "the Director"}`,{ description: "The original record is kept next to your request." });
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't send the correction");
@@ -106,7 +110,7 @@ export function DaySheet({ day, onClose }: { day: AttendanceDay | null; onClose:
                   <div>
                     <p className="text-[13px] font-semibold">Ask for a correction</p>
                     <p className="text-[12.5px] text-muted-foreground">
-                      Your manager{approver ? ` (${approver.name}, ${ROLE_LABEL[approver.role]})` : ""} approves it. The original stays on record.
+                      {approver ? `${approver.name} (${ROLE_LABEL[approver.role]})` : "The Director (for the Director's own, the person above)"} approves it. The original stays on record.
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -121,9 +125,9 @@ export function DaySheet({ day, onClose }: { day: AttendanceDay | null; onClose:
                     <Textarea id="cor-reason" placeholder="For example: I forgot to check out after the release call." {...form.register("reason")} />
                   </Field>
                 </form>
-              ) : correctable && !approver ? (
+              ) : correctable && !live && !approver ? (
                 <p className="flex gap-2 rounded-lg bg-muted p-3 text-[12.5px] text-muted-foreground">
-                  <Info className="mt-0.5 size-4 shrink-0" /> Corrections are approved by the person&apos;s manager. As CEO / Founder / Owner there is no one above you, so this record stays as it is.
+                  <Info className="mt-0.5 size-4 shrink-0" /> Corrections are approved by the Director (the Director&apos;s own by the person above). As CEO / Founder / Owner there is no one above you, so this record stays as it is.
                 </p>
               ) : (
                 !existing &&

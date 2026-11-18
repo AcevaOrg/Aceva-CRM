@@ -9,6 +9,7 @@ import { PasswordService } from './password.service';
 import { SessionIdentityProvider } from './session/session-identity.provider';
 import { SessionService } from './session/session.service';
 import { SessionStore, RedisSessionStore } from './session/session-store';
+import { StepUpService } from './step-up.service';
 import { SessionSweeper } from './session/session-sweeper';
 import { TotpService } from './totp.service';
 
@@ -23,6 +24,7 @@ import { TotpService } from './totp.service';
     PasswordService,
     TotpService,
     SessionService,
+    StepUpService,
     SessionSweeper,
     SessionIdentityProvider,
     { provide: SessionStore, useClass: RedisSessionStore },
@@ -30,6 +32,6 @@ import { TotpService } from './totp.service';
     // The session cookie is the only way to be identified.
     { provide: IdentityProvider, useClass: SessionIdentityProvider },
   ],
-  exports: [AuthService, SessionService, PasswordService, IdentityProvider, Mailer],
+  exports: [AuthService, SessionService, StepUpService, PasswordService, IdentityProvider, Mailer],
 })
 export class AuthModule {}

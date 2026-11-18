@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type APIRequestContext, type Browser, type BrowserContext, type Page, type PlaywrightWorkerArgs, expect } from '@playwright/test';
+import { type APIRequestContext, type Browser, type BrowserContext, type Page, type PlaywrightWorkerArgs, expect, test } from '@playwright/test';
 
 type Playwright = PlaywrightWorkerArgs['playwright'];
 import { generateSync } from 'otplib';
@@ -26,18 +26,29 @@ function writeSecrets(all: Record<string, TotpRecord>) {
   writeFileSync(SECRETS_FILE, JSON.stringify(all));
 }
 
-/** The next usable authenticator code for a person (each code may be used once; one step of drift is accepted). */
-export function nextCode(empId: string): string {
-  const all = readSecrets();
-  const rec = all[empId];
-  if (!rec) throw new Error(`No authenticator secret stored for ${empId}`);
-  const current = Math.floor(Date.now() / 30_000);
-  const step = Math.max(current, rec.lastStep + 1);
-  if (step > current + 1) throw new Error(`Too many codes used for ${empId} within 30 seconds`);
-  rec.lastStep = step;
-  all[empId] = rec;
-  writeSecrets(all);
-  return generateSync({ secret: rec.secret, epoch: step * 30 + 1 });
+/**
+ * The next usable authenticator code for a person, as a real person with an authenticator app would get it.
+ * The server accepts a code from the current 30-second step or the next one (one step of clock drift), and only a
+ * step newer than the last one that person used (replay protection). So at most two fresh codes exist per window:
+ * when both were just used, this WAITS for the next window instead of failing. A code is never used twice.
+ */
+export async function nextCode(empId: string): Promise<string> {
+  for (;;) {
+    const all = readSecrets();
+    const rec = all[empId];
+    if (!rec) throw new Error(`No authenticator secret stored for ${empId}`);
+    const current = Math.floor(Date.now() / 30_000);
+    const step = Math.max(current, rec.lastStep + 1);
+    if (step <= current + 1) {
+      rec.lastStep = step;
+      all[empId] = rec;
+      writeSecrets(all);
+      return generateSync({ secret: rec.secret, epoch: step * 30 + 1 });
+    }
+    // Wait until the clock reaches the window just before `step`, when that step becomes acceptable.
+    const waitMs = (step - 1) * 30_000 - Date.now() + 250;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(waitMs, 250)));
+  }
 }
 
 export function rememberSecret(empId: string, secret: string) {
@@ -61,12 +72,14 @@ export async function loginViaUi(page: Page, empId: string, password = PASSWORD)
     await expect(keyBox).toHaveText(/^[A-Z2-7]{4}( [A-Z2-7]{4}){3,}$/); // wait until the key has loaded
     const key = await keyBox.innerText();
     rememberSecret(empId, key);
+    const code = await nextCode(empId);
     await page.locator('input[aria-label="Digit 1"]').click();
-    await page.keyboard.type(nextCode(empId));
+    await page.keyboard.type(code);
     await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 });
   } else if (page.url().includes('/login/verify')) {
+    const code = await nextCode(empId);
     await page.locator('input[aria-label="Digit 1"]').click();
-    await page.keyboard.type(nextCode(empId));
+    await page.keyboard.type(code);
     await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 });
   }
 }
@@ -91,14 +104,20 @@ export interface ApiClient {
   get: (path: string) => ReturnType<APIRequestContext['get']>;
   post: (path: string, data?: unknown) => ReturnType<APIRequestContext['post']>;
   patch: (path: string, data?: unknown) => ReturnType<APIRequestContext['patch']>;
+  put: (path: string, data?: unknown) => ReturnType<APIRequestContext['put']>;
   delete: (path: string, data?: unknown) => ReturnType<APIRequestContext['delete']>;
 }
 
 const clients = new Map<string, ApiClient>();
 
-/** Calls the real API directly as a person (own session, own CSRF token), the way any script or tool could. */
+/**
+ * Calls the real API directly as a person (own session, own CSRF token), the way any script or tool could.
+ * The session is reused within ONE spec file only. All spec files run in the same worker process, so a run-wide cache
+ * would carry session state (for example a recent "confirm again") from one spec into another.
+ */
 export async function apiAs(playwright: Playwright, empId: string): Promise<ApiClient> {
-  const cached = clients.get(empId);
+  const cacheKey = `${test.info().file}::${empId}`;
+  const cached = clients.get(cacheKey);
   if (cached) return cached;
   const ctx = await playwright.request.newContext({ baseURL: API + '/' });
   const login = await ctx.post('auth/login', { data: { empId, password: PASSWORD } });
@@ -113,7 +132,7 @@ export async function apiAs(playwright: Playwright, empId: string): Promise<ApiC
     status = '2fa_required';
   }
   if (status === '2fa_required') {
-    const res = await ctx.post('auth/2fa/verify', { headers: h(), data: { code: nextCode(empId) } });
+    const res = await ctx.post('auth/2fa/verify', { headers: h(), data: { code: await nextCode(empId) } });
     expect(res.status()).toBe(200);
   }
   const rel = (p: string) => p.replace(/^\//, '');
@@ -121,8 +140,9 @@ export async function apiAs(playwright: Playwright, empId: string): Promise<ApiC
     get: (p) => ctx.get(rel(p)),
     post: (p, data) => ctx.post(rel(p), { headers: h(), data: data ?? {} }),
     patch: (p, data) => ctx.patch(rel(p), { headers: h(), data: data ?? {} }),
+    put: (p, data) => ctx.put(rel(p), { headers: h(), data: data ?? {} }),
     delete: (p, data) => ctx.delete(rel(p), { headers: h(), data: data ?? {} }),
   };
-  clients.set(empId, client);
+  clients.set(cacheKey, client);
   return client;
 }

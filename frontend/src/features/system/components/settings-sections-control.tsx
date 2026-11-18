@@ -22,6 +22,8 @@ import { canRunBackup } from "../api";
 import { useBackupStatus, useRunBackup } from "../hooks";
 import { ChipsEditor, NumberInput, SettingsSection } from "./settings-kit";
 import { SettingRow } from "./settings-sections-work";
+import { LiveApprovalLimitsSection } from "./settings-finance-live";
+import { isLive } from "@/lib/api/http";
 
 /* ---------------- Approval limits ★ ---------------- */
 
@@ -33,6 +35,8 @@ import { SettingRow } from "./settings-sections-work";
 type Limits = { ceoNotifiedAbove: number; capitalAndLoansNotifyCeo: boolean; blockIfDirectorMade: boolean };
 
 export function ApprovalLimitsSection() {
+  // Live (m9): the real tiers from the server (plan s.13). The mock below is the old demo and runs only without the backend.
+  if (isLive("m9")) return <LiveApprovalLimitsSection />;
   return (
     <SettingsSection<Limits> section="approval-limits">
       {(d, set, can) => (

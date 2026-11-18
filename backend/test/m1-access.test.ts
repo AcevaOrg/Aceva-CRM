@@ -67,7 +67,9 @@ describe('M1 five levels and role mapping', () => {
     expect(res.body.map((r: { key: string }) => r.key).sort()).toEqual(['cto', 'director', 'employee', 'finance', 'owner', 'sales']);
     expect(role('owner')).toMatchObject({ name: 'CEO / Founder / Owner', level: 1, isDefault: true });
     expect(perms('owner')).not.toContain('org.manage');
-    expect(perms('owner')).not.toContain('payroll.approve');
+    // decision D26: the Owner approves a payroll run only when the Director prepared it (the service checks that)
+    expect(perms('owner')).toContain('payroll.approve');
+    expect(perms('owner')).not.toContain('payroll.prepare');
     expect(perms('owner')).toEqual(expect.arrayContaining(['audit.view', 'finance.view', 'payroll.view', 'sales.all']));
     expect(role('director')).toMatchObject({ level: 2, isDefault: true });
     expect(perms('director')).toContain('org.manage');
