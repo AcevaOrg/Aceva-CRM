@@ -6,3 +6,4 @@ export * from './people';
 export * from './activity';
 export * from './tasks';
 export * from './approvals';
+export * from './performance';

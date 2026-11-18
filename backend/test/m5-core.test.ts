@@ -691,13 +691,14 @@ describe('M5 extension requests', () => {
     expect((await eventsOf('task.extension_decided', old.number))[0].payload).toMatchObject({ late: true, decision: 'approved' });
   });
 
-  it('on-time is measured against the approved deadline: handed in after the first deadline but before the approved one is on time, after the current one is late', async () => {
+  it('on-time is measured against the approved deadline, but an extension asked for AFTER the deadline counts as late: it does not rescue a task that was already late', async () => {
     const old = await seedTask({ assignee: DEV3, status: 'in_progress' }); // its deadline was a day ago
     const ext: ExtensionBody = (await t.as(DEV3).post(`${API}/tasks/${old.id}/extensions`).send({ requestedDeadline: inDays(2), reason: 'The server was down' }).expect(201)).body;
+    expect(ext.late).toBe(true);
     await t.as(CTO).post(`${API}/extensions/${ext.id}/approve`).send({}).expect(200);
-    await act(DEV3, old.id, 'submit').expect(200);
+    await act(DEV3, old.id, 'submit').expect(200); // handed in before the new deadline, but after the one it was asked for at
     await act(CTO, old.id, 'approve', { rating: 4 }).expect(200);
-    expect((await eventsOf('task.approved', old.number))[0].payload).toMatchObject({ onTime: true, extensionsCount: 1 });
+    expect((await eventsOf('task.approved', old.number))[0].payload).toMatchObject({ onTime: false, extensionsCount: 1 });
 
     const late = await seedTask({ assignee: DEV3, status: 'in_progress' }); // no extension: the deadline passed a day ago
     await act(DEV3, late.id, 'submit').expect(200);

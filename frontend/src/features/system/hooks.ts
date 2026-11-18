@@ -84,7 +84,11 @@ export function useSaveWeights() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ kind, weights, reason }: { kind: WeightsVersion["kind"]; weights: Record<string, number>; reason: string }) => settingsApi.saveWeights(kind, weights, reason),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["system"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["system"] });
+      // the live performance cards show the weights version in force
+      qc.invalidateQueries({ queryKey: ["performance"] });
+    },
   });
 }
 

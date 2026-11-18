@@ -369,6 +369,115 @@ export const taskReminderDueV1 = defineEvent(
   }),
 );
 
+// ---------- Module 6: performance and results ----------
+
+export const SCORECARD_KINDS = ['standard', 'sales'] as const;
+/** A month as "2026-10" (a Pakistan month). */
+export const scorecardMonthSchema = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'A month looks like 2026-10');
+
+const scorecardRef = {
+  scorecardId: z.uuid(),
+  /** The person the scorecard is about. */
+  empId: empIdSchema,
+  month: scorecardMonthSchema,
+  kind: z.enum(SCORECARD_KINDS),
+};
+
+/**
+ * The monthly job made a draft scorecard (actor "system"). `reviewer` is who must review and release it; null for the
+ * Director, whose scorecard has no reviewer and is released at once (a scorecard.released event follows). `score` is
+ * null when nothing could be measured (for example a sales scorecard before Module 15 exists).
+ */
+export const scorecardDraftedV1 = defineEvent(
+  'scorecard.drafted',
+  1,
+  z.object({
+    ...scorecardRef,
+    reviewer: empIdSchema.nullable(),
+    score: z.number().min(0).max(100).nullable(),
+    taskCount: z.number().int().min(0),
+    smallSample: z.boolean(),
+  }),
+);
+
+/** A scorecard was released to the employee: by the reviewer (actor), or by the system when there is no reviewer. */
+export const scorecardReleasedV1 = defineEvent(
+  'scorecard.released',
+  1,
+  z.object({
+    ...scorecardRef,
+    /** Null = released by the system (no reviewer). */
+    releasedBy: empIdSchema.nullable(),
+    automatic: z.boolean(),
+    hasRemark: z.boolean(),
+  }),
+);
+
+/** The employee acknowledged a released scorecard (actor = the employee). */
+export const scorecardAcknowledgedV1 = defineEvent(
+  'scorecard.acknowledged',
+  1,
+  z.object({
+    ...scorecardRef,
+    reviewer: empIdSchema.nullable(),
+    hasComment: z.boolean(),
+  }),
+);
+
+/** The employee disputed a task rating on their scorecard (actor = the employee). `decider` must decide it. */
+export const scorecardDisputeRaisedV1 = defineEvent(
+  'scorecard.dispute_raised',
+  1,
+  z.object({
+    disputeId: z.uuid(),
+    scorecardId: z.uuid(),
+    empId: empIdSchema,
+    month: scorecardMonthSchema,
+    taskId: z.uuid(),
+    taskNumber: z.string().min(1),
+    ratingAtRaise: z.number().int().min(1).max(5),
+    decider: empIdSchema,
+  }),
+);
+
+/**
+ * A dispute was decided (actor = the decider): the rating was kept (upheld) or changed. When changed, the scorecard was
+ * recomputed with its original weights version: scoreBefore / scoreAfter are its score before and after (null = none).
+ */
+export const scorecardDisputeDecidedV1 = defineEvent(
+  'scorecard.dispute_decided',
+  1,
+  z.object({
+    disputeId: z.uuid(),
+    scorecardId: z.uuid(),
+    empId: empIdSchema,
+    month: scorecardMonthSchema,
+    taskNumber: z.string().min(1),
+    decision: z.enum(['upheld', 'changed']),
+    decidedBy: empIdSchema,
+    ratingBefore: z.number().int().min(1).max(5),
+    ratingAfter: z.number().int().min(1).max(5).nullable(),
+    scoreBefore: z.number().min(0).max(100).nullable(),
+    scoreAfter: z.number().min(0).max(100).nullable(),
+  }),
+);
+
+/** The Director saved a new version of the score weights (actor = the Director). Old scorecards keep their version. */
+export const scoreWeightsCreatedV1 = defineEvent(
+  'score_weights.created',
+  1,
+  z.object({
+    versionId: z.uuid(),
+    kind: z.enum(SCORECARD_KINDS),
+    /** Null = the company-wide set; set = that department's own set. */
+    departmentId: z.uuid().nullable(),
+    versionNo: z.number().int().min(1),
+    /** Whole percentages by metric key; they add up to 100. */
+    weights: z.record(z.string(), z.number().int().min(0).max(100)),
+    previousVersionId: z.uuid().nullable(),
+  }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -390,6 +499,12 @@ export const outboxEventSchemas = {
   'task.comment_added': { 1: taskCommentAddedV1 },
   'task.transferred': { 1: taskTransferredV1 },
   'task.reminder.due': { 1: taskReminderDueV1 },
+  'scorecard.drafted': { 1: scorecardDraftedV1 },
+  'scorecard.released': { 1: scorecardReleasedV1 },
+  'scorecard.acknowledged': { 1: scorecardAcknowledgedV1 },
+  'scorecard.dispute_raised': { 1: scorecardDisputeRaisedV1 },
+  'scorecard.dispute_decided': { 1: scorecardDisputeDecidedV1 },
+  'score_weights.created': { 1: scoreWeightsCreatedV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -414,6 +529,12 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   taskCommentAddedV1,
   taskTransferredV1,
   taskReminderDueV1,
+  scorecardDraftedV1,
+  scorecardReleasedV1,
+  scorecardAcknowledgedV1,
+  scorecardDisputeRaisedV1,
+  scorecardDisputeDecidedV1,
+  scoreWeightsCreatedV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

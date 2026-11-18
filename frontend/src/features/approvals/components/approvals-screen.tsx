@@ -95,7 +95,7 @@ function ApprovalRow({ item }: { item: ApprovalItem }) {
       toast.error(e instanceof Error ? e.message : "Couldn't save the decision.");
       return;
     }
-    toast.success("Approved", { description: item.title });
+    toast.success(item.type === "scorecard" ? "Scorecard released" : item.type === "dispute" ? "Rating changed" : "Approved", { description: item.title });
   };
   const reject = async () => {
     const reason = await askReason({ title: item.rejectLabel ?? "Reject", description: "The requester sees this reason. It is saved in the audit log.", destructive: item.type !== "task_review", confirmLabel: item.rejectLabel ?? "Reject" });
@@ -106,7 +106,7 @@ function ApprovalRow({ item }: { item: ApprovalItem }) {
       toast.error(e instanceof Error ? e.message : "Couldn't save the decision.");
       return;
     }
-    toast(item.type === "task_review" ? "Sent back for rework" : "Rejected", { description: item.title });
+    toast(item.type === "task_review" ? "Sent back for rework" : item.type === "scorecard" ? "Remark added, the scorecard stays a draft" : item.type === "dispute" ? "Rating kept" : "Rejected", { description: item.title });
   };
 
   return (

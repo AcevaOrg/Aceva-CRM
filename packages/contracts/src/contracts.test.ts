@@ -1,21 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTIVITY_MODULES,
+  acknowledgeScorecardRequestSchema,
   activityEventsQuerySchema,
   addCommentRequestSchema,
   approveTaskRequestSchema,
   checkAlertRequestSchema,
   createTaskRequestSchema,
   decideApprovalRequestSchema,
+  decideDisputeRequestSchema,
+  disputeListQuerySchema,
   exportLogRequestSchema,
   healthResponseSchema,
   heartbeatRequestSchema,
+  liveQuerySchema,
   logoutRequestSchema,
   outboxEventSchema,
   outboxEventSchemas,
+  raiseDisputeRequestSchema,
   reasonActionRequestSchema,
+  releaseScorecardRequestSchema,
   repeatRuleSchema,
   requestExtensionRequestSchema,
+  saveScoreWeightsRequestSchema,
+  scorecardListQuerySchema,
+  scorecardRemarkRequestSchema,
+  scoreWeightsQuerySchema,
   screenViewRequestSchema,
   summariesQuerySchema,
   taskListQuerySchema,
@@ -60,6 +70,12 @@ describe('outbox event contracts', () => {
       'task.status_changed',
       'task.transferred',
       'task.transfer.requested',
+      'scorecard.acknowledged',
+      'scorecard.dispute_decided',
+      'scorecard.dispute_raised',
+      'scorecard.drafted',
+      'scorecard.released',
+      'score_weights.created',
     ].sort());
     for (const versions of Object.values(outboxEventSchemas)) {
       expect(Object.keys(versions)).toEqual(['1']);
@@ -295,5 +311,107 @@ describe('Module 5 task contracts', () => {
     expect(outboxEventSchema.safeParse(reminder).success).toBe(true);
     expect(outboxEventSchema.safeParse({ ...reminder, payload: { ...reminder.payload, recipients: [] } }).success).toBe(false);
     expect(outboxEventSchema.safeParse({ ...reminder, payload: { ...reminder.payload, kind: 'whenever' } }).success).toBe(false);
+  });
+});
+
+describe('Module 6 request contracts', () => {
+  it('the live figures and the scorecard list take an optional Emp-ID; empty filters mean "any"; latest accepts 1 or true', () => {
+    expect(liveQuerySchema.parse({})).toEqual({});
+    expect(liveQuerySchema.parse({ empId: '' })).toEqual({});
+    expect(liveQuerySchema.safeParse({ empId: 'not-an-id' }).success).toBe(false);
+    expect(scorecardListQuerySchema.parse({ empId: 'ACV-0007', latest: '1' })).toEqual({ empId: 'ACV-0007', latest: true });
+    expect(scorecardListQuerySchema.parse({ latest: 'false', month: '2026-10', limit: '12' })).toEqual({ latest: false, month: '2026-10', limit: 12 });
+    expect(scorecardListQuerySchema.safeParse({ month: '2026-13' }).success).toBe(false);
+    expect(scorecardListQuerySchema.safeParse({ limit: '500' }).success).toBe(false);
+  });
+
+  it('a remark needs some words; a release and an acknowledgement may carry a note but need none', () => {
+    expect(scorecardRemarkRequestSchema.safeParse({ remark: 'ok' }).success).toBe(false);
+    expect(scorecardRemarkRequestSchema.safeParse({ remark: 'Steady month, keep going.' }).success).toBe(true);
+    expect(releaseScorecardRequestSchema.parse(undefined)).toEqual({});
+    expect(releaseScorecardRequestSchema.safeParse({ remark: 'Good.' }).success).toBe(true);
+    expect(acknowledgeScorecardRequestSchema.parse(undefined)).toEqual({});
+    expect(acknowledgeScorecardRequestSchema.safeParse({ comment: 'Thanks.' }).success).toBe(true);
+    expect(acknowledgeScorecardRequestSchema.safeParse({ comment: 'Thanks.', extra: 1 }).success).toBe(false);
+  });
+
+  it('a dispute names the scorecard, a task number and a real reason', () => {
+    const ok = { scorecardId: '3f2b8c1e-5a4d-4e6b-9c7a-1d2e3f4a5b6c', taskNumber: 'TSK-0142', reason: 'The client changed the brief twice.' };
+    expect(raiseDisputeRequestSchema.safeParse(ok).success).toBe(true);
+    expect(raiseDisputeRequestSchema.safeParse({ ...ok, taskNumber: 'TODO-0001' }).success).toBe(false);
+    expect(raiseDisputeRequestSchema.safeParse({ ...ok, scorecardId: 'sc_0006_2026-10' }).success).toBe(false);
+    expect(raiseDisputeRequestSchema.safeParse({ ...ok, reason: 'no' }).success).toBe(false);
+  });
+
+  it('a decision keeps the rating or changes it; the new rating is 1 to 5 and the reason is required', () => {
+    expect(decideDisputeRequestSchema.safeParse({ change: false, decision: 'Rating kept.' }).success).toBe(true);
+    expect(decideDisputeRequestSchema.safeParse({ change: true, decision: 'Fair point.', newRating: 4 }).success).toBe(true);
+    expect(decideDisputeRequestSchema.safeParse({ change: true, decision: 'Fair point.', newRating: 6 }).success).toBe(false);
+    expect(decideDisputeRequestSchema.safeParse({ change: true, decision: 'Fair point.', newRating: 3.5 }).success).toBe(false);
+    expect(decideDisputeRequestSchema.safeParse({ change: false, decision: '' }).success).toBe(false);
+    expect(disputeListQuerySchema.parse({ status: '' })).toEqual({});
+    expect(disputeListQuerySchema.safeParse({ status: 'whatever' }).success).toBe(false);
+  });
+
+  it('new score weights name a kind, whole-number weights and a reason (the server checks the sum of 100 and the metric names)', () => {
+    const ok = { kind: 'standard', weights: { quality: 35, onTime: 25, completion: 20, rework: 10, attendance: 10 }, reason: 'Deadlines matter more' };
+    expect(saveScoreWeightsRequestSchema.safeParse(ok).success).toBe(true);
+    expect(saveScoreWeightsRequestSchema.safeParse({ ...ok, kind: 'executive' }).success).toBe(false);
+    expect(saveScoreWeightsRequestSchema.safeParse({ ...ok, weights: { quality: '35' } }).success).toBe(false);
+    expect(saveScoreWeightsRequestSchema.safeParse({ ...ok, reason: '' }).success).toBe(false);
+    expect(saveScoreWeightsRequestSchema.safeParse({ ...ok, departmentId: 'dep-eng' }).success).toBe(false);
+    expect(saveScoreWeightsRequestSchema.safeParse({ ...ok, departmentId: '3f2b8c1e-5a4d-4e6b-9c7a-1d2e3f4a5b6c' }).success).toBe(true);
+    expect(scoreWeightsQuerySchema.parse({ kind: '', departmentId: '' })).toEqual({});
+  });
+});
+
+describe('Module 6 event contracts', () => {
+  const card = { scorecardId: '3f2b8c1e-5a4d-4e6b-9c7a-1d2e3f4a5b6c', empId: 'ACV-0007', month: '2026-10', kind: 'standard' };
+
+  it('a draft scorecard names the reviewer (none for the Director) and may have no score', () => {
+    const drafted = { ...base, actor: 'system', type: 'scorecard.drafted', payload: { ...card, reviewer: 'ACV-0004', score: 84.6, taskCount: 6, smallSample: false } };
+    expect(outboxEventSchema.safeParse(drafted).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...drafted, payload: { ...drafted.payload, reviewer: null, score: null } }).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...drafted, payload: { ...drafted.payload, score: 120 } }).success).toBe(false);
+    expect(outboxEventSchema.safeParse({ ...drafted, payload: { ...drafted.payload, month: '2026-10-01' } }).success).toBe(false);
+    expect(outboxEventSchema.safeParse({ ...drafted, payload: { ...drafted.payload, reviewer: card.scorecardId } }).success).toBe(false);
+  });
+
+  it('released and acknowledged scorecards', () => {
+    const released = { ...base, type: 'scorecard.released', payload: { ...card, releasedBy: 'ACV-0004', automatic: false, hasRemark: true } };
+    expect(outboxEventSchema.safeParse(released).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...released, actor: 'system', payload: { ...released.payload, releasedBy: null, automatic: true } }).success).toBe(true);
+    const acknowledged = { ...base, actor: 'ACV-0007', type: 'scorecard.acknowledged', payload: { ...card, reviewer: 'ACV-0004', hasComment: false } };
+    expect(outboxEventSchema.safeParse(acknowledged).success).toBe(true);
+  });
+
+  it('disputes: raised, and decided with the score before and after', () => {
+    const raised = {
+      ...base,
+      actor: 'ACV-0007',
+      type: 'scorecard.dispute_raised',
+      payload: { disputeId: card.scorecardId, scorecardId: card.scorecardId, empId: 'ACV-0007', month: '2026-10', taskId: card.scorecardId, taskNumber: 'TSK-0142', ratingAtRaise: 3, decider: 'ACV-0003' },
+    };
+    expect(outboxEventSchema.safeParse(raised).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...raised, payload: { ...raised.payload, ratingAtRaise: 0 } }).success).toBe(false);
+    const decided = {
+      ...base,
+      type: 'scorecard.dispute_decided',
+      payload: { disputeId: card.scorecardId, scorecardId: card.scorecardId, empId: 'ACV-0007', month: '2026-10', taskNumber: 'TSK-0142', decision: 'changed', decidedBy: 'ACV-0003', ratingBefore: 3, ratingAfter: 5, scoreBefore: 80.1, scoreAfter: 83.4 },
+    };
+    expect(outboxEventSchema.safeParse(decided).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...decided, payload: { ...decided.payload, decision: 'upheld', ratingAfter: null, scoreBefore: null, scoreAfter: null } }).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...decided, payload: { ...decided.payload, decision: 'maybe' } }).success).toBe(false);
+  });
+
+  it('a new version of the score weights', () => {
+    const created = {
+      ...base,
+      type: 'score_weights.created',
+      payload: { versionId: card.scorecardId, kind: 'sales', departmentId: null, versionNo: 2, weights: { activity: 20, meetings: 25, won: 30, dataQuality: 10, attendance: 15 }, previousVersionId: card.scorecardId },
+    };
+    expect(outboxEventSchema.safeParse(created).success).toBe(true);
+    expect(outboxEventSchema.safeParse({ ...created, payload: { ...created.payload, weights: { activity: 0.2 } } }).success).toBe(false);
+    expect(outboxEventSchema.safeParse({ ...created, payload: { ...created.payload, versionNo: 0 } }).success).toBe(false);
   });
 });

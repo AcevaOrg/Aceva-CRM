@@ -271,6 +271,135 @@ reminders, a mention, a task handed in (to the assigner), an approval (with the 
 cancellation, an extension asked and decided. Never to the person who did the action, never for a personal to-do, and
 never to people who have left or who have no official address. Reassigning a task sends no mail and emits no event.
 
+## M6: performance and results
+
+Shapes: `packages/contracts/src/performance.ts` (the same as `frontend/src/features/performance/types.ts`). Months are
+Pakistan months (`2026-10`). Times are ISO 8601 in UTC.
+
+**Weights.** The server stores whole percents that add up to exactly 100, by metric key. Standard keys: `quality`,
+`onTime`, `completion`, `rework`, `attendance`. Sales keys: `activity`, `meetings`, `won`, `dataQuality`, `attendance`.
+The two starting versions (company-wide, `createdBy` null) are Standard v1 (Q 35, T 25, C 20, R 10, A 10) and Sales v1
+(V 20, M 25, W 30, D 10, A 15); the migration inserts them. A new version is inserted, never edited. The version in force
+for a person is read by `effectiveFrom`, then `versionNo`, for their kind; a department's own set wins for that
+department's people. The Settings screen uses the percents as they are; the performance screens divide by 100 in
+`frontend/src/features/performance/live.ts` (`percentsToFractions`).
+
+**Scorecards are not changed by requests.** The monthly job writes a scorecard with its metrics, score, band, weights
+version and task snapshot in one transaction. The service never writes those columns again, and the database trigger
+`scorecards_protect` refuses any change to them, with one exception: the recompute after a decided `changed` dispute, which
+must raise `recomputeCount` by exactly 1 while changed disputes outnumber recomputes. That recompute uses the weights
+version the scorecard was made with. Remarks, releases, acknowledgements and disputes are rows of their own. Remarks are an
+insert-only history; there is no private note.
+
+**Visibility.**
+- A scorecard the caller may not see: `404 not_found`.
+- A person the caller may not see (`GET /performance/live`, `GET /scorecards`): `403` with the message "You can only see
+  your own results and your team's."
+- An unknown Emp-ID: `404` with the message "Person not found".
+- An employee's own draft: `404` for get, remark, release, acknowledge and raise. The employee is never told a draft
+  exists. People above the employee see drafts.
+- `GET /scorecards?latest=1` answers a list of at most one scorecard (never a null body).
+- `GET /performance/team` is sorted by name, never by score.
+- `own_scorecard` (`403`): nobody releases their own scorecard.
+- A scorecard or dispute that exists but that the caller may not see answers `404` and is also recorded as a blocked attempt in
+  the activity records (`GET /scorecards/:id`, `POST /scorecards/:id/{remark|release|acknowledge}`, `POST /disputes` with someone
+  else's `scorecardId`, `POST /disputes/:id/decide`). An id that does not exist, and the employee's own draft, are not
+  recorded. (Module 5's task routes do not do this: `loadVisibleTask` answers 404 without a record, see
+  `docs/M5-ACCEPTANCE.md` decision 5.)
+
+**Routes.** The 12 routes of the M6 controllers (`backend/src/performance/performance.controller.ts`) are below. The
+approvals inbox also carries the M6 items (see "Approvals (M6 items)").
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /performance/live?empId=` | `performance.view_own`; me, or someone below me | This month's figures for a person (default: me): metrics, score, band, `unmeasured`, weights version, the last 6 closed months and this month as a trend, the tasks and the open-task workload (information only) |
+| `GET /performance/team` | `performance.view_team` | One row per person below me, sorted by name |
+| `GET /scorecards?empId=&latest=&month=&limit=` | `performance.view_own`; scope as above | A person's scorecards, newest month first. The employee sees released and acknowledged ones only; people above also see drafts |
+| `GET /scorecards/:id` | `performance.view_own`; 404 when not visible | One scorecard with the weights version it was made with, its disputes and its remark history (`comments`, oldest first). `reviewerRemark` is the newest remark |
+| `POST /scorecards/:id/remark` | the reviewer (never the employee; an employee's own draft is `404`) | Body `{ remark }` (3 to 1000 characters). Adds a remark; never changes the numbers. Answers `200` |
+| `POST /scorecards/:id/release` | the reviewer (the person's manager, or the next level up who reviews work when the manager has left or does not review work); never your own | Body `{ remark? }` (optional, 3 to 1000 characters). Draft to released; the employee is mailed. Answers `200` |
+| `POST /scorecards/:id/acknowledge` | the person the scorecard is about, on a released scorecard | Body `{ comment? }`. Answers `200` |
+| `GET /disputes?status=open\|upheld\|changed` | `performance.view_own` | Disputes I raised, that I must decide, or that belong to people below me |
+| `POST /disputes` | the employee, on their own released scorecard | Body `{ scorecardId, taskNumber, reason }` (`taskNumber` like `TSK-0142`; `reason` at least 10 characters). One open dispute per task. The decider is fixed now and mailed. Answers `201` |
+| `POST /disputes/:id/decide` | the decider (never the employee) | Body `{ change, decision, newRating? }`. `change: false` keeps the rating (upheld). `change: true` needs `newRating` (1 to 5, not the current one) and recomputes the scorecard with its own weights version. `decision` is at least 3 characters. The employee is mailed. Answers `200` |
+| `GET /settings/score-weights?kind=&departmentId=` | `settings.view` | Every version, newest first (the company-wide ones and each department's own) |
+| `POST /settings/score-weights` | `performance.weights` (the Director) | Body `{ kind, departmentId?, weights, reason }`. Saves a NEW version (without `departmentId`: the company-wide set; with it: that department's own). `reason` at least 3 characters. Audited. Answers `201` with the new version |
+
+A weights version has `id`, `kind`, `label` (`Standard v2`, `Sales v1`; a department's set is named `Standard v1` and the
+department is named next to it), `versionNo`, `departmentId` and `departmentName` (absent for the company-wide set),
+`weights`, `note`, `effectiveFrom` and `createdBy` (the Emp-ID of the Director who saved it; `null` for the two starting
+versions). Old scorecards keep the version they were made with.
+
+`GET /performance/live` and `GET /scorecards/:id` return `weights` in a slimmer form: `id`, `label`, `kind`, `departmentId`,
+`departmentName`, `weights` (whole percents), `versionNo` and `effectiveFrom` only. `createdBy` and `note` (the Director's
+reason for the version) are only in `GET /settings/score-weights` (`settings.view`), so an employee reading their own
+scorecard never sees who saved a set or why.
+
+**Figures that cannot be measured are not invented.** A metric nobody can measure is `null` and named in `unmeasured`
+with a reason: `attendance_not_available` (until Module 7), `sales_not_available` (until Module 15), or
+`nothing_to_measure` (no rated task). The score uses only the measured metrics, with their weights scaled to 100. When
+nothing is measurable the score is `null` and the band is `null`. A sales scorecard has no sales numbers and no score
+until Module 15. Attendance from Module 7 must be a percentage from 0 to 100.
+
+### Approvals (M6 items)
+
+`GET /approvals` (and `/approvals/oversight`) also lists two M6 kinds, with the Module 5 ones:
+
+- `scorecard`: id `scorecard:<scorecard id>`. A draft waiting for its reviewer. Approve releases it (the reason, when
+  given, is the remark that goes with it). Reject adds a remark and keeps the draft (body `{ reason }`, required:
+  `reason_required`). Labels: "Release" and "Add remark, keep draft".
+- `dispute`: id `dispute:<dispute id>`. Approve changes the rating: body `{ rating, reason? }` (`rating` 1 to 5, required:
+  `rating_required`; the reason is the decision text). Reject keeps the rating. Labels: "Change rating" and "Keep rating".
+
+`POST /approvals/:id/approve` and `POST /approvals/:id/reject` answer `201 { "ok": true }`, like the Module 5 items. The
+same rules as the scorecard and dispute routes apply (the service decides; a wrong person gets `403`).
+
+### Error codes (Module 6)
+
+The body is always `{ statusCode, code, message }`. Validation failures also carry `issues`.
+
+| Status | Codes | Meaning |
+|---|---|---|
+| `400` | `weights_sum` | The weights do not add up to exactly 100 |
+| `400` | `weights_keys` | The keys are not exactly the metrics of the kind |
+| `400` | `weights_whole` | A weight is not a whole number |
+| `400` | `weights_range` | A weight is outside 0 to 100 |
+| `400` | `department_not_found` | The department does not exist or is archived |
+| `400` | `not_rated` | Only a rated task on this scorecard can be disputed |
+| `400` | `no_decider` | The scorecard has no reviewer, so nobody can decide a dispute on it |
+| `400` | `decision_required` | The decision text is missing (at least 3 characters) |
+| `400` | `rating_required` | A rating of 1 to 5 is needed (a dispute approval) |
+| `400` | `rating_unchanged` | The new rating is the current one: keep the rating instead |
+| `400` | `reason_required` | A reason or remark is required (for example a scorecard rejected from the inbox) |
+| `403` | `forbidden` | The caller may not see the person (see the message) |
+| `403` | `not_reviewer` | Only the reviewer adds a remark or releases a scorecard |
+| `403` | `own_scorecard` | Nobody releases their own scorecard |
+| `403` | `not_owner` | Only the person the scorecard is about acknowledges it or disputes a rating on it |
+| `403` | `not_decider` | Only the decider (the level above the reviewer) decides this dispute |
+| `403` | `own_dispute` | You cannot decide your own dispute |
+| `404` | `not_found` | The scorecard, dispute, person, or approval item does not exist or is not visible to the caller |
+| `409` | `invalid_state` | This action is not possible in this status (for example releasing a scorecard that is not a draft) |
+| `409` | `already_disputed` | This rating already has an open dispute |
+| `409` | `already_decided` | This dispute was already decided |
+| `409` | `version_conflict` | Someone saved the weights at the same moment: reload and try again |
+
+### Audit actions (Module 6)
+
+Written by the core in the same transaction as the change (the recorder adds the request details as usual). Every scorecard
+entry (`scorecard.drafted`, `scorecard.remark`, `scorecard.released` including the system release, `scorecard.acknowledged`)
+uses the one target `<Emp-ID> <month>` (for example `ACV-0006 2026-10`), so a search by target returns a scorecard's whole
+history; the scorecard id is in the details.
+
+| Action | Target | Details |
+|---|---|---|
+| `settings.score_weights.created` | `settings` / `score-weights` | `before` (the set it replaces, for a department's first set the company-wide set), `after`, `kind`, `departmentId`, `versionNo` |
+| `scorecard.drafted` | `scorecard`, `<Emp-ID> <month>` | Written by the monthly job with no person as the actor; the scorecard id is in the details |
+| `scorecard.remark` | `scorecard`, `<Emp-ID> <month>` | The details hold only `{ scorecardId, length }`; the remark text itself is in `scorecard_comments` |
+| `scorecard.released` | `scorecard`, `<Emp-ID> <month>` | Released by the reviewer, or by the system (no reviewer above reviews work) |
+| `scorecard.acknowledged` | `scorecard`, `<Emp-ID> <month>` | The acknowledgement |
+| `scorecard.dispute.raised` | `dispute`, the task number | The dispute |
+| `scorecard.dispute.decided` | `dispute`, the task number | Upheld or changed, with the ratings before and after |
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

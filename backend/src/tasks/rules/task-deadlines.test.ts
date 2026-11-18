@@ -13,6 +13,7 @@ import {
   nextWorkingDay,
   pakistanInstant,
   suggestedDeadline,
+  timelinessDeadline,
   workingDaysBetween,
 } from './task-deadlines';
 
@@ -233,6 +234,27 @@ describe('on time, extensions and manager changes', () => {
     const requested = pk('2026-11-23', '18:00');
     expect(checkExtension({ currentDeadline: current, requestedDeadline: requested, now: pk('2026-11-18') })).toEqual({ errors: [], late: false });
     expect(checkExtension({ currentDeadline: current, requestedDeadline: requested, now: pk('2026-11-20') })).toEqual({ errors: [], late: true });
+  });
+
+  it('a late extension never turns a late task into an on-time one: the deadline before the late request is the one measured', () => {
+    const due = pk('2026-11-10', '18:00');
+    const extendedTo = pk('2026-11-15', '18:00');
+    const submitted = pk('2026-11-14', '12:00'); // after the first deadline, before the extended one
+    // no late request: the (moved) deadline in force is the one measured (an extension approved before the deadline is not late)
+    expect(isOnTime(submitted, timelinessDeadline(extendedTo, []))).toBe(true);
+    // one late request, asked when the deadline was the 10th: measured against the 10th, so late
+    expect(isOnTime(submitted, timelinessDeadline(extendedTo, [due]))).toBe(false);
+    // handed in before the first deadline: on time even though a late extension was asked afterwards
+    expect(isOnTime(pk('2026-11-10', '17:00'), timelinessDeadline(extendedTo, [due]))).toBe(true);
+  });
+
+  it('with an in-time extension first and a late one after it, the late request is measured from the deadline it was asked at', () => {
+    const first = pk('2026-11-12', '18:00'); // moved from the 10th, asked on time
+    const last = pk('2026-11-17', '18:00'); // asked on the 13th (late), approved
+    expect(timelinessDeadline(last, [first])).toEqual(first);
+    // several late requests: the earliest deadline wins; the current deadline is never a later one than itself
+    expect(timelinessDeadline(last, [pk('2026-11-15', '18:00'), first])).toEqual(first);
+    expect(timelinessDeadline(first, [last])).toEqual(first);
   });
 
   it('an extension must ask for a later date than the current deadline, in the future', () => {

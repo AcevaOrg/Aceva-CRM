@@ -171,6 +171,18 @@ export function isOnTime(submittedAt: Date, approvedDeadline: Date): boolean {
   return submittedAt.getTime() <= approvedDeadline.getTime();
 }
 
+/**
+ * The deadline a task's timeliness is measured against (plan section 9: "An extension approved before the deadline is not
+ * late", "a request made after the deadline counts as late"). An extension asked for BEFORE the deadline moves the deadline, and
+ * the task is judged against the new one. An extension asked for AFTER the deadline (`late`) and approved still moves the
+ * deadline the task is worked to, but it must not turn a task that was already late into an on-time one: the task is judged
+ * against the deadline that was in force when the first such request was made. `lateRequestDeadlines` = the `currentDeadline`
+ * of every APPROVED late extension of the task (empty when there is none).
+ */
+export function timelinessDeadline(currentDeadline: Date, lateRequestDeadlines: readonly Date[]): Date {
+  return lateRequestDeadlines.reduce((earliest, d) => (d.getTime() < earliest.getTime() ? d : earliest), currentDeadline);
+}
+
 /** The statuses in which the person doing the task may ask for more time. */
 const EXTENSION_STATUSES: ReadonlySet<string> = new Set(['assigned', 'in_progress', 'rework', 'on_hold']);
 export const canRequestExtensionIn = (status: string): boolean => EXTENSION_STATUSES.has(status);

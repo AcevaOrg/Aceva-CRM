@@ -61,12 +61,12 @@ export function TeamPerformance() {
             header: "This month",
             cell: (r) => (
               <span className="flex items-center gap-2">
-                <span className="font-mono font-semibold tabular">{Math.round(r.live.score)}</span>
+                <span className="font-mono font-semibold tabular">{r.live.score === null ? "—" : Math.round(r.live.score)}</span>
                 <BandBadge band={r.live.band} />
                 {r.live.smallSample && <Badge tone="outline">small sample</Badge>}
               </span>
             ),
-            sortValue: (r) => r.live.score,
+            // No sortValue on purpose: there is no ranking, so the table can't be ordered by score.
           },
           {
             key: "last",
@@ -76,7 +76,7 @@ export function TeamPerformance() {
               r.latest ? (
                 <span className="grid justify-items-start gap-0.5">
                   <span className="flex items-center gap-2">
-                    <span className="font-mono tabular">{Math.round(r.latest.score)}</span>
+                    <span className="font-mono tabular">{r.latest.score === null ? "—" : Math.round(r.latest.score)}</span>
                     <span className="text-[12px] text-muted-foreground">{formatMonthKey(r.latest.month)}</span>
                   </span>
                   <StatusBadge {...SCORECARD_STATUS(r.latest.status)} />
@@ -95,7 +95,7 @@ export function TeamPerformance() {
               const m = r.latest.metrics as MetricSet;
               return (
                 <span className="font-mono text-[12px] tabular text-muted-foreground">
-                  {[m.quality, m.onTime, m.completion, m.rework, m.attendance].map((v) => Math.round(v)).join(" · ")}
+                  {[m.quality, m.onTime, m.completion, m.rework, m.attendance].map((v) => (v === null ? "–" : Math.round(v))).join(" · ")}
                 </span>
               );
             },
@@ -214,6 +214,11 @@ export function DisputesPanel() {
                     <EmpChip empId={d.decidedBy} size="sm" showId={false} />
                     <span className="text-muted-foreground"> · {d.decidedAt ? formatDate(d.decidedAt) : ""}</span>
                     <span className="mt-1 block">“{d.decision}”</span>
+                    {d.status === "changed" && d.scoreBefore !== undefined && d.scoreAfter !== undefined && (
+                      <span className="mt-1 block text-muted-foreground">
+                        Score recalculated: {d.scoreBefore.toFixed(1)} → {d.scoreAfter.toFixed(1)}
+                      </span>
+                    )}
                   </p>
                 )}
                 <div className={cn("flex flex-wrap items-center justify-between gap-2 text-[12px] text-muted-foreground")}>

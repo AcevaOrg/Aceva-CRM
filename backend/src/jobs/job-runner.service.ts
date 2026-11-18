@@ -109,7 +109,10 @@ export class JobRunner {
     } catch (error) {
       const message = (error as Error).message.slice(0, 500);
       const final = job.attempts >= job.max_attempts;
-      this.logger.warn(`Job ${job.type} ${job.id} failed (attempt ${job.attempts}/${job.max_attempts}): ${message}`);
+      const line = `Job ${job.type} ${job.id} failed (attempt ${job.attempts}/${job.max_attempts}): ${message}`;
+      // A retry is expected noise (warning); the last failure leaves the job dead until somebody re-arms it, so it is an error.
+      if (final) this.logger.error(`${line}. It stays failed and will not run again until it is re-armed by hand.`);
+      else this.logger.warn(line);
       await this.prisma.scheduledJob.update({
         where: { id: job.id },
         data: {

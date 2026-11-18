@@ -89,7 +89,7 @@ entry, but no event and no mail). Payloads are in `packages/contracts/src/events
 |---|---|---|---|
 | `task.created` | A work task is created (`POST /tasks`, actor = the assigner), or a repeating series makes its task (actor `system`). `repeatRuleId` is set for a series task | `assignee`, `assignedBy`, `personal` (false), `size`, `points`, `estimatedHours`, `startDate`, `deadline`, `repeatRuleId` | `tasks.reminders`, `tasks.repeat`, `tasks.mail` (new task) |
 | `task.status_changed` | Every status action on a work task: start, submit, review, approve, rework, hold, cancel, resume. `reason` is set for rework, hold and cancel, and carries the comment for approve. Also the hand-over close (actor `system`; reason "Closed on hand-over: ..." with one of four endings: the assigner takes over, the new owner only has view access, the new owner is not below the person who assigned it, nobody could review it for the new owner) | `assignee`, `assignedBy`, `from`, `to`, `reason` | `tasks.reminders`, `tasks.mail` (handed in, approved, rework, hold, cancel) |
-| `task.approved` | Approve, with the rating. `deadline` is the approved deadline; `onTime` means handed in at or before it | `assignee`, `reviewer`, `rating` (1 to 5), `size`, `points`, `estimatedHours`, `deadline`, `originalDeadline`, `startedAt`, `submittedAt`, `onTime`, `extensionsCount`, `reworkCount` | none yet (Module 6) |
+| `task.approved` | Approve, with the rating. `deadline` is the approved deadline; `onTime` means handed in at or before the deadline in force, except that an approved extension that was asked for AFTER the deadline (`task_extensions.late`) does not rescue the task: it is judged against the deadline that was in force when the first such request was made | `assignee`, `reviewer`, `rating` (1 to 5), `size`, `points`, `estimatedHours`, `deadline`, `originalDeadline`, `startedAt`, `submittedAt`, `onTime`, `extensionsCount`, `reworkCount` | none yet (Module 6) |
 | `task.reworked` | Rework (sent back with a reason) | `assignee`, `reviewer`, `reason`, `reworkCount` (this one included) | none yet (Module 6) |
 | `task.deadline_changed` | The manager changes the deadline (`kind: manager_change`, with the reason), or an extension is approved (`kind: extension_approved`). Reminders are re-armed | `assignee`, `assignedBy`, `from`, `to`, `kind`, `reason` | `tasks.reminders` |
 | `task.extension_requested` | The assignee asks for more time. `late: true` when asked after the deadline | `extensionId`, `assignee`, `assignedBy`, `currentDeadline`, `requestedDeadline`, `late` | `tasks.mail` (asked) |
@@ -136,6 +136,67 @@ The "tasks touched" number in the daily summary (`GET /activity/summaries`) is n
 counts for a person when they wrote a history line, a comment, ticked a step, added a file, asked for more time or
 decided a request, or reviewed it. Work tasks only, one count per distinct task per person per Pakistan day. It no longer
 counts recorded actions.
+
+## Module 6 (performance and results), version 1
+
+Written in the same transaction as the change. Payloads are in `packages/contracts/src/events.ts`. The scorecard events
+carry `scorecardId`, `empId` and `month` (a Pakistan month); the ones that are about a whole scorecard also carry `kind`
+(`standard` or `sales`). No mail carries a score.
+
+| Event | When it is written | Payload | Consumers |
+|---|---|---|---|
+| `scorecard.drafted` | The monthly job made a draft scorecard (actor `system`) | `scorecardId`, `empId`, `month`, `kind`, `reviewer` (null for the Director), `score` (null when nothing is measurable), `taskCount`, `smallSample` | none (no consumer) |
+| `scorecard.released` | The reviewer released a draft (actor = the reviewer, `releasedBy` the same, `automatic` false). Or the monthly job released the Director's scorecard (actor `system`, `releasedBy` null, `automatic` true) | `scorecardId`, `empId`, `month`, `kind`, `releasedBy`, `automatic`, `hasRemark` | `performance.mail` (mails the employee) |
+| `scorecard.acknowledged` | The employee acknowledged a released scorecard (actor = the employee) | `scorecardId`, `empId`, `month`, `kind`, `reviewer`, `hasComment` | none yet |
+| `scorecard.dispute_raised` | The employee disputed a task rating on their released scorecard (actor = the employee) | `disputeId`, `scorecardId`, `empId`, `month`, `taskId`, `taskNumber`, `ratingAtRaise`, `decider` | `performance.mail` (mails the decider) |
+| `scorecard.dispute_decided` | The decider upheld or changed the rating (actor = the decider) | `disputeId`, `scorecardId`, `empId`, `month`, `taskNumber`, `decision` (`upheld` or `changed`), `decidedBy`, `ratingBefore`, `ratingAfter` (null when upheld), `scoreBefore`, `scoreAfter` (set when changed, null when upheld or nothing was measurable) | `performance.mail` (mails the employee) |
+| `score_weights.created` | The Director saved a new version of the weights (actor = the Director) | `versionId`, `kind`, `departmentId` (null = the company-wide set), `versionNo`, `weights` (whole percents by key), `previousVersionId` (the set this one replaced) | none (no consumer) |
+
+**Consumer `performance.mail`** (the only one): mails the employee when a scorecard is released and when a dispute is
+decided, and mails the decider when a dispute is raised. Nobody is mailed a score.
+
+**The reviewer's "drafts are waiting" mail is not an event.** The monthly job sends it itself, directly, once per reviewer
+who got new drafts in that run, with a link to `${APP_URL}/approvals`. It is best effort: a mail error is logged and never
+fails the job.
+
+### The monthly scorecard job
+
+| Job | Key | When | What it does |
+|---|---|---|---|
+| Monthly scorecards | `scorecard.monthly:<YYYY-MM>` (type `scorecard.monthly`, payload `{"month":"YYYY-MM"}`) | 00:10 Pakistan time on the 1st of the next month | Makes one draft scorecard for each person scored for the month that just closed (the weights version in force for their kind and department). The Director's is released at once by the system |
+
+- **Who is scored:** everyone who has not left, has a manager and joined before the month ended. The Owner (CEO / Founder) is
+  not scored. A person who left before the job runs gets no scorecard.
+- **Idempotent:** one scorecard per person and month. A re-run, a retry, or two servers running the job make nothing twice
+  and overwrite nothing. A person whose scorecard fails is counted and the job is retried; the retry skips the people
+  already done.
+- **Scheduling:** on start-up and every hour the server makes sure the job of the month that just closed (due at once if its
+  moment has passed, which catches up after downtime) and the job of the current month exist. Older months are never made
+  up. Scheduling is off when `OUTBOX_DISPATCH_INTERVAL_MS` is `0` (the tests do that).
+- **After a failure:** a job that failed 5 attempts stays `failed`. The only trace is an error line in the server log (each
+  earlier failed attempt is a warning); nothing else alerts anyone. To run it again for the month that just closed or the current month, delete its `scheduled_jobs` row
+  (dedupe key `scorecard.monthly:<month>`) and the hourly check makes it again. The hourly check creates no job for an older
+  month, so for one of those, delete the failed row and insert a new `scheduled_jobs` row by hand (type `scorecard.monthly`,
+  the same dedupe key, `run_at` now, payload `{"month":"YYYY-MM"}`). A re-run skips the people already done.
+- **First start after this module is deployed:** the month that just closed is made at once. Drafts appear for everyone
+  except the Owner, the CTO and the Director get a digest mail (in Mailpit locally), and the Director's own scorecard is
+  released.
+- **To run the current month by hand** (for a check):
+  `UPDATE scheduled_jobs SET run_at = now() WHERE dedupe_key = 'scorecard.monthly:2026-11';` (the job runs within 30 seconds;
+  a month that has not started is refused). That run uses up the month's one job: its row ends `succeeded` and is never
+  re-armed, so no job runs for that month on the 1st. Anyone who joins, or whose task is approved, after the hand-run gets
+  no scorecard for that month. Use it for a check only. This cannot be undone: scorecards are never deleted (see
+  `docs/SETUP.md` for starting over).
+
+### Audit actions (Module 6)
+
+The same actions are listed in `docs/API.md` ("M6: performance and results"): `settings.score_weights.created`,
+`scorecard.drafted` (no person as the actor), `scorecard.remark`, `scorecard.released`, `scorecard.acknowledged`,
+`scorecard.dispute.raised` and `scorecard.dispute.decided`.
+
+**Known limitation.** The decider of a dispute is fixed when the dispute is raised (the database never lets it change). If
+that person leaves while the dispute is open, no one else can decide it in this module. Whether the leaver hand-over should
+re-route open disputes is for the user to decide.
 
 ## Consuming events (for the people building Modules 5, 6 and later)
 

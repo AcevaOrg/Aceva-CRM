@@ -78,9 +78,10 @@ Install the three services with your operating system's normal installer or pack
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
 | Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
 | Only the Module 5 database tests | `npm run build:contracts`, then `npm test -w backend -- m5-` |
+| Only the Module 6 database tests | `npm run build:contracts`, then `npm test -w backend -- m6-` |
 
 Open the website at http://localhost:3000, not http://127.0.0.1:3000: the API accepts only the `localhost` address for the website.
 
@@ -153,6 +154,44 @@ No new environment variables. Module 5 uses the settings above (`FILE_STORAGE_RO
 5. The Module 5 database tests (they use `aceva_test`, so run them only when no other test run is going): `npm run build:contracts`, then `npm test -w backend -- m5-`.
    If a clock-moving test fails only late in the evening, check it first: a test that moves the fake clock by a fixed number
    of hours can cross midnight in Pakistan time (after 23:00 Pakistan time), which changes the day it expects.
+
+## Module 6 (performance and results) setup
+
+No new environment variables. Module 6 uses `OUTBOX_DISPATCH_INTERVAL_MS` (the monthly job and the mails) and `APP_URL`
+(the links in the mails). Nothing is needed in `backend/.env`.
+
+1. After pulling the changes, from the repository root:
+   - `npm run build:contracts` (the shared performance shapes)
+   - `npm run db:migrate` (applies `20261118100000_m6_performance`: the scorecard, dispute and weights tables, and the
+     starting weight versions, and `20261118110000_m6_recompute_numbers`: the scorecard trigger now also requires the new
+     numbers after a decided dispute to equal the result recorded on that dispute. It also applies the Module 5
+     migrations if they are still pending)
+   - `npm run db:seed` (the demo roster; nothing else is needed for Module 6)
+2. Show the performance screens on the website against the real API: in `frontend/.env.local` set
+   `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6` (and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`), then restart the
+   website's dev server. `m6` switches the performance screens and the score weights in Settings. Module 6 needs Modules 1
+   to 3 and Module 5 live as well (the approvals inbox is live when `m5` or `m6` is in the list). Setting
+   `NEXT_PUBLIC_API_MODE=live` switches every module at once. Without `m6` the screens show demo data. `m5` without `m6`
+   is supported: the scorecards and disputes in the approvals inbox stay on the demo data (the real October drafts the API
+   creates at start-up do not appear in the inbox until `m6` is switched on). `m6` without `m5` leaves the task items
+   of the inbox on demo data.
+3. The monthly scorecard job runs inside the API, like the task reminders. It needs the API running with
+   `OUTBOX_DISPATCH_INTERVAL_MS` above 0 (the default 5000). On the first start after this module is deployed, the month
+   that just closed is made at once: drafts for everyone except the Owner, a digest mail to the CTO and the Director (in
+   Mailpit, http://127.0.0.1:8025), and the Director's own scorecard released. Reviewers also get a "drafts are waiting"
+   mail, which links to the approvals inbox.
+4. To run the **current** month by hand (for a check), use SQL in `psql` or any database tool:
+   `UPDATE scheduled_jobs SET run_at = now() WHERE dedupe_key = 'scorecard.monthly:2026-11';`
+   The job runs within 30 seconds. A month that has not started is refused. The run uses up that month's one job: it is
+   marked `succeeded` and never runs again, so no job runs for that month on the 1st. Anyone who joins, or whose task is
+   approved, after the hand-run gets no scorecard for that month. Use it for a check only.
+   **This cannot be undone.** Scorecards are never deleted, so after a hand-run of the current month the only way back to
+   a clean state is a rebuilt database: `npm run db:reset -w backend`, then `npm run db:seed`, then the demo logins again
+   (`npm run db:seed:passwords -w backend`).
+5. The Module 6 database tests (they use `aceva_test`, so run them only when no other test run is going):
+   `npm run build:contracts`, then `npm test -w backend -- m6-`.
+   The Node warning "Calling client.query() when the client is already executing a query" in the test output comes from
+   Prisma's PostgreSQL adapter. It also appears in the Module 1 to 5 tests and is harmless.
 
 ## Not used locally (on purpose)
 MinIO or any other object storage: uploaded files are kept in the private folder `FILE_STORAGE_ROOT`

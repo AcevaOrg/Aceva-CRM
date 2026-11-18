@@ -13,7 +13,7 @@ import { noteActivity } from '../common/request-context';
 import { OutboxService } from '../events/outbox.service';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { canRequestExtensionIn, checkDeadlineChange, checkExtension, isOnTime } from './rules/task-deadlines';
+import { canRequestExtensionIn, checkDeadlineChange, checkExtension, isOnTime, timelinessDeadline } from './rules/task-deadlines';
 import { type ActionContext, allowedActions, evaluateAction, isOpen } from './rules/task-status';
 import { conflict, confirmationRequired, firstIssue, invalid, isUniqueViolation, loadTask, loadVisibleTask, lockTask, noteTaskActivity, notAllowed, toWarning } from './task-access';
 import { addTaskHistory, EXTENSION_INCLUDE, statusChangedPayload, taskRefOf, toExtensionView, toTaskView, type TaskRow } from './task-data';
@@ -226,6 +226,8 @@ export class TaskWorkflowService {
         );
         await this.outbox.emit({ type: 'task.status_changed', actor: actor.empId, payload: statusChangedPayload(updated, result.from, result.to, reason) }, tx);
         if (approved) {
+          // An extension asked for after the deadline counts as late (plan section 9): measure against the deadline in force at that request.
+          const lateRequests = await tx.taskExtension.findMany({ where: { taskId: task.id, status: 'approved', late: true }, select: { currentDeadline: true } });
           await this.outbox.emit(
             {
               type: 'task.approved',
@@ -242,7 +244,7 @@ export class TaskWorkflowService {
                 originalDeadline: iso(updated.originalDeadline),
                 startedAt: updated.startedAt ? iso(updated.startedAt) : null,
                 submittedAt: updated.submittedAt ? iso(updated.submittedAt) : null,
-                onTime: isOnTime(updated.submittedAt ?? now, updated.deadline),
+                onTime: isOnTime(updated.submittedAt ?? now, timelinessDeadline(updated.deadline, lateRequests.map((x) => x.currentDeadline))),
                 extensionsCount: updated.extensionsCount,
                 reworkCount: updated.reworkCount,
               },

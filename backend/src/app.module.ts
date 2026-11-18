@@ -11,6 +11,7 @@ import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { OrgModule } from './org/org.module';
 import { PeopleModule } from './people/people.module';
+import { PerformanceModule } from './performance/performance.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SettingsModule } from './settings/settings.module';
 import { TasksModule } from './tasks/tasks.module';
@@ -30,6 +31,7 @@ import { TasksModule } from './tasks/tasks.module';
     PeopleModule,
     ActivityModule,
     TasksModule,
+    PerformanceModule,
   ],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })

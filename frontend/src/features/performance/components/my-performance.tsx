@@ -7,14 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { StatusBadge } from "@/components/shared/chips";
 import { EmpChip } from "@/components/shared/emp-chip";
-import { ScoreDial } from "@/components/shared/metrics";
 import { ErrorState, EmptyState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { formatDate, formatMonthKey } from "@/lib/dates";
 import { useLatestScorecard, useLivePerformance, useScorecards } from "../hooks";
 import { SMALL_SAMPLE } from "../logic";
 import type { LivePerformance, MetricSet, SalesDetail } from "../types";
-import { BandBadge, FormulaLine, MetricTiles, SCORECARD_STATUS, TrendChart } from "./parts";
+import { BandBadge, FormulaLine, MetricTiles, SCORECARD_STATUS, ScoreDialOrNone, TrendChart, UnmeasuredNotice } from "./parts";
 import { AcknowledgeDialog, RaiseDisputeDialog } from "./perf-dialogs";
 
 export function SalesNumbers({ d }: { d: SalesDetail }) {
@@ -37,11 +36,21 @@ export function SalesNumbers({ d }: { d: SalesDetail }) {
   );
 }
 
+/** Shown instead of the sales numbers while the Sales module does not exist: the figures are not invented. */
+export function NoSalesFigures() {
+  return (
+    <p className="flex items-start gap-2 text-[13px] text-muted-foreground">
+      <Info className="mt-0.5 size-4 shrink-0" /> Sales figures arrive with the Sales module. Until then there are no sales numbers here and no sales score.
+    </p>
+  );
+}
+
 function LiveCard({ live }: { live: LivePerformance }) {
+  const noSalesFigures = live.kind === "sales" && !live.salesDetail;
   return (
     <Card className="grid gap-5 p-5 lg:grid-cols-[auto_1fr] lg:items-center">
       <div className="grid justify-items-center gap-2">
-        <ScoreDial score={live.score} size={148} showBand={false} />
+        <ScoreDialOrNone score={live.score} size={148} showBand={false} />
         <BandBadge band={live.band} />
         <p className="text-[12px] text-muted-foreground">{formatMonthKey(live.month)} · so far</p>
       </div>
@@ -53,9 +62,12 @@ function LiveCard({ live }: { live: LivePerformance }) {
           )}
         </div>
         <FormulaLine kind={live.kind} metrics={live.metrics} weights={live.weights.weights} score={live.score} />
+        <UnmeasuredNotice kind={live.kind} unmeasured={live.unmeasured} />
         <p className="text-[12.5px] text-muted-foreground">
           {live.kind === "sales"
-            ? "Calculated from the daily sales report and attendance. Self-reported counts count toward Activity only."
+            ? noSalesFigures
+              ? "Sales figures arrive with the Sales module, so there is no sales score yet. Nobody types a score in."
+              : "Calculated from the daily sales report and attendance. Self-reported counts count toward Activity only."
             : "Calculated from your reviewed tasks and attendance. Nobody types a score in; your manager can add a remark but can't change the numbers."}
         </p>
         {live.kind === "standard" && (
@@ -86,17 +98,18 @@ function LatestScorecardCard() {
           <CardTitle>{formatMonthKey(sc.month)} scorecard</CardTitle>
           <p className="text-[13px] text-muted-foreground">
             Released {sc.releasedAt ? formatDate(sc.releasedAt) : "—"}
-            {sc.reviewerEmpId ? ` by ${lookup.employee(sc.reviewerEmpId)?.name ?? sc.reviewerEmpId}` : " automatically (no reviewer above the Director)"}
+            {sc.reviewerEmpId ? ` by ${lookup.employee(sc.reviewerEmpId)?.name ?? sc.reviewerEmpId}` : " automatically (nobody above reviews work)"}
           </p>
         </div>
         <StatusBadge label={st.label} tone={st.tone} />
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="flex flex-wrap items-center gap-5">
-          <ScoreDial score={sc.score} size={104} showBand={false} />
+          <ScoreDialOrNone score={sc.score} size={104} showBand={false} />
           <div className="grid gap-2">
             <BandBadge band={sc.band} />
             <p className="text-[12.5px] text-muted-foreground">{sc.kind === "sales" ? "Sales weights" : `${sc.taskCount} tasks counted`}</p>
+            {!!sc.recomputeCount && <p className="text-[12.5px] text-muted-foreground">Recalculated after a rating dispute was decided.</p>}
           </div>
         </div>
         {sc.reviewerRemark && (
@@ -146,7 +159,7 @@ function PastScorecards() {
           <Link key={s.id} href={`/performance/scorecards/${s.id}`} className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 transition hover:bg-muted">
             <span className="text-[13px] font-medium">{formatMonthKey(s.month)}</span>
             <span className="flex items-center gap-2">
-              <span className="font-mono text-[13px] font-semibold tabular">{Math.round(s.score)}</span>
+              <span className="font-mono text-[13px] font-semibold tabular">{s.score === null ? "—" : Math.round(s.score)}</span>
               <BandBadge band={s.band} />
             </span>
           </Link>
@@ -174,7 +187,7 @@ export function MyPerformance() {
   return (
     <div className="grid gap-6">
       <LiveCard live={d} />
-      <MetricTiles kind={d.kind} metrics={d.metrics} weights={d.weights.weights} />
+      <MetricTiles kind={d.kind} metrics={d.metrics} weights={d.weights.weights} unmeasured={d.unmeasured} />
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader>
@@ -184,10 +197,10 @@ export function MyPerformance() {
             </div>
           </CardHeader>
           <CardContent>
-            <TrendChart trend={d.trend} />
+            <TrendChart trend={d.trend} liveMonth={d.month} />
           </CardContent>
         </Card>
-        {d.kind === "sales" && d.salesDetail ? (
+        {d.kind === "sales" ? (
           <Card>
             <CardHeader>
               <div>
@@ -195,9 +208,7 @@ export function MyPerformance() {
                 <p className="text-[13px] text-muted-foreground">This month so far, from the daily sales report.</p>
               </div>
             </CardHeader>
-            <CardContent>
-              <SalesNumbers d={d.salesDetail} />
-            </CardContent>
+            <CardContent>{d.salesDetail ? <SalesNumbers d={d.salesDetail} /> : <NoSalesFigures />}</CardContent>
           </Card>
         ) : (
           <PastScorecards />

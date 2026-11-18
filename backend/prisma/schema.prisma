@@ -224,6 +224,58 @@ enum TaskHistoryKind {
   @@map("task_history_kind")
 }
 
+/// Module 6: which set of weights and metrics a scorecard uses. Sales staff are scored with the sales weights.
+enum ScorecardKind {
+  standard
+  sales
+
+  @@map("scorecard_kind")
+}
+
+/// draft (with the reviewer) -> released (to the employee) -> acknowledged (by the employee). Only forward.
+enum ScorecardStatus {
+  draft
+  released
+  acknowledged
+
+  @@map("scorecard_status")
+}
+
+/// 85 to 100 excellent, 70 to 84.9 good, 50 to 69.9 needs improvement, below 50 poor. Null when nothing could be measured.
+enum ScorecardBand {
+  excellent
+  good
+  needs_improvement
+  poor
+
+  @@map("scorecard_band")
+}
+
+/// How a task stood when the scorecard was made: approved, handed in and waiting for review, still open, or cancelled.
+enum ScorecardTaskStatus {
+  approved
+  submitted
+  open
+  cancelled
+
+  @@map("scorecard_task_status")
+}
+
+enum ScorecardCommentKind {
+  reviewer_remark
+  employee_comment
+
+  @@map("scorecard_comment_kind")
+}
+
+enum DisputeStatus {
+  open
+  upheld
+  changed
+
+  @@map("dispute_status")
+}
+
 // ---------------------------------------------------------------------------
 // M1: levels, roles, permissions, duties, departments, offices
 // ---------------------------------------------------------------------------
@@ -370,6 +422,7 @@ model Department {
 
   employees Employee[]
   head      Employee?  @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  weightVersions ScoreWeightVersion[]
 
   @@index([headEmployeeId])
   @@map("departments")
@@ -472,6 +525,14 @@ model Employee {
   taskExtensionsDecided TaskExtension[]        @relation("ExtensionDecider")
   taskHistoryEntries    TaskHistory[]          @relation("TaskHistoryActor")
   taskAttachments       TaskAttachment[]       @relation("TaskAttachmentUploader")
+  weightVersionsMade    ScoreWeightVersion[]   @relation("WeightVersionAuthor")
+  scorecards            Scorecard[]            @relation("ScorecardOwner")
+  scorecardsToReview    Scorecard[]            @relation("ScorecardReviewer")
+  scorecardsReleased    Scorecard[]            @relation("ScorecardReleaser")
+  scorecardComments     ScorecardComment[]     @relation("ScorecardCommentAuthor")
+  disputesRaised        RatingDispute[]        @relation("DisputeRaiser")
+  disputesToDecide      RatingDispute[]        @relation("DisputeDecider")
+  disputesDecided       RatingDispute[]        @relation("DisputeDecidedBy")
 
   @@index([departmentId])
   @@index([officeId])
@@ -1127,6 +1188,7 @@ model Task {
   extensions  TaskExtension[]
   reviews     TaskReview[]
   history     TaskHistory[]
+  scorecardTasks ScorecardTask[]
 
   @@unique([repeatRuleId, occurrenceOn])
   @@index([assigneeId, status])
@@ -1339,6 +1401,172 @@ model TaskRepeatRule {
 
   @@index([active, every])
   @@map("task_repeat_rules")
+}
+
+/// A set of score weights (plan section 10). INSERT-ONLY: a change of weights is a NEW version, old scorecards keep the
+/// version they were made with. `weights` are WHOLE percentages that add up to exactly 100 (checked in the database),
+/// by metric key: standard = quality, onTime, completion, rework, attendance; sales = activity, meetings, won,
+/// dataQuality, attendance. department_id null = the company-wide set of that kind; set = that department's own set,
+/// which wins for its people. The starting versions (standard 35/25/20/10/10, sales 20/25/30/10/15) come with the migration.
+model ScoreWeightVersion {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind          ScorecardKind
+  departmentId  String?       @map("department_id") @db.Uuid
+  /// 1, 2, 3 ... counted per kind and department (the label is "Standard v2").
+  versionNo     Int           @map("version_no")
+  weights       Json
+  /// Why the Director changed it (the starting versions carry a short note).
+  note          String?
+  effectiveFrom DateTime      @default(now()) @map("effective_from") @db.Timestamptz(3)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Null for the starting versions the migration inserts.
+  createdById   String?       @map("created_by") @db.Uuid
+
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  createdBy  Employee?   @relation("WeightVersionAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+  scorecards Scorecard[]
+
+  @@index([kind, departmentId, effectiveFrom])
+  @@map("score_weight_versions")
+}
+
+/// One person's monthly scorecard (unique per person and month). Created as a draft by the monthly job from the month's
+/// tasks (and attendance and sales figures once their modules exist); nobody types a number in.
+///
+/// THE NUMBERS NEVER CHANGE: metrics, score, band, the weights version, the task count and the sales figures are
+/// frozen by the database trigger `scorecards_protect`. The one exception is the recompute after a dispute decision
+/// that changed a rating: the numbers may change only together with recompute_count going up by one while the person
+/// has more "changed" disputes than recomputes (see the migration). Release and acknowledge only move status forward.
+/// metrics: each of the five metrics 0 to 100, or null = not measured (then its weight is shared among the measured
+/// ones); workloadHours (standard only) is information. unmeasured: [{ key, reason }]. Score and band are null when
+/// nothing could be measured. A draft without a reviewer (the Director's) is released by the system straight away.
+model Scorecard {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId       String          @map("employee_id") @db.Uuid
+  /// "2026-10": the month the scorecard is about (Pakistan time).
+  month            String          @db.VarChar(7)
+  kind             ScorecardKind
+  weightsVersionId String          @map("weights_version_id") @db.Uuid
+  metrics          Json
+  /// The raw sales figures behind a sales scorecard (Module 15). Null while that module does not exist.
+  salesDetail      Json?           @map("sales_detail")
+  unmeasured       Json            @default("[]")
+  score            Decimal?        @db.Decimal(4, 1)
+  band             ScorecardBand?
+  taskCount        Int             @map("task_count")
+  smallSample      Boolean         @map("small_sample")
+  status           ScorecardStatus @default(draft)
+  /// Who reviews and releases it (the person's manager, one level further up if the manager left). Null = nobody does
+  /// (the Director: the CEO / Founder / Owner reviews nothing), so the system releases it.
+  reviewerId       String?         @map("reviewer_id") @db.Uuid
+  releasedAt       DateTime?       @map("released_at") @db.Timestamptz(3)
+  /// Null when the system released it (no reviewer).
+  releasedById     String?         @map("released_by") @db.Uuid
+  acknowledgedAt   DateTime?       @map("acknowledged_at") @db.Timestamptz(3)
+  /// How often the numbers were recomputed after a dispute decision (equals the number of "changed" disputes applied).
+  recomputeCount   Int             @default(0) @map("recompute_count")
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee       Employee           @relation("ScorecardOwner", fields: [employeeId], references: [id], onDelete: Restrict)
+  reviewer       Employee?          @relation("ScorecardReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  releasedBy     Employee?          @relation("ScorecardReleaser", fields: [releasedById], references: [id], onDelete: Restrict)
+  weightsVersion ScoreWeightVersion @relation(fields: [weightsVersionId], references: [id], onDelete: Restrict)
+  tasks          ScorecardTask[]
+  comments       ScorecardComment[]
+  disputes       RatingDispute[]
+
+  @@unique([employeeId, month])
+  @@index([reviewerId, status])
+  @@index([status, month])
+  @@index([month])
+  @@map("scorecards")
+}
+
+/// The tasks a scorecard was made from, copied when it was made so it never changes when a task changes later
+/// (INSERT-ONLY). `rating` is the rating at that moment; a dispute that changed it is on rating_disputes.
+/// counted = this task was part of the metrics (not cancelled, and already due or handed in).
+model ScorecardTask {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scorecardId String              @map("scorecard_id") @db.Uuid
+  taskId      String              @map("task_id") @db.Uuid
+  position    Int
+  number      String
+  title       String
+  size        TaskSize
+  points      Int
+  rating      Int?
+  onTime      Boolean             @map("on_time")
+  reworked    Boolean
+  extensions  Int
+  status      ScorecardTaskStatus
+  counted     Boolean
+  deadline    DateTime            @db.Timestamptz(3)
+
+  scorecard Scorecard       @relation(fields: [scorecardId], references: [id], onDelete: Restrict)
+  task      Task            @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  disputes  RatingDispute[]
+
+  @@unique([scorecardId, taskId])
+  @@index([taskId])
+  @@map("scorecard_tasks")
+}
+
+/// The history of remarks and comments on a scorecard (INSERT-ONLY): the reviewer's remarks (several are possible, the
+/// newest is shown) and the employee's comment on acknowledging.
+model ScorecardComment {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scorecardId String               @map("scorecard_id") @db.Uuid
+  kind        ScorecardCommentKind
+  authorId    String               @map("author_id") @db.Uuid
+  body        String
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  scorecard Scorecard @relation(fields: [scorecardId], references: [id], onDelete: Restrict)
+  author    Employee  @relation("ScorecardCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([scorecardId, createdAt])
+  @@map("scorecard_comments")
+}
+
+/// An employee disagrees with the rating of one task on their released scorecard. One OPEN dispute per task. The
+/// decider (the level above the task's reviewer who reviews work; never the employee) either upholds the rating or
+/// changes it to a new one. A decided dispute never changes and is never deleted: it IS the rating-change history
+/// (old rating, new rating, who, why, the score before and after).
+model RatingDispute {
+  id            String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scorecardId   String        @map("scorecard_id") @db.Uuid
+  taskId        String        @map("task_id") @db.Uuid
+  employeeId    String        @map("employee_id") @db.Uuid
+  reason        String
+  /// The rating the task had when the dispute was raised (the original, or the one a previous dispute set).
+  ratingAtRaise Int           @map("rating_at_raise")
+  /// Who must decide, worked out when it was raised.
+  deciderId     String        @map("decider_id") @db.Uuid
+  status        DisputeStatus @default(open)
+  decidedById   String?       @map("decided_by") @db.Uuid
+  decision      String?
+  /// Only when the rating was changed.
+  newRating     Int?          @map("new_rating")
+  decidedAt     DateTime?     @map("decided_at") @db.Timestamptz(3)
+  /// Only when changed: the scorecard's score and metrics before and after the recompute.
+  scoreBefore   Decimal?      @map("score_before") @db.Decimal(4, 1)
+  scoreAfter    Decimal?      @map("score_after") @db.Decimal(4, 1)
+  metricsBefore Json?         @map("metrics_before")
+  metricsAfter  Json?         @map("metrics_after")
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  scorecard     Scorecard     @relation(fields: [scorecardId], references: [id], onDelete: Restrict)
+  scorecardTask ScorecardTask @relation(fields: [scorecardId, taskId], references: [scorecardId, taskId], onDelete: Restrict)
+  employee      Employee      @relation("DisputeRaiser", fields: [employeeId], references: [id], onDelete: Restrict)
+  decider       Employee      @relation("DisputeDecider", fields: [deciderId], references: [id], onDelete: Restrict)
+  decidedBy     Employee?     @relation("DisputeDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([scorecardId, status])
+  @@index([deciderId, status, createdAt])
+  @@index([employeeId, createdAt])
+  @@index([status, createdAt])
+  @@map("rating_disputes")
 }
 
 /// Temporary PostgreSQL-backed job queue (BullMQ replaces it once Redis exists).
