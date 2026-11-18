@@ -195,11 +195,29 @@ export const financePeriodReopenedV1 = defineEvent(
 // ---------- Cycle 3: Modules 13, 14, 15 (defined in the shared foundation; each is produced once its module is built) ----------
 // Same rules as above: Emp-IDs and document numbers only, no amounts, no prospect or customer personal data.
 
-/** M15: a Won deal was confirmed (by the sales manager, or the Director until there is one). M13 makes one draft invoice. */
+/**
+ * M15: a Won deal was confirmed (by the sales manager, or the Director until there is one). M13 makes exactly one draft
+ * invoice from it (unique per deal number) for the finance duty person to check and issue. Refined with M13 (nothing
+ * produces it yet): the client, the service and the deal value travel with the event, so billing needs nothing from M15.
+ */
 export const salesDealWonConfirmedV1 = defineEvent(
   'sales.deal.won_confirmed',
   1,
-  z.object({ dealNumber: z.string().min(1), ownerEmpId: empIdSchema, confirmedByEmpId: empIdSchema }),
+  z.object({
+    dealNumber: z.string().min(1),
+    ownerEmpId: empIdSchema,
+    confirmedByEmpId: empIdSchema,
+    /** The Module 9 client when the company is already one; otherwise billing creates the client from the name. */
+    client: z.object({
+      partyId: z.uuid().nullable(),
+      name: z.string().trim().min(1).max(200),
+      email: z.email().nullable(),
+      country: z.string().max(80).nullable(),
+    }),
+    service: z.string().trim().min(1).max(300),
+    value: z.string().regex(/^\d{1,12}(\.\d{1,2})?$/),
+    currency: z.enum(['PKR', 'USD']),
+  }),
 );
 
 /** M13: an invoice was issued; its ledger entry now waits for approval in Module 9. */

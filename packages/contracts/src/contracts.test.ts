@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BILLING_SETTINGS_DEFAULTS,
+  billingSettingsSchema,
+  containsCardNumber,
+  createBillingInvoiceSchema,
   ESSENTIAL_NOTIFICATION_TYPES,
+  recordInvoicePaymentSchema,
+  resolveDealHandoverSchema,
+  subscriptionCostSchema,
   healthResponseSchema,
   isEssentialNotificationType,
   markNotificationsReadSchema,
@@ -95,7 +102,11 @@ describe('outbox event contracts', () => {
 
 describe('Cycle 3 foundation contracts', () => {
   it('accepts a sales.deal.won_confirmed event with Emp-IDs and refuses a missing deal number', () => {
-    const event = { ...base, type: 'sales.deal.won_confirmed', payload: { dealNumber: 'DEAL-2026-0001', ownerEmpId: 'ACV-0009', confirmedByEmpId: 'ACV-0003' } };
+    const event = {
+      ...base,
+      type: 'sales.deal.won_confirmed',
+      payload: { dealNumber: 'DEAL-2026-0001', ownerEmpId: 'ACV-0009', confirmedByEmpId: 'ACV-0003', client: { partyId: null, name: 'Globex', email: null, country: null }, service: 'Website', value: '1500.00', currency: 'USD' },
+    };
     expect(outboxEventSchema.safeParse(event).success).toBe(true);
     expect(outboxEventSchema.safeParse({ ...event, payload: { ...event.payload, dealNumber: '' } }).success).toBe(false);
   });
@@ -116,5 +127,51 @@ describe('Cycle 3 foundation contracts', () => {
     expect(updateModuleSettingsSchema.safeParse({ value: { emailEnabled: false }, version: 0, reason: 'Mail server is down' }).success).toBe(true);
     expect(updateModuleSettingsSchema.safeParse({ value: { emailEnabled: false }, version: 0, reason: 'x' }).success).toBe(false);
     expect(notificationSettingsSchema.safeParse({ emailEnabled: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('Module 13 billing contracts', () => {
+  const uuid = '7d4f3a62-8f0e-4b8e-9a43-0c7a6c2c9a11';
+  it('a recurring invoice needs a billing period; a one-time invoice has none', () => {
+    const base = { requestKey: uuid, partyId: uuid, issueDate: '2026-11-18', termsDays: 14, lines: [{ description: 'Build', quantity: '1', unitPrice: '100.00' }] };
+    expect(createBillingInvoiceSchema.safeParse(base).success).toBe(true);
+    expect(createBillingInvoiceSchema.safeParse({ ...base, kind: 'recurring' }).success).toBe(false);
+    expect(createBillingInvoiceSchema.safeParse({ ...base, kind: 'recurring', period: 'monthly' }).success).toBe(true);
+    expect(createBillingInvoiceSchema.safeParse({ ...base, period: 'monthly' }).success).toBe(false);
+  });
+
+  it('a payment reference that contains a card number is refused; other references pass', () => {
+    expect(containsCardNumber('Card 4111 1111 1111 1111')).toBe(true);
+    expect(containsCardNumber('TT-778899 / 2026-11-18')).toBe(false);
+    const p = { requestKey: uuid, bankAccountId: uuid, date: '2026-11-18', amount: '10.00', method: 'card_provider' };
+    expect(recordInvoicePaymentSchema.safeParse({ ...p, reference: 'pi_3PqXyz' }).success).toBe(true);
+    expect(recordInvoicePaymentSchema.safeParse({ ...p, reference: '4111-1111-1111-1111' }).success).toBe(false);
+  });
+
+  it('customer emails cannot be switched on without the sending address and the legal name; the defaults invent nothing', () => {
+    expect(billingSettingsSchema.safeParse(BILLING_SETTINGS_DEFAULTS).success).toBe(true);
+    expect(BILLING_SETTINGS_DEFAULTS.company.legalName).toBeNull();
+    expect(BILLING_SETTINGS_DEFAULTS.customerEmails).toEqual({ enabled: false, fromAddress: null, replyTo: null });
+    expect(BILLING_SETTINGS_DEFAULTS.reminderOffsets).toEqual([-3, 0, 3, 7]);
+    const on = { ...BILLING_SETTINGS_DEFAULTS, customerEmails: { enabled: true, fromAddress: null, replyTo: null } };
+    expect(billingSettingsSchema.safeParse(on).success).toBe(false);
+    expect(billingSettingsSchema.safeParse({ ...on, customerEmails: { enabled: true, fromAddress: 'billing@company.test', replyTo: null }, company: { ...on.company, legalName: 'Company Ltd' } }).success).toBe(true);
+  });
+
+  it('a Won-deal handover is resolved by choosing exactly one client (no other fields)', () => {
+    expect(resolveDealHandoverSchema.safeParse({ partyId: uuid }).success).toBe(true);
+    expect(resolveDealHandoverSchema.safeParse({}).success).toBe(false);
+    expect(resolveDealHandoverSchema.safeParse({ partyId: uuid, createClient: true }).success).toBe(false);
+  });
+
+  it('the default terms and income account are configurable development defaults (not fixed in code)', () => {
+    expect(billingSettingsSchema.safeParse({ ...BILLING_SETTINGS_DEFAULTS, defaultTermsDays: 30, defaultIncomeAccountCode: '4200' }).success).toBe(true);
+    expect(billingSettingsSchema.safeParse({ ...BILLING_SETTINGS_DEFAULTS, defaultIncomeAccountCode: null }).success).toBe(true);
+  });
+
+  it('an actual subscription cost needs a bill or the provider invoice reference', () => {
+    expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: true }).success).toBe(true);
+    expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: false }).success).toBe(false);
+    expect(subscriptionCostSchema.safeParse({ amount: '10.00', currency: 'USD', estimated: false, reference: 'INV-77' }).success).toBe(true);
   });
 });

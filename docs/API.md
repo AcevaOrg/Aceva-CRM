@@ -185,6 +185,35 @@ Module 10's `/reports`.
 | `GET /settings/modules/:module` | the module's view permission (default `settings.view`) | `{ module, value, version, updatedAt, updatedByEmpId }`; version 0 = defaults. Unknown module or no permission: 404 |
 | `PUT /settings/modules/:module {value, version, reason}` | the module's manage permission (`notifications`: `settings.manage`) | Checked by the module's schema (`400 invalid_settings`), stale version `409 stale_version`, audited with old and new value |
 
+## Module 13: customer billing and subscriptions
+
+Every `/billing` route is a finance screen: without the permission the answer is 404, and the 10-minute finance idle limit
+applies. Invoices and payments are Module 9's (one system); full table of routes and rules: docs/M13-BILLING.md.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /billing/overview` | `billing.view` | Billed and collected this month, outstanding, overdue, due in 14 days, drafts from Won deals (PKR) |
+| `GET /billing/invoices?partyId&status`, `GET /billing/invoices/:id` | `billing.view` | Status calculated: draft, issued, part_paid, paid (posted payments only), overdue, cancelled. Detail: client, payments, reminders, emails, recurring rule |
+| `POST /billing/invoices` | `billing.manage` | A draft, no ledger entry; `requestKey` makes a retry return the same draft; recurring and rental create their rule |
+| `PATCH /billing/invoices/:id` | `billing.manage` | Drafts only (`409 invoice_locked` / `invalid_transition` otherwise) |
+| `POST /billing/invoices/:id/issue {issueDate?, exchangeRate?}` | `billing.manage` | INV number, entry submitted for approval, reminders scheduled. Not emailed: the client email is queued once the entry is approved. A client created from a Won deal must be confirmed first (`409 client_needs_review`) |
+| `POST /billing/invoices/:id/cancel {reason}` | `billing.manage` | Draft: cancelled. Posted: reversing entry for approval (step-up). `409 entry_pending`, `409 has_payments` |
+| `POST /billing/invoices/:id/restore`, `POST /billing/invoices/:id/email` | `billing.manage` | Restore after a rejected reversal; email once, only after approval (`409 entry_not_approved`, `customer_emails_off`, `already_emailed`) |
+| `GET /billing/deal-handovers?status`, `POST /billing/deal-handovers/:id/resolve {partyId}` | view / `billing.manage` | Won deals whose client name matched several clients: Finance chooses the client, then the draft is made once |
+| `POST /billing/customers/:id/confirm` | `billing.manage` | Confirm a client created automatically from a Won deal |
+| `POST /billing/invoices/:id/payments {requestKey, bankAccountId, date, amount, method, reference?}` | `billing.manage` + `finance.entry_create` | A Module 9 payment waiting for approval; card numbers refused |
+| `GET /billing/invoices/:id/document` | `billing.view` | Printable HTML with the company details from the settings |
+| `GET /billing/invoices/export` | `billing.view` + `finance.export` | CSV; step-up, watermark, audit |
+| `GET /billing/payments`, `GET/POST /billing/customers`, `PATCH /billing/customers/:id` | view / `billing.manage` | A client is a Module 9 party with billing details |
+| `GET /billing/recurring`, `POST /billing/recurring/:id/stop {reason}` | view / `billing.manage` | Recurring and rental rules |
+| `GET /billing/subscriptions`, `GET /billing/subscriptions/renewal-events`, `GET /billing/subscriptions/:id` | `subscriptions.view` | Register with status, latest readings, usage flag, costs |
+| `POST /billing/subscriptions`, `PATCH /billing/subscriptions/:id` | `subscriptions.manage` | PATCH: details only (plan, cost, period and renewal date change by a decision) |
+| `POST /billing/subscriptions/:id/renewal-decision {decision, note?, nextRenewalDate?, newPlan?, newCost?, newPeriod?}` | `subscriptions.manage` | renewed, changed or cancelled (a note is required) |
+| `POST /billing/subscriptions/:id/usage {readingDate, used, limit?, estimatedCost?}` | `subscriptions.manage` | Typed in; a cost on it is an estimate |
+| `PUT /billing/subscriptions/:id/costs/:month {amount, currency, estimated, billId?, reference?}` | `subscriptions.manage` | Actual only with a bill or provider reference |
+| `GET/PUT /settings/modules/billing` | view `billing.view`, change `settings.manage` (step-up) | Company details, customer emails, reminder days, default terms and income account |
+
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change. The full

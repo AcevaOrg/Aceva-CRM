@@ -5,16 +5,17 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { NativeSelect, SegmentedControl } from "@/components/ui/controls";
+import { Checkbox, NativeSelect, SegmentedControl } from "@/components/ui/controls";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { EmployeeSelect } from "@/components/shared/pickers";
+import { isLive } from "@/lib/api/http";
 import { ApiError } from "@/lib/api/mock";
 import { formatDate, isoDay } from "@/lib/dates";
 import { formatMoney, formatNumber } from "@/lib/format";
-import { useAddUsageReading, useDecideRenewal, useSaveSubscription } from "../hooks";
+import { useAddUsageReading, useDecideRenewal, useSaveSubscription, useSetSubscriptionCost } from "../hooks";
 import { money, SUB_CATEGORY } from "../logic";
 import type { Employee } from "@/types";
 import type { RenewalDecision, Subscription } from "../types";
@@ -32,7 +33,13 @@ const schema = z.object({
   alertDaysBefore: z.string().regex(/^\d{1,3}$/, "Days"),
   seats: z.string().regex(/^\d*$/, "Whole number"),
   notes: z.string(),
+  usageMetric: z.string(),
+  usageUnit: z.string(),
+  usageLimit: z.string().regex(/^(\d+(\.\d{1,4})?)?$/, "A number, e.g. 1000"),
 });
+
+/** Live: cost, plan, period and renewal date change only through a renewal decision (kept in the renewal log). */
+const LIVE = isLive("m13");
 type Values = z.infer<typeof schema>;
 
 /** Add or edit an entry in the subscription register. */
@@ -62,6 +69,9 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
       alertDaysBefore: String(sub?.alertDaysBefore ?? 7),
       seats: sub?.seats ? String(sub.seats) : "",
       notes: sub?.notes ?? "",
+      usageMetric: sub?.usageSetup?.metric ?? sub?.usage?.metric ?? "",
+      usageUnit: sub?.usageSetup?.unit ?? sub?.usage?.unit ?? "",
+      usageLimit: sub?.usageSetup?.limit ? String(sub.usageSetup.limit) : sub?.usage?.limit ? String(sub.usage.limit) : "",
     });
   }, [open, sub, reset]);
 
@@ -81,6 +91,7 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
         seats: v.seats ? Number(v.seats) : undefined,
         notes: v.notes.trim() || undefined,
         usage: sub?.usage,
+        usageSetup: { metric: v.usageMetric.trim() || undefined, unit: v.usageUnit.trim() || undefined, limit: v.usageLimit ? Number(v.usageLimit) : undefined },
         status: sub?.status === "cancelled" ? "cancelled" : undefined,
       });
       toast.success(sub ? `${v.vendor} updated` : `${v.vendor} added to the register`, { description: "The change is saved in the audit log." });
@@ -121,7 +132,7 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Plan" htmlFor="s-plan" error={errors.plan?.message}>
-                <Input id="s-plan" placeholder="Professional · 3 seats" {...register("plan")} />
+                <Input id="s-plan" placeholder="Professional · 3 seats" disabled={LIVE && !!sub} {...register("plan")} />
               </Field>
               <Field label="Seats (optional)" htmlFor="s-seats" error={errors.seats?.message}>
                 <Input id="s-seats" inputMode="numeric" {...register("seats")} />
@@ -129,14 +140,15 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
             </div>
             <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
               <Field label="Cost" htmlFor="s-amount" error={errors.amount?.message}>
-                <Input id="s-amount" inputMode="decimal" className="font-mono" {...register("amount")} />
+                <Input id="s-amount" inputMode="decimal" className="font-mono" disabled={LIVE && !!sub} {...register("amount")} />
               </Field>
               <Field label="Currency">
                 <SegmentedControl value={watch("currency") ?? "USD"} onChange={(c) => setValue("currency", c)} options={[{ value: "USD", label: "USD" }, { value: "PKR", label: "PKR" }]} ariaLabel="Currency" />
               </Field>
             </div>
+            {LIVE && sub && <p className="text-[12px] text-muted-foreground">Plan, cost, period and renewal date change through a renewal decision, so the renewal log keeps the history.</p>}
             <Field label="Billing period" htmlFor="s-period">
-              <NativeSelect id="s-period" {...register("period")}>
+              <NativeSelect id="s-period" disabled={LIVE && !!sub} {...register("period")}>
                 <option value="monthly">Monthly</option>
                 <option value="quarterly">Quarterly</option>
                 <option value="yearly">Yearly</option>
@@ -145,11 +157,23 @@ export function SubscriptionSheet({ sub, open, onOpenChange }: { sub?: Subscript
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Next renewal" htmlFor="s-renew" error={errors.renewalDate?.message}>
-                <Input id="s-renew" type="date" {...register("renewalDate")} />
+                <Input id="s-renew" type="date" disabled={LIVE && !!sub} {...register("renewalDate")} />
               </Field>
               <Field label="Remind this many days before" htmlFor="s-alert" error={errors.alertDaysBefore?.message}>
                 <Input id="s-alert" inputMode="numeric" {...register("alertDaysBefore")} />
               </Field>
+            </div>
+            <div className="grid gap-4 rounded-lg border border-dashed border-border p-3 sm:grid-cols-3">
+              <Field label="Usage to track (optional)" htmlFor="s-metric" hint="e.g. Export credits">
+                <Input id="s-metric" {...register("usageMetric")} />
+              </Field>
+              <Field label="Unit" htmlFor="s-unit">
+                <Input id="s-unit" placeholder="credits" {...register("usageUnit")} />
+              </Field>
+              <Field label="Limit" htmlFor="s-limit" error={errors.usageLimit?.message}>
+                <Input id="s-limit" inputMode="decimal" className="font-mono" {...register("usageLimit")} />
+              </Field>
+              <p className="text-[12px] text-muted-foreground sm:col-span-3">Readings are typed in (no provider API is connected). The responsible person is told when usage nears the limit.</p>
             </div>
             <Field label="Notes (optional)" htmlFor="s-notes">
               <Textarea id="s-notes" rows={3} {...register("notes")} />
@@ -176,6 +200,7 @@ export function RenewalDecisionDialog({ sub, onClose }: { sub: Subscription; onC
   const [note, setNote] = React.useState("");
   const [newCost, setNewCost] = React.useState(Number(sub.cost.amount).toFixed(2));
   const costOk = decision !== "changed" || /^\d+(\.\d{1,2})?$/.test(newCost);
+  const noteOk = decision !== "cancelled" || note.trim().length > 0;
   const run = async () => {
     try {
       await decide.mutateAsync({ id: sub.id, decision, note: note.trim() || undefined, newCost: decision === "changed" ? newCost : undefined });
@@ -215,7 +240,7 @@ export function RenewalDecisionDialog({ sub, onClose }: { sub: Subscription; onC
               Make sure nothing depends on it first. For example, cancelling an outreach domain stops its mailboxes.
             </p>
           )}
-          <Field label="Note (optional)" htmlFor="rd-note">
+          <Field label={decision === "cancelled" ? "Why it is cancelled" : "Note (optional)"} htmlFor="rd-note" required={decision === "cancelled"}>
             <Textarea id="rd-note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why, and anything to remember next time" />
           </Field>
         </div>
@@ -223,7 +248,7 @@ export function RenewalDecisionDialog({ sub, onClose }: { sub: Subscription; onC
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={run} disabled={!costOk} loading={decide.isPending} variant={decision === "cancelled" ? "destructive" : "default"}>
+          <Button onClick={run} disabled={!costOk || !noteOk} loading={decide.isPending} variant={decision === "cancelled" ? "destructive" : "default"}>
             Save decision
           </Button>
         </DialogFooter>
@@ -236,10 +261,11 @@ export function RenewalDecisionDialog({ sub, onClose }: { sub: Subscription; onC
 export function UsageReadingDialog({ sub, onClose }: { sub: Subscription; onClose: () => void }) {
   const add = useAddUsageReading();
   const [value, setValue] = React.useState(String(sub.usage?.used ?? ""));
-  const ok = /^\d+$/.test(value);
+  const [cost, setCost] = React.useState("");
+  const ok = /^\d+(\.\d{1,4})?$/.test(value) && (!cost || /^\d+(\.\d{1,2})?$/.test(cost));
   const run = async () => {
     try {
-      await add.mutateAsync({ id: sub.id, used: Number(value) });
+      await add.mutateAsync({ id: sub.id, used: Number(value), estimatedCost: cost || undefined });
       toast.success("Reading saved", { description: `${sub.vendor}: ${formatNumber(Number(value))} ${sub.usage?.unit ?? ""}` });
       onClose();
     } catch (e) {
@@ -256,12 +282,70 @@ export function UsageReadingDialog({ sub, onClose }: { sub: Subscription; onClos
         <Field label={`${sub.usage?.metric ?? "Usage"}${sub.usage?.limit ? ` (limit ${formatNumber(sub.usage.limit)})` : ""}`} htmlFor="ur-val" error={ok || !value ? undefined : "Whole number"}>
           <Input id="ur-val" inputMode="numeric" className="font-mono" autoFocus value={value} onChange={(e) => setValue(e.target.value.trim())} />
         </Field>
+        <Field label={`Estimated cost so far (${sub.cost.currency}, optional)`} htmlFor="ur-cost" hint="Shown as “Estimated”: the provider gives no exact figure.">
+          <Input id="ur-cost" inputMode="decimal" className="font-mono" value={cost} onChange={(e) => setCost(e.target.value.trim())} />
+        </Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button onClick={run} disabled={!ok} loading={add.isPending}>
             Save reading
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** What a service cost in one month. "Estimated" unless the amount comes from the provider's own invoice (plan section 18). */
+export function CostRecordDialog({ sub, onClose }: { sub: Subscription; onClose: () => void }) {
+  const save = useSetSubscriptionCost();
+  const [month, setMonth] = React.useState(isoDay(new Date()).slice(0, 7));
+  const [amount, setAmount] = React.useState(Number(sub.cost.amount).toFixed(2));
+  const [estimated, setEstimated] = React.useState(true);
+  const [reference, setReference] = React.useState("");
+  const ok = /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && /^\d+(\.\d{1,2})?$/.test(amount) && (estimated || reference.trim().length > 0);
+  const run = async () => {
+    try {
+      await save.mutateAsync({ id: sub.id, input: { month, amount, currency: sub.cost.currency, estimated, reference: reference.trim() || undefined } });
+      toast.success("Cost saved", { description: `${sub.vendor} ${month}: ${formatMoney({ amount, currency: sub.cost.currency })}${estimated ? " (estimated)" : ""}` });
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't save the cost.");
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Cost of a month · {sub.vendor}</DialogTitle>
+          <DialogDescription>One record per month. Changing it later is saved in the audit log.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Month" htmlFor="cr-month">
+              <Input id="cr-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+            </Field>
+            <Field label={`Amount (${sub.cost.currency})`} htmlFor="cr-amount">
+              <Input id="cr-amount" inputMode="decimal" className="font-mono" value={amount} onChange={(e) => setAmount(e.target.value.trim())} />
+            </Field>
+          </div>
+          <label className="flex items-center gap-2.5 text-[13px]">
+            <Checkbox checked={estimated} onCheckedChange={(c) => setEstimated(!!c)} /> Estimated (the provider gives no exact figure)
+          </label>
+          {!estimated && (
+            <Field label="Provider invoice reference" htmlFor="cr-ref" required hint="An actual cost needs the provider's invoice number.">
+              <Input id="cr-ref" value={reference} onChange={(e) => setReference(e.target.value)} />
+            </Field>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={run} disabled={!ok} loading={save.isPending}>
+            Save cost
           </Button>
         </DialogFooter>
       </DialogContent>

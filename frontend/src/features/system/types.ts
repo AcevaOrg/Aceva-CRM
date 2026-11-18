@@ -10,7 +10,8 @@ export type NotificationType =
   | "leave_requested" | "leave_answered" | "correction_answered"
   | "approval_waiting" | "payroll_ready" | "payslip_available" | "scorecard_released"
   | "security_alert" | "sales_reply" | "sales_follow_up" | "sales_tool_problem"
-  | "message_mention" | "announcement" | "renewal_due" | "invoice_overdue";
+  | "message_mention" | "announcement" | "renewal_due" | "invoice_overdue"
+  | "invoice_due" | "invoice_draft_ready" | "usage_alert";
 
 export interface Notification {
   id: string;
@@ -37,6 +38,7 @@ export const NOTIFICATION_GROUP: Record<NotificationType, "approvals" | "mention
   approval_waiting: "approvals", payroll_ready: "approvals", payslip_available: "other", scorecard_released: "other",
   security_alert: "other", sales_reply: "other", sales_follow_up: "other", sales_tool_problem: "other",
   message_mention: "mentions", announcement: "other", renewal_due: "other", invoice_overdue: "other",
+  invoice_due: "other", invoice_draft_ready: "other", usage_alert: "other",
 };
 
 export const ESSENTIAL_TYPES: NotificationType[] = ["approval_waiting", "payroll_ready", "leave_requested", "extension_requested", "security_alert"];

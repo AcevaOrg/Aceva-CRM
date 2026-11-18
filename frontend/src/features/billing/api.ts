@@ -1,8 +1,11 @@
 /**
- * Module 13 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
+ * Module 13 service functions. Mock data unless NEXT_PUBLIC_LIVE_MODULES contains m13 (then live-api.ts talks to the real
+ * server with the same function names and shapes). Each JSDoc names the real endpoint (spec §7.3).
  * Billing (plan §18, spec §2.3): the finance person creates invoices and records payments (billing.manage);
  * the Director and the CEO / Founder / Owner view. Subscriptions: the Director manages; Finance and the CEO view.
  */
+import type { BillingSettings } from "@aceva/contracts";
+import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
 import { employeesTable } from "@/lib/directory";
@@ -16,9 +19,10 @@ import {
 import {
   computeStatus, daysUntil, dueDateFrom, invoiceTotals, money, reminderSchedule, subscriptionStatus, toPkr, USD_TO_PKR,
 } from "./logic";
+import { liveBillingApi } from "./live-api";
 import type {
-  BillingOverview, Customer, CustomerSummary, Invoice, InvoiceDetail, NewInvoiceInput, Payment, RecordPaymentInput,
-  ReminderEvent, RenewalDecision, Subscription,
+  BankAccountOption, BillingOverview, Customer, CustomerSummary, Invoice, InvoiceDetail, NewCustomerInput, NewInvoiceInput, Payment, RecordPaymentInput,
+  ReminderEvent, RenewalDecision, Subscription, SubscriptionCostInput,
 } from "./types";
 
 const customersTable = () => table<Customer>("billing.customers", () => structuredClone(CUSTOMERS));
@@ -84,7 +88,7 @@ function buildInvoice(input: NewInvoiceInput, me: string, extra: Partial<Invoice
   };
 }
 
-export const billingApi = {
+const mockBillingApi = {
   /** GET /billing/overview */
   overview: () =>
     mock<BillingOverview>(() => {
@@ -263,6 +267,7 @@ export const billingApi = {
       const list = subscriptionsTable();
       const i = list.findIndex((s) => s.id === sub.id);
       const next: Subscription = { ...sub, status: sub.status ?? "active" };
+      if (!next.usage && next.usageSetup?.metric) next.usage = { metric: next.usageSetup.metric, used: 0, limit: next.usageSetup.limit, unit: next.usageSetup.unit, source: "manual", updatedAt: new Date().toISOString() };
       if (i >= 0) list[i] = { ...list[i], ...next };
       else list.unshift({ ...next, id: uid("sub") });
     }),
@@ -298,7 +303,7 @@ export const billingApi = {
     }),
 
   /** POST /subscriptions/:id/usage (manual reading for providers without an API) */
-  addUsageReading: (id: string, used: number) =>
+  addUsageReading: (id: string, used: number, estimatedCost?: string) =>
     mock(() => {
       requireManage("subscriptions.manage");
       const s = subscriptionsTable().find((x) => x.id === id);
@@ -307,8 +312,95 @@ export const billingApi = {
       s.usage.used = used;
       s.usage.updatedAt = new Date().toISOString();
       s.usage.enteredBy = getViewer().employee.empId;
+      if (estimatedCost) s.usage.estimatedCost = money(Number(estimatedCost), s.cost.currency);
+    }),
+
+  // ---- added with the live server; simple stand-ins on mock data ----
+
+  /** PUT /billing/subscriptions/:id/costs/:month */
+  setSubscriptionCost: (id: string, input: SubscriptionCostInput) =>
+    mock(() => {
+      requireManage("subscriptions.manage");
+      const s = subscriptionsTable().find((x) => x.id === id);
+      if (!s) notFound("Subscription");
+      const rest = (s.costs ?? []).filter((c) => c.month !== input.month);
+      s.costs = [{ id: uid("cost"), month: input.month, amount: money(Number(input.amount), input.currency), estimated: input.estimated, reference: input.reference, updatedAt: new Date().toISOString() }, ...rest].sort((a, b) => b.month.localeCompare(a.month));
+    }),
+
+  /** GET /bank-accounts (mock: none; the mock payment needs no bank account) */
+  bankAccounts: () => mock<BankAccountOption[]>(() => [], { delay: 40 }),
+
+  /** POST /billing/invoices/:id/email */
+  emailInvoice: (id: string) =>
+    mock(() => {
+      requireManage("billing.manage");
+      if (!invoicesTable().some((i) => i.id === id)) notFound("Invoice");
+    }),
+
+  /** POST /billing/invoices/:id/restore */
+  restoreInvoice: (id: string) =>
+    mock(() => {
+      requireManage("billing.manage");
+      const inv = invoicesTable().find((i) => i.id === id);
+      if (!inv) notFound("Invoice");
+      inv.status = "sent";
+      inv.cancelReason = undefined;
+    }),
+
+  /** POST /billing/recurring/:id/stop */
+  stopRecurring: (id: string, reason: string) =>
+    mock(() => {
+      requireManage("billing.manage");
+      void id;
+      void reason;
+    }),
+
+  /** POST /billing/customers */
+  createCustomer: (input: NewCustomerInput) =>
+    mock<Customer>(() => {
+      requireManage("billing.manage");
+      const c: Customer = { id: uid("cus"), name: input.name, contactName: input.contactName ?? "", email: input.email ?? "", country: input.country ?? "", currency: input.currency, termsDays: input.termsDays, address: input.address ?? "", taxId: input.taxId };
+      customersTable().push(c);
+      return c;
+    }),
+
+  /** POST /billing/deal-handovers/:id/resolve (mock: no handovers wait) */
+  resolveDealHandover: (id: string, partyId: string) =>
+    mock(() => {
+      requireManage("billing.manage");
+      void id;
+      void partyId;
+    }),
+
+  /** POST /billing/customers/:id/confirm */
+  confirmCustomer: (id: string) =>
+    mock(() => {
+      requireManage("billing.manage");
+      const c = customersTable().find((x) => x.id === id);
+      if (!c) notFound("Client");
+      c.needsReview = false;
+    }),
+
+  /** GET /settings/modules/billing (mock: the defaults; nothing invented) */
+  settings: () =>
+    mock<{ value: BillingSettings; version: number; updatedAt: string | null; updatedByEmpId: string | null }>(() => ({
+      value: { company: { legalName: null, address: null, email: null, phone: null, taxNumbers: null, paymentDetails: null }, customerEmails: { enabled: false, fromAddress: null, replyTo: null }, reminderOffsets: [-3, 0, 3, 7], defaultTermsDays: 14, defaultIncomeAccountCode: "4100" },
+      version: 0,
+      updatedAt: null,
+      updatedByEmpId: null,
+    })),
+
+  /** PUT /settings/modules/billing */
+  saveSettings: (value: BillingSettings, version: number, reason: string) =>
+    mock(() => {
+      void value;
+      void version;
+      void reason;
     }),
 };
+
+/** The live server when m13 is switched on (NEXT_PUBLIC_LIVE_MODULES), otherwise the mock data. */
+export const billingApi: typeof mockBillingApi = isLive("m13") ? liveBillingApi : mockBillingApi;
 
 /**
  * Cross-module (M15 → M13): a Won deal creates a draft invoice for the finance person to check and send.

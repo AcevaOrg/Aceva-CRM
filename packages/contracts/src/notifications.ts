@@ -28,6 +28,10 @@ export const notificationTypeSchema = z.enum([
   'announcement',
   'renewal_due',
   'invoice_overdue',
+  // Module 13
+  'invoice_due',
+  'invoice_draft_ready',
+  'usage_alert',
 ]);
 export type NotificationType = z.infer<typeof notificationTypeSchema>;
 

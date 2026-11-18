@@ -4,7 +4,7 @@ import type { BillView, EntryStatus, InvoiceView, PaymentView, ReceiptView } fro
 import type { Actor } from '../access/access.types';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
-import { withDbRules } from '../common/db-rules';
+import { isUniqueViolation, withDbRules } from '../common/db-rules';
 import { dec, money, round2, sum, ZERO, type Decimal } from '../common/money';
 import { dayOf, dbDate } from '../common/pakistan-time';
 import type { Currency, Prisma } from '../generated/prisma/client';
@@ -50,20 +50,20 @@ export class FinanceDocumentsService {
 
   // ------------------------------------------------------------------------------------------------ shared helpers
 
-  private async roleAccount(db: Tx | PrismaService, role: string): Promise<string> {
+  async roleAccount(db: Tx | PrismaService, role: string): Promise<string> {
     const a = await db.ledgerAccount.findUnique({ where: { systemRole: role }, select: { id: true, archivedAt: true } });
     if (!a || a.archivedAt) throw conflict('account_role_missing', `No active account has the role "${role}". The accountant maps it in the chart of accounts.`);
     return a.id;
   }
 
-  private async partyOf(db: Tx | PrismaService, id: string, kind: 'client' | 'vendor') {
+  async partyOf(db: Tx | PrismaService, id: string, kind: 'client' | 'vendor') {
     const p = await db.party.findUnique({ where: { id } });
     if (!p || p.archivedAt) throw badRequest('unknown_party', `The ${kind} does not exist or is archived`);
     if (p.kind !== kind) throw badRequest('wrong_party_kind', `Choose a ${kind}`);
     return p;
   }
 
-  private async postingAccount(db: Tx | PrismaService, ref: { accountId?: string; accountCode?: string }, groups: string[], what: string) {
+  async postingAccount(db: Tx | PrismaService, ref: { accountId?: string; accountCode?: string }, groups: string[], what: string) {
     const a = await db.ledgerAccount.findFirst({
       where: ref.accountId ? { id: ref.accountId } : { code: ref.accountCode },
       include: { children: { where: { archivedAt: null }, select: { id: true }, take: 1 } },
@@ -74,7 +74,7 @@ export class FinanceDocumentsService {
     return a;
   }
 
-  private async bankAccount(db: Tx | PrismaService, id: string) {
+  async bankAccount(db: Tx | PrismaService, id: string) {
     const a = await db.ledgerAccount.findUnique({ where: { id } });
     if (!a || !a.isBank || a.archivedAt) throw badRequest('unknown_bank_account', 'Choose an active bank account');
     return a;
@@ -144,7 +144,8 @@ export class FinanceDocumentsService {
   }
 
   async invoices(q: { page: number; pageSize: number; partyId?: string; status?: 'unpaid' | 'part_paid' | 'paid' | 'all' }) {
-    const where: Prisma.InvoiceWhereInput = { cancelledAt: null, ...(q.partyId ? { partyId: q.partyId } : {}) };
+    // Module 13 drafts have no ledger entry yet and are not shown here (they are on the billing screens).
+    const where: Prisma.InvoiceWhereInput = { cancelledAt: null, status: { not: 'draft' }, ...(q.partyId ? { partyId: q.partyId } : {}) };
     // The status is calculated, so a status filter is applied after calculating it.
     const rows = await this.prisma.invoice.findMany({ where, include: { party: { select: { name: true } }, lines: { orderBy: { lineNo: 'asc' } } }, orderBy: [{ issueDate: 'desc' }, { number: 'desc' }] });
     let views = await this.invoiceViews(rows);
@@ -389,96 +390,108 @@ ${inv.notes ? `<p>${esc(inv.notes)}</p>` : ''}
 
   async createPayment(
     actor: Actor,
-    dto: { direction: 'received' | 'made'; partyId: string; bankAccountId: string; paymentDate: string; amount: string; exchangeRate?: string; method?: string; reference?: string; projectId?: string; allocations: Array<{ invoiceId?: string; billId?: string; amount: string }> },
+    dto: { direction: 'received' | 'made'; partyId: string; bankAccountId: string; paymentDate: string; amount: string; exchangeRate?: string; method?: string; reference?: string; projectId?: string; allocations: Array<{ invoiceId?: string; billId?: string; amount: string }>; requestKey?: string },
     client: RequestInfo,
   ): Promise<PaymentView> {
     const ctx = { actorId: actor.id, ...client };
-    const id = await withDbRules(() =>
-      this.prisma.$transaction(async (tx) => {
-        const received = dto.direction === 'received';
-        const party = await this.partyOf(tx, dto.partyId, received ? 'client' : 'vendor');
-        const bank = await this.bankAccount(tx, dto.bankAccountId);
-        const control = await this.roleAccount(tx, received ? 'accounts_receivable' : 'accounts_payable');
-        const amount = dec(dto.amount);
-        const currency = bank.currency;
+    // Module 13: the same request sent again (a retry, a double click) returns the payment it already made.
+    const earlier = async () => (dto.requestKey ? await this.prisma.payment.findUnique({ where: { requestKey: dto.requestKey }, select: { id: true } }) : null);
+    const existing = await earlier();
+    if (existing) return this.payment(existing.id);
+    const id = await withDbRules(async () => {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const received = dto.direction === 'received';
+          const party = await this.partyOf(tx, dto.partyId, received ? 'client' : 'vendor');
+          const bank = await this.bankAccount(tx, dto.bankAccountId);
+          const control = await this.roleAccount(tx, received ? 'accounts_receivable' : 'accounts_payable');
+          const amount = dec(dto.amount);
+          const currency = bank.currency;
 
-        // Allocations: documents of this party, in the payment currency, never more than what is still open.
-        const perDoc = new Map<string, Decimal>();
-        for (const a of dto.allocations) {
-          const docId = received ? a.invoiceId : a.billId;
-          if (!docId) throw badRequest('wrong_document', received ? 'A payment received is allocated to invoices' : 'A payment made is allocated to bills');
-          perDoc.set(docId, (perDoc.get(docId) ?? ZERO).plus(dec(a.amount)));
-        }
-        const allocated = sum(perDoc.values());
-        if (allocated.gt(amount)) throw badRequest('overpayment', `The allocations (${money(allocated)}) are more than the payment (${money(amount)})`);
-        const docIds = [...perDoc.keys()];
-        if (docIds.length) {
-          // Lock the documents so two payments cannot allocate the same open amount at the same time.
-          if (received) await tx.$queryRaw`SELECT id FROM invoices WHERE id = ANY(${docIds}::uuid[]) FOR UPDATE`;
-          else await tx.$queryRaw`SELECT id FROM bills WHERE id = ANY(${docIds}::uuid[]) FOR UPDATE`;
-          const docs = received
-            ? await tx.invoice.findMany({ where: { id: { in: docIds } }, select: { id: true, number: true, partyId: true, currency: true, total: true, cancelledAt: true, journalEntryId: true } })
-            : await tx.bill.findMany({ where: { id: { in: docIds } }, select: { id: true, number: true, partyId: true, currency: true, total: true, cancelledAt: true, journalEntryId: true } });
-          if (docs.length !== docIds.length) throw badRequest('wrong_document', 'A document in the allocations does not exist');
-          const statuses = await tx.journalEntry.findMany({ where: { id: { in: docs.map((d) => d.journalEntryId!).filter(Boolean) } }, select: { id: true, status: true } });
-          const totals = await this.ledger.allocationTotals(received ? 'invoice' : 'bill', docIds, tx);
-          for (const d of docs) {
-            if (d.partyId !== party.id) throw badRequest('wrong_party', `${d.number} belongs to another ${received ? 'client' : 'vendor'}`);
-            const st = statuses.find((s) => s.id === d.journalEntryId)?.status;
-            if (d.cancelledAt || !st || st === 'rejected') throw badRequest('wrong_document', `${d.number} cannot take payments (its entry was rejected)`);
-            if (d.currency !== currency) throw badRequest('currency_mismatch', `${d.number} is in ${d.currency}; pay it from a ${d.currency} bank account`);
-            const open = dec(d.total).minus(totals.get(d.id)?.committed ?? ZERO);
-            if (perDoc.get(d.id)!.gt(open)) throw badRequest('overpayment', `${d.number} has only ${money(open)} ${d.currency} still open`);
+          // Allocations: documents of this party, in the payment currency, never more than what is still open.
+          const perDoc = new Map<string, Decimal>();
+          for (const a of dto.allocations) {
+            const docId = received ? a.invoiceId : a.billId;
+            if (!docId) throw badRequest('wrong_document', received ? 'A payment received is allocated to invoices' : 'A payment made is allocated to bills');
+            perDoc.set(docId, (perDoc.get(docId) ?? ZERO).plus(dec(a.amount)));
           }
-        }
+          const allocated = sum(perDoc.values());
+          if (allocated.gt(amount)) throw badRequest('overpayment', `The allocations (${money(allocated)}) are more than the payment (${money(amount)})`);
+          const docIds = [...perDoc.keys()];
+          if (docIds.length) {
+            // Lock the documents so two payments cannot allocate the same open amount at the same time.
+            if (received) await tx.$queryRaw`SELECT id FROM invoices WHERE id = ANY(${docIds}::uuid[]) FOR UPDATE`;
+            else await tx.$queryRaw`SELECT id FROM bills WHERE id = ANY(${docIds}::uuid[]) FOR UPDATE`;
+            const docs = received
+              ? await tx.invoice.findMany({ where: { id: { in: docIds } }, select: { id: true, number: true, partyId: true, currency: true, total: true, cancelledAt: true, journalEntryId: true } })
+              : await tx.bill.findMany({ where: { id: { in: docIds } }, select: { id: true, number: true, partyId: true, currency: true, total: true, cancelledAt: true, journalEntryId: true } });
+            if (docs.length !== docIds.length) throw badRequest('wrong_document', 'A document in the allocations does not exist');
+            const statuses = await tx.journalEntry.findMany({ where: { id: { in: docs.map((d) => d.journalEntryId!).filter(Boolean) } }, select: { id: true, status: true } });
+            const totals = await this.ledger.allocationTotals(received ? 'invoice' : 'bill', docIds, tx);
+            for (const d of docs) {
+              if (d.partyId !== party.id) throw badRequest('wrong_party', `${d.number} belongs to another ${received ? 'client' : 'vendor'}`);
+              const st = statuses.find((s) => s.id === d.journalEntryId)?.status;
+              if (d.cancelledAt || !st || st === 'rejected') throw badRequest('wrong_document', `${d.number} cannot take payments (its entry was rejected)`);
+              if (d.currency !== currency) throw badRequest('currency_mismatch', `${d.number} is in ${d.currency}; pay it from a ${d.currency} bank account`);
+              const open = dec(d.total).minus(totals.get(d.id)?.committed ?? ZERO);
+              if (perDoc.get(d.id)!.gt(open)) throw badRequest('overpayment', `${d.number} has only ${money(open)} ${d.currency} still open`);
+            }
+          }
 
-        await this.journal.assertOpen(tx, dto.paymentDate);
-        const rate = await this.journal.resolveRate(tx, currency, dto.paymentDate, dto.exchangeRate ? dec(dto.exchangeRate) : null);
-        const payment = await tx.payment.create({
-          data: {
-            direction: dto.direction,
-            partyId: party.id,
-            bankAccountId: bank.id,
-            paymentDate: dbDate(dto.paymentDate),
-            currency,
-            exchangeRate: rate,
-            amount,
-            method: dto.method ?? null,
-            reference: dto.reference ?? null,
-            createdBy: actor.id,
-            allocations: { create: [...perDoc.entries()].map(([docId, a]) => (received ? { invoiceId: docId, amount: a } : { billId: docId, amount: a })) },
-          },
+          await this.journal.assertOpen(tx, dto.paymentDate);
+          const rate = await this.journal.resolveRate(tx, currency, dto.paymentDate, dto.exchangeRate ? dec(dto.exchangeRate) : null);
+          const payment = await tx.payment.create({
+            data: {
+              direction: dto.direction,
+              partyId: party.id,
+              bankAccountId: bank.id,
+              paymentDate: dbDate(dto.paymentDate),
+              currency,
+              exchangeRate: rate,
+              amount,
+              method: dto.method ?? null,
+              reference: dto.reference ?? null,
+              requestKey: dto.requestKey ?? null,
+              createdBy: actor.id,
+              allocations: { create: [...perDoc.entries()].map(([docId, a]) => (received ? { invoiceId: docId, amount: a } : { billId: docId, amount: a })) },
+            },
+          });
+          const label = `${received ? 'Payment received from' : 'Payment to'} ${party.name}${dto.reference ? ` (${dto.reference})` : ''}`;
+          const entry = await this.journal.createAndSubmitTx(
+            tx,
+            {
+              date: dto.paymentDate,
+              description: label.slice(0, 300),
+              source: 'payment',
+              sourceRef: payment.id,
+              purpose: 'payment',
+              currency,
+              exchangeRate: rate,
+              projectId: dto.projectId ?? null,
+              makerId: actor.id,
+              lines: received
+                ? [
+                    { accountId: bank.id, debit: amount, credit: ZERO, description: label },
+                    { accountId: control, debit: ZERO, credit: amount, partyId: party.id, description: label },
+                  ]
+                : [
+                    { accountId: control, debit: amount, credit: ZERO, partyId: party.id, description: label },
+                    { accountId: bank.id, debit: ZERO, credit: amount, description: label },
+                  ],
+            },
+            ctx,
+          );
+          await tx.payment.update({ where: { id: payment.id }, data: { journalEntryId: entry.id } });
+          await this.audit.record({ actorId: actor.id, action: `finance.payment.${dto.direction}`, targetType: 'payment', targetId: payment.id, details: { entry: entry.number, allocations: perDoc.size, currency }, ...client }, tx);
+          return payment.id;
         });
-        const label = `${received ? 'Payment received from' : 'Payment to'} ${party.name}${dto.reference ? ` (${dto.reference})` : ''}`;
-        const entry = await this.journal.createAndSubmitTx(
-          tx,
-          {
-            date: dto.paymentDate,
-            description: label.slice(0, 300),
-            source: 'payment',
-            sourceRef: payment.id,
-            purpose: 'payment',
-            currency,
-            exchangeRate: rate,
-            projectId: dto.projectId ?? null,
-            makerId: actor.id,
-            lines: received
-              ? [
-                  { accountId: bank.id, debit: amount, credit: ZERO, description: label },
-                  { accountId: control, debit: ZERO, credit: amount, partyId: party.id, description: label },
-                ]
-              : [
-                  { accountId: control, debit: amount, credit: ZERO, partyId: party.id, description: label },
-                  { accountId: bank.id, debit: ZERO, credit: amount, description: label },
-                ],
-          },
-          ctx,
-        );
-        await tx.payment.update({ where: { id: payment.id }, data: { journalEntryId: entry.id } });
-        await this.audit.record({ actorId: actor.id, action: `finance.payment.${dto.direction}`, targetType: 'payment', targetId: payment.id, details: { entry: entry.number, allocations: perDoc.size, currency }, ...client }, tx);
-        return payment.id;
-      }),
-    );
+      } catch (error) {
+        // Two copies of the same request at the same moment: the second one finds the first one's payment.
+        const won = isUniqueViolation(error) ? await earlier() : null;
+        if (won) return won.id;
+        throw error;
+      }
+    });
     return this.payment(id);
   }
 

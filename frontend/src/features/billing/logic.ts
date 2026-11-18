@@ -3,14 +3,21 @@
  */
 import { addDays, differenceInCalendarDays, startOfDay } from "date-fns";
 import type { BadgeTone } from "@/components/ui/badge";
+import { isLive } from "@/lib/api/http";
 import type { Currency, Money } from "@/types";
 import type {
   Invoice, InvoiceLine, InvoiceStatus, InvoiceType, PaymentMethod, ReminderRule, Subscription, SubscriptionCategory,
   SubscriptionPeriod, SubscriptionStatus, BillingPeriod,
 } from "./types";
 
-/** Saved exchange rate used to show totals in PKR (Settings → Currencies). */
-export const USD_TO_PKR = 280;
+/**
+ * Exchange rate used to show totals in PKR. Mock data: a fixed example rate. Live: the latest rate saved in Module 9
+ * (set by the live API when the billing overview loads); 0 = no rate saved yet.
+ */
+export let USD_TO_PKR = isLive("m13") ? 0 : 280;
+export function setUsdRate(rate: number) {
+  USD_TO_PKR = rate;
+}
 
 export const toPkr = (m: Money | { amount: string; currency: Currency }) => Number(m.amount) * (m.currency === "USD" ? USD_TO_PKR : 1);
 
@@ -108,7 +115,7 @@ export function usageFlag(u?: Subscription["usage"]): "near_limit" | "unusual" |
 
 export const INVOICE_STATUS: Record<InvoiceStatus, { label: string; tone: BadgeTone }> = {
   draft: { label: "Draft", tone: "outline" },
-  sent: { label: "Sent", tone: "info" },
+  sent: { label: "Issued", tone: "info" },
   part_paid: { label: "Part paid", tone: "warning" },
   paid: { label: "Paid", tone: "success" },
   overdue: { label: "Overdue", tone: "danger" },

@@ -8,6 +8,9 @@ export interface MailMessage {
   subject: string;
   text: string;
   html?: string;
+  /** A different sender than MAIL_FROM (Module 13 customer emails use the address set in the billing settings). */
+  from?: string;
+  replyTo?: string;
 }
 
 /** Sends email. The rest of the app only talks to this; the SMTP details live in the environment. */
@@ -35,7 +38,7 @@ export class SmtpMailer extends Mailer {
 
   async send(message: MailMessage): Promise<void> {
     try {
-      await this.transport.sendMail({ from: this.from, ...message });
+      await this.transport.sendMail({ ...message, from: message.from ?? this.from });
     } catch (error) {
       // Never log the message body (it can contain a reset link or a temporary password).
       this.logger.error(`Could not send an email to ${message.to}: ${(error as Error).message}`);

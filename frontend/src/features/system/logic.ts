@@ -130,4 +130,7 @@ export const NOTIFICATION_LABEL: Record<NotificationType, string> = {
   announcement: "Announcement",
   renewal_due: "Subscription renewal",
   invoice_overdue: "Invoice overdue",
+  invoice_due: "Invoice due soon",
+  invoice_draft_ready: "Invoice draft to check",
+  usage_alert: "Service usage alert",
 };

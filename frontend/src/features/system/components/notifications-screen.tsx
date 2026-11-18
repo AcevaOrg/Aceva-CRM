@@ -28,6 +28,7 @@ const ICON: Record<NotificationType, React.ElementType> = {
   approval_waiting: Inbox, payroll_ready: Wallet, payslip_available: Receipt, scorecard_released: Gauge,
   security_alert: ShieldAlert, sales_reply: Sunrise, sales_follow_up: Sunrise, sales_tool_problem: Plug,
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
+  invoice_due: CreditCard, invoice_draft_ready: CreditCard, usage_alert: Gauge,
 };
 
 /** Email preference groups; a group shows only to people who can receive those notifications. */
@@ -41,7 +42,7 @@ const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Perm
   { title: "Security", types: ["security_alert"] },
   { title: "Sales", types: ["sales_reply", "sales_follow_up"], permission: "sales.own" },
   { title: "Sales tools", types: ["sales_tool_problem"], permission: "integrations.view" },
-  { title: "Finance", types: ["renewal_due", "invoice_overdue"], permission: "billing.view" },
+  { title: "Finance", types: ["renewal_due", "invoice_overdue", "invoice_due", "invoice_draft_ready", "usage_alert"], permission: "billing.view" },
 ];
 
 function dayLabel(iso: string) {

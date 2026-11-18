@@ -2,7 +2,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Download, LayoutDashboard, Plus, Receipt, Users, Wallet } from "lucide-react";
+import { Download, LayoutDashboard, Plus, Receipt, Settings2, UserPlus, Users, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,24 +10,40 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Can, RequireAccess } from "@/components/shared/can";
 import { DeadlineChip } from "@/components/shared/chips";
 import { DataTable, type Column } from "@/components/shared/data-table";
-import { useExport } from "@/components/shared/dialogs";
+import { useExport, useStepUp } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { Mono, Money } from "@/components/shared/money";
 import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
+import { toast } from "sonner";
+import { isLive } from "@/lib/api/http";
+import { ApiError } from "@/lib/api/mock";
+import { useCan } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { INVOICE_STATUS, PAYMENT_METHOD, reminderSchedule } from "../logic";
-import { useCustomerList, useCustomers, useInvoices, usePayments } from "../hooks";
+import { useConfirmCustomer, useCustomerList, useCustomers, useInvoices, usePayments } from "../hooks";
 import type { CustomerSummary, Invoice, InvoiceStatus, Payment } from "../types";
 import { BillingOverviewPanel } from "./billing-overview";
+import { BillingSettingsPanel, NewCustomerDialog } from "./billing-settings";
 import { InvoiceStatusBadge, InvoiceTypeLabel } from "./bits";
 
-type Tab = "overview" | "invoices" | "customers" | "payments";
+type Tab = "overview" | "invoices" | "customers" | "payments" | "settings";
+
+/** Live (m13): the real server. */
+const LIVE = isLive("m13");
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 export function BillingScreen() {
   const [tab, setTab] = useUrlState<Tab>("tab", "overview");
   const exportData = useExport();
+  const stepUp = useStepUp();
+  const [newCustomer, setNewCustomer] = React.useState(false);
+  // Live: the server asks for the password again, watermarks the file and logs the export.
+  const onExport = async () => {
+    if (!LIVE) return void exportData({ title: "Invoice list", seal: "confidential", formats: ["xlsx", "csv", "pdf"] });
+    if (await stepUp({ action: "Export the invoice list", detail: "The file is watermarked with your Emp-ID and the export is logged." })) window.open(`${API_BASE}/billing/invoices/export`, "_blank", "noopener");
+  };
   return (
     <RequireAccess permission="billing.view" mode="404">
       <PageHeader
@@ -38,11 +54,14 @@ export function BillingScreen() {
           <>
             {/* Finance data exports are for the CEO / Founder / Owner and the Director. */}
             <Can permission="finance.export">
-              <Button variant="outline" onClick={() => exportData({ title: "Invoice list", seal: "confidential", formats: ["xlsx", "csv", "pdf"] })}>
+              <Button variant="outline" onClick={onExport}>
                 <Download /> Export
               </Button>
             </Can>
             <Can permission="billing.manage">
+              <Button variant="outline" onClick={() => setNewCustomer(true)}>
+                <UserPlus /> New client
+              </Button>
               <Button asChild>
                 <Link href="/billing/invoices/new">
                   <Plus /> New invoice
@@ -66,6 +85,11 @@ export function BillingScreen() {
           <TabsTrigger value="payments">
             <Wallet /> Payments
           </TabsTrigger>
+          {LIVE && (
+            <TabsTrigger value="settings">
+              <Settings2 /> Settings
+            </TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="overview">
           <BillingOverviewPanel />
@@ -79,7 +103,13 @@ export function BillingScreen() {
         <TabsContent value="payments">
           <PaymentsTable />
         </TabsContent>
+        {LIVE && (
+          <TabsContent value="settings">
+            <BillingSettingsPanel />
+          </TabsContent>
+        )}
       </Tabs>
+      {newCustomer && <NewCustomerDialog onClose={() => setNewCustomer(false)} />}
     </RequireAccess>
   );
 }
@@ -177,8 +207,42 @@ function InvoicesTable() {
 
 function CustomersTable() {
   const q = useCustomers();
+  const confirm = useConfirmCustomer();
+  const canManage = useCan("billing.manage");
+  const onConfirm = async (c: CustomerSummary) => {
+    try {
+      await confirm.mutateAsync(c.id);
+      toast.success(`${c.name} confirmed`, { description: "Its invoices can now be issued." });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't confirm the client.");
+    }
+  };
   const columns: Column<CustomerSummary>[] = [
-    { key: "name", header: "Customer", sortValue: (c) => c.name, cell: (c) => <div className="grid"><span className="font-medium">{c.name}</span><span className="text-[12px] text-muted-foreground">{c.contactName} · {c.email}</span></div> },
+    {
+      key: "name",
+      header: "Customer",
+      sortValue: (c) => c.name,
+      cell: (c) => (
+        <div className="grid gap-0.5">
+          <span className="font-medium">{c.name}</span>
+          <span className="text-[12px] text-muted-foreground">{c.contactName} · {c.email}</span>
+          {c.needsReview && (
+            <span className="flex flex-wrap items-center gap-2">
+              <Badge tone="warning" className="w-fit">Needs review · from {c.createdFromDeal}</Badge>
+              {canManage && (
+                <Button size="sm" variant="outline" onClick={(e) => {
+                    e.stopPropagation();
+                    void onConfirm(c);
+                  }}
+                >
+                  Confirm client
+                </Button>
+              )}
+            </span>
+          )}
+        </div>
+      ),
+    },
     { key: "country", header: "Country", sortValue: (c) => c.country, cell: (c) => c.country, hideOnMobile: true },
     { key: "terms", header: "Terms", cell: (c) => <span className="tabular">{c.termsDays} days</span>, hideOnMobile: true },
     { key: "count", header: "Invoices", align: "right", sortValue: (c) => c.invoiceCount, cell: (c) => <span className="tabular">{c.invoiceCount}</span> },

@@ -351,6 +351,9 @@ model Employee {
   // Cycle 3 foundation (back-relations only)
   notifications          Notification[]
   notificationPreference NotificationPreference?
+  invoicesAssigned       Invoice[]               @relation("InvoiceAssignee")
+  recurringRulesAssigned RecurringBillingRule[]  @relation("RecurringRuleAssignee")
+  subscriptionsOwned     Subscription[]          @relation("SubscriptionOwner")
 
   @@index([departmentId])
   @@index([officeId])
@@ -1386,10 +1389,12 @@ model Party {
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy  String?   @map("updated_by") @db.Uuid
 
-  lines    JournalLine[]
-  invoices Invoice[]
-  bills    Bill[]
-  payments Payment[]
+  lines          JournalLine[]
+  invoices       Invoice[]
+  bills          Bill[]
+  payments       Payment[]
+  billingProfile BillingProfile?
+  recurringRules RecurringBillingRule[]
 
   @@index([kind, name])
   @@map("parties")
@@ -1586,11 +1591,47 @@ model Invoice {
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy      String?   @map("updated_by") @db.Uuid
 
-  party       Party               @relation(fields: [partyId], references: [id])
-  lines       InvoiceLine[]
-  allocations PaymentAllocation[]
+  // ---- Module 13 (customer billing) extends this table; Module 9 still writes every ledger entry. ----
+  /// draft (no ledger entry, temporary DRAFT- number) -> issued (INV- number, entry submitted) -> cancelled.
+  /// Paid / part paid / overdue are still calculated, never stored. Rows that existed before M13 are issued.
+  status            InvoiceStatus @default(issued)
+  kind              InvoiceKind   @default(one_time)
+  termsDays         Int?          @map("terms_days")
+  /// The billing period this invoice covers (recurring and rental invoices).
+  periodStart       DateTime?     @map("period_start") @db.Date
+  periodEnd         DateTime?     @map("period_end") @db.Date
+  recurringRuleId   String?       @map("recurring_rule_id") @db.Uuid
+  /// Reminder days relative to the due date (-3 = 3 days before).
+  reminderOffsets   Int[]         @default([]) @map("reminder_offsets")
+  /// The staff member reminded about this invoice.
+  assignedToId      String?       @map("assigned_to_id") @db.Uuid
+  /// M15 connection point: a confirmed Won deal creates exactly one draft (unique).
+  sourceDealNumber  String?       @unique @map("source_deal_number")
+  sourceDealOwnerId String?       @map("source_deal_owner_id") @db.Uuid
+  /// The client's retry key: the same create request never makes a second invoice.
+  requestKey        String?       @unique @map("request_key")
+  issuedAt          DateTime?     @map("issued_at") @db.Timestamptz(3)
+  issuedBy          String?       @map("issued_by") @db.Uuid
+  emailedAt         DateTime?     @map("emailed_at") @db.Timestamptz(3)
+  cancelledBy       String?       @map("cancelled_by") @db.Uuid
+  cancelReason      String?       @map("cancel_reason")
+  /// The reversing entry made when an invoice whose entry was posted is cancelled.
+  cancelEntryId     String?       @unique @map("cancel_entry_id") @db.Uuid
+  /// When the "invoice paid" and "invoice overdue" events were sent (each once).
+  paidEventAt       DateTime?     @map("paid_event_at") @db.Timestamptz(3)
+  overdueEventAt    DateTime?     @map("overdue_event_at") @db.Timestamptz(3)
 
+  party         Party                  @relation(fields: [partyId], references: [id])
+  lines         InvoiceLine[]
+  allocations   PaymentAllocation[]
+  recurringRule RecurringBillingRule?  @relation(fields: [recurringRuleId], references: [id])
+  assignedTo    Employee?              @relation("InvoiceAssignee", fields: [assignedToId], references: [id])
+  reminders     InvoiceReminder[]
+  emails        BillingCustomerEmail[]
+
+  @@unique([recurringRuleId, periodStart])
   @@index([partyId])
+  @@index([status, dueDate])
   @@map("invoices")
 }
 
@@ -1654,6 +1695,8 @@ model Payment {
   method         String?
   reference      String?
   journalEntryId String?          @unique @map("journal_entry_id") @db.Uuid
+  /// M13: the client's retry key, so recording the same payment twice never makes a second one.
+  requestKey     String?          @unique @map("request_key")
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   createdBy      String?          @map("created_by") @db.Uuid
 
@@ -1884,4 +1927,327 @@ model ModuleSetting {
   updatedBy String?  @map("updated_by") @db.Uuid
 
   @@map("module_settings")
+}
+
+// ============================================================================================================
+// Module 13: customer billing, subscriptions and renewal management (plan section 18).
+// Invoices, invoice lines, payments and the ledger stay in Module 9 (the tables above); these tables add the
+// billing life cycle around them. Only Module 9 writes money.
+// ============================================================================================================
+
+enum InvoiceStatus {
+  draft
+  issued
+  cancelled
+
+  @@map("invoice_status")
+}
+
+enum InvoiceKind {
+  one_time
+  recurring
+  rental
+
+  @@map("invoice_kind")
+}
+
+enum BillingPeriod {
+  monthly
+  quarterly
+  yearly
+
+  @@map("billing_period")
+}
+
+enum RecurringRuleStatus {
+  active
+  ended
+
+  @@map("recurring_rule_status")
+}
+
+enum ReminderAudience {
+  customer
+  staff
+
+  @@map("reminder_audience")
+}
+
+enum ReminderStatus {
+  scheduled
+  sent
+  skipped
+
+  @@map("reminder_status")
+}
+
+enum CustomerEmailStatus {
+  pending
+  sending
+  sent
+  failed
+  skipped
+  unknown
+
+  @@map("customer_email_status")
+}
+
+enum SubscriptionStatus {
+  active
+  cancelled
+
+  @@map("subscription_status")
+}
+
+enum DealHandoverStatus {
+  drafted
+  needs_client
+
+  @@map("deal_handover_status")
+}
+
+/// A confirmed Won deal received from Module 15 (one row per deal number). drafted = its draft invoice exists;
+/// needs_client = several clients have exactly its client name, and Finance chooses the right one (never chosen silently).
+model DealHandover {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealNumber        String             @unique @map("deal_number")
+  /// The event payload (client, service, value, currency, owner).
+  payload           Json
+  status            DealHandoverStatus
+  candidatePartyIds String[]           @map("candidate_party_ids") @db.Uuid
+  invoiceId         String?            @unique @map("invoice_id") @db.Uuid
+  sourceEventId     String?            @map("source_event_id") @db.Uuid
+  resolvedBy        String?            @map("resolved_by") @db.Uuid
+  resolvedAt        DateTime?          @map("resolved_at") @db.Timestamptz(3)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status])
+  @@map("deal_handovers")
+}
+
+enum SubscriptionPeriod {
+  monthly
+  quarterly
+  yearly
+  usage
+
+  @@map("subscription_period")
+}
+
+enum RenewalEventKind {
+  alert
+  renewed
+  changed
+  cancelled
+
+  @@map("renewal_event_kind")
+}
+
+/// A client's billing details (the client itself is the Module 9 party).
+model BillingProfile {
+  partyId         String   @id @map("party_id") @db.Uuid
+  contactName     String?  @map("contact_name")
+  termsDays       Int      @map("terms_days")
+  taxId           String?  @map("tax_id")
+  notes           String?
+  /// A client created automatically from a Won deal: Finance reviews it before its invoice can be issued.
+  needsReview     Boolean  @default(false) @map("needs_review")
+  createdFromDeal String?  @map("created_from_deal")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?  @map("created_by") @db.Uuid
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?  @map("updated_by") @db.Uuid
+
+  party Party @relation(fields: [partyId], references: [id])
+
+  @@map("billing_profiles")
+}
+
+/// A recurring or rental billing rule. Each period it creates one draft invoice (unique per rule and period start)
+/// for the finance duty person to check and issue.
+model RecurringBillingRule {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId         String              @map("party_id") @db.Uuid
+  kind            InvoiceKind
+  period          BillingPeriod
+  currency        Currency
+  /// [{ description, quantity, unitPrice, accountId }]
+  lines           Json
+  termsDays       Int                 @map("terms_days")
+  reminderOffsets Int[]               @map("reminder_offsets")
+  assignedToId    String?             @map("assigned_to_id") @db.Uuid
+  notes           String?
+  startDate       DateTime            @map("start_date") @db.Date
+  /// The last day billed; null = until stopped.
+  endDate         DateTime?           @map("end_date") @db.Date
+  /// The start of the next period to bill.
+  nextPeriodStart DateTime            @map("next_period_start") @db.Date
+  status          RecurringRuleStatus @default(active)
+  endedAt         DateTime?           @map("ended_at") @db.Timestamptz(3)
+  endedBy         String?             @map("ended_by") @db.Uuid
+  endReason       String?             @map("end_reason")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?             @map("created_by") @db.Uuid
+  updatedAt       DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?             @map("updated_by") @db.Uuid
+
+  party      Party     @relation(fields: [partyId], references: [id])
+  assignedTo Employee? @relation("RecurringRuleAssignee", fields: [assignedToId], references: [id])
+  invoices   Invoice[]
+
+  @@index([status, nextPeriodStart])
+  @@map("recurring_billing_rules")
+}
+
+/// Reminder history: one row per invoice, reminder day and audience (unique), so a reminder is never sent twice.
+model InvoiceReminder {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId       String           @map("invoice_id") @db.Uuid
+  offsetDays      Int              @map("offset_days")
+  audience        ReminderAudience
+  scheduledFor    DateTime         @map("scheduled_for") @db.Date
+  status          ReminderStatus   @default(scheduled)
+  /// Why it was skipped (paid, cancelled, customer emails off...).
+  reason          String?
+  sentAt          DateTime?        @map("sent_at") @db.Timestamptz(3)
+  notificationId  String?          @map("notification_id") @db.Uuid
+  customerEmailId String?          @map("customer_email_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([invoiceId, offsetDays, audience])
+  @@index([status, scheduledFor])
+  @@map("invoice_reminders")
+}
+
+/// Emails to customers (the invoice itself and reminders), sent by a worker with retries. Unique per dedupe key.
+model BillingCustomerEmail {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId      String              @map("invoice_id") @db.Uuid
+  /// invoice or reminder
+  kind           String
+  reminderOffset Int?                @map("reminder_offset")
+  toAddress      String              @map("to_address")
+  dedupeKey      String              @unique @map("dedupe_key")
+  status         CustomerEmailStatus @default(pending)
+  attempts       Int                 @default(0)
+  nextAttemptAt  DateTime            @map("next_attempt_at") @db.Timestamptz(3)
+  sentAt         DateTime?           @map("sent_at") @db.Timestamptz(3)
+  lastError      String?             @map("last_error")
+  note           String?
+  createdBy      String?             @map("created_by") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([invoiceId])
+  @@map("billing_customer_emails")
+}
+
+/// Aceva's own tools and services (Apollo, domains, mailboxes, AI tools, hosting, APIs...).
+model Subscription {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// SUB-2026-0001, from a database sequence.
+  number          String             @unique @default(dbgenerated("((('SUB-'::text || to_char(now(), 'YYYY'::text)) || '-'::text) || lpad((nextval('subscription_seq'::regclass))::text, 4, '0'::text))"))
+  vendor          String
+  product         String
+  category        String
+  /// The person responsible: renewal alerts go to them.
+  ownerId         String             @map("owner_id") @db.Uuid
+  plan            String
+  cost            Decimal            @db.Decimal(14, 2)
+  currency        Currency
+  period          SubscriptionPeriod
+  renewalDate     DateTime           @map("renewal_date") @db.Date
+  alertDaysBefore Int                @map("alert_days_before")
+  seats           Int?
+  usageMetric     String?            @map("usage_metric")
+  usageUnit       String?            @map("usage_unit")
+  usageLimit      Decimal?           @map("usage_limit") @db.Decimal(18, 4)
+  notes           String?
+  status          SubscriptionStatus @default(active)
+  cancelledAt     DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?            @map("created_by") @db.Uuid
+  updatedAt       DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?            @map("updated_by") @db.Uuid
+
+  owner         Employee                   @relation("SubscriptionOwner", fields: [ownerId], references: [id])
+  renewalEvents SubscriptionRenewalEvent[]
+  usage         UsageSnapshot[]
+  costs         SubscriptionCost[]
+
+  @@index([status, renewalDate])
+  @@map("subscriptions")
+}
+
+/// Renewal alerts and decisions (renewed, changed, cancelled). Insert-only. One alert per subscription and renewal date.
+model SubscriptionRenewalEvent {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String           @map("subscription_id") @db.Uuid
+  kind           RenewalEventKind
+  /// The renewal date this alert or decision is about.
+  renewalDate    DateTime         @map("renewal_date") @db.Date
+  newRenewalDate DateTime?        @map("new_renewal_date") @db.Date
+  oldCost        Decimal?         @map("old_cost") @db.Decimal(14, 2)
+  newCost        Decimal?         @map("new_cost") @db.Decimal(14, 2)
+  oldPlan        String?          @map("old_plan")
+  newPlan        String?          @map("new_plan")
+  note           String?
+  actorId        String?          @map("actor_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId])
+  @@map("subscription_renewal_events")
+}
+
+/// A usage reading. Entered by hand (no provider API is connected yet); a cost on it is always an estimate. Insert-only.
+model UsageSnapshot {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  readingDate    DateTime @map("reading_date") @db.Date
+  used           Decimal  @db.Decimal(18, 4)
+  /// The limit at the time of the reading (defaults to the subscription's limit).
+  limit          Decimal? @db.Decimal(18, 4)
+  estimatedCost  Decimal? @map("estimated_cost") @db.Decimal(14, 2)
+  /// manual only for now; api is reserved for a provider connection.
+  source         String   @default("manual")
+  note           String?
+  enteredBy      String?  @map("entered_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId, readingDate])
+  @@map("usage_snapshots")
+}
+
+/// What a subscription cost in a month. Estimated unless it is backed by a Module 9 bill or the provider's invoice reference.
+model SubscriptionCost {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  /// YYYY-MM
+  month          String
+  amount         Decimal  @db.Decimal(14, 2)
+  currency       Currency
+  estimated      Boolean
+  billId         String?  @map("bill_id") @db.Uuid
+  reference      String?
+  note           String?
+  enteredBy      String?  @map("entered_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy      String?  @map("updated_by") @db.Uuid
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([subscriptionId, month])
+  @@map("subscription_costs")
 }

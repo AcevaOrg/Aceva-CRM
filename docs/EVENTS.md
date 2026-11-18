@@ -102,16 +102,17 @@ first registered. Details: docs/CYCLE3-FOUNDATION.md.
 |---|---|
 | `notifications` | `leave.requested`, `leave.decided`, `attendance.correction.decided`, `payroll.run.ready`, `payslip.issued`, `finance.period.reopened` |
 | Final settlements (M8, uses `processed_at`) | `payroll.final_settlement.requested` |
+| `billing` (M13) | `ledger.entry.posted` (an approved invoice entry queues its client email once; a posted payment makes an invoice paid: `billing.invoice.paid` once), `sales.deal.won_confirmed` (one handover per deal: a draft for the exact, unique client, or Finance chooses when several clients share the name) |
 
 ## Cycle 3: Modules 13 to 15, version 1 (defined in the shared foundation; produced when each module is built)
 
 | Type | From | When | Payload |
 |---|---|---|---|
-| `sales.deal.won_confirmed` | M15 | A Won deal is confirmed (the Director until there is a sales manager) | `dealNumber`, `ownerEmpId`, `confirmedByEmpId` |
-| `billing.invoice.issued` | M13 | An invoice is issued (its ledger entry waits for approval in M9) | `invoiceNumber`, `dueDate`, `sourceDealNumber` |
-| `billing.invoice.paid` | M13 | An invoice is fully paid | `invoiceNumber`, `paidOn`, `sourceDealNumber`, `firstForClient` |
-| `billing.invoice.overdue` | M13 | An invoice passes its due date unpaid | `invoiceNumber`, `dueDate`, `daysOverdue` |
-| `billing.subscription.renewal_due` | M13 | A subscription or domain renews soon | `subscriptionNumber`, `renewsOn`, `ownerEmpId` |
+| `sales.deal.won_confirmed` | M15 | A Won deal is confirmed (the Director until there is a sales manager) | `dealNumber`, `ownerEmpId`, `confirmedByEmpId`, `client` (`partyId` or `name`, `email`, `country`), `service`, `value`, `currency` (refined with M13; still produced by nobody until M15) |
+| `billing.invoice.issued` | M13 (produced) | An invoice is issued (its ledger entry waits for approval in M9) | `invoiceNumber`, `dueDate`, `sourceDealNumber` |
+| `billing.invoice.paid` | M13 (produced) | An invoice is fully paid (its last payment is posted), once per invoice | `invoiceNumber`, `paidOn`, `sourceDealNumber`, `firstForClient` |
+| `billing.invoice.overdue` | M13 (produced) | An invoice passes its due date unpaid, once per invoice (daily run) | `invoiceNumber`, `dueDate`, `daysOverdue` |
+| `billing.subscription.renewal_due` | M13 (produced) | A subscription or domain enters its alert window, once per renewal date | `subscriptionNumber`, `renewsOn`, `ownerEmpId` |
 | `sales.commission.approved` | M15 | The Director approves a commission line | `dealNumber`, `empId`, `approvedByEmpId`, `payrollMonth` |
 | `comms.mention` | M14 | Someone is mentioned (never the message text) | `conversationId`, `messageId`, `mentionedEmpId`, `byEmpId` |
 | `comms.announcement.published` | M14 | An announcement is published | `announcementId`, `byEmpId`, `requiresAck` |
