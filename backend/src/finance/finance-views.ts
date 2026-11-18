@@ -6,7 +6,7 @@ import { dec, money } from '../common/money';
 import { dayOf } from '../common/pakistan-time';
 import type { JournalEntryStatus, JournalSource } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { labelFor, levelCovers, requiredApprovalLevel, type Tier } from './approval-tier';
+import { DIRECTOR_LEVEL, labelFor, levelCovers, requiredApprovalLevel } from './approval-tier';
 
 export type { EntryView };
 
@@ -67,8 +67,6 @@ export class FinanceViews {
     }
     const people = await this.prisma.employee.findMany({ where: { id: { in: [...peopleIds] } }, select: { id: true, empId: true, fullName: true, level: { select: { number: true } } } });
     const person = new Map(people.map((p) => [p.id, p]));
-    const limits = await this.prisma.approvalLimit.findMany();
-    const tiers: Tier[] = limits.map((l) => ({ approverLevel: l.approverLevel, maxAmount: l.maxAmount === null ? null : dec(l.maxAmount), label: l.label }));
     const settings = await this.prisma.financeSetting.findUnique({ where: { id: 1 } });
     const stepUpAbove = settings ? dec(settings.stepUpAbove) : dec(0);
     const mayApprove = await this.permissions.can(actor.id, 'finance.entry_approve');
@@ -81,7 +79,7 @@ export class FinanceViews {
         const maker = person.get(r.makerId);
         let requiredLevel = r.requiredLevel;
         if (requiredLevel === null && r.status === 'draft') {
-          const t = requiredApprovalLevel(dec(r.totalBase), tiers, r.lines.some((l) => l.account.requiresOwnerApproval), maker?.level.number ?? null);
+          const t = requiredApprovalLevel(maker?.level.number ?? null);
           requiredLevel = t.ok ? t.level : null;
         }
         const total = r.lines.reduce((s, l) => s.plus(l.debit), dec(0));
@@ -101,9 +99,9 @@ export class FinanceViews {
           totalBase: money(r.totalBase),
           status: shownStatus(r.status, r.reversedBy[0]?.status),
           requiredLevel,
-          requiredApproverLabel: requiredLevel ? labelFor(requiredLevel, tiers) : null,
+          requiredApproverLabel: requiredLevel ? labelFor(requiredLevel) : null,
           needsStepUp: dec(r.totalBase).gt(stepUpAbove),
-          canApprove: mayApprove && r.status === 'pending_approval' && r.makerId !== actor.id && levelCovers(actor.levelNumber, r.requiredLevel ?? 1),
+          canApprove: mayApprove && r.status === 'pending_approval' && r.makerId !== actor.id && levelCovers(actor.levelNumber, r.requiredLevel ?? DIRECTOR_LEVEL),
           makerEmpId: maker?.empId ?? '',
           makerName: maker?.fullName ?? '',
           createdAt: r.createdAt.toISOString(),

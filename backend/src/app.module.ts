@@ -9,7 +9,6 @@ import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
-import { JobsModule } from './jobs/jobs.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { FinanceModule } from './finance/finance.module';
 import { PayrollModule } from './payroll/payroll.module';
@@ -28,7 +27,6 @@ import { TasksModule } from './tasks/tasks.module';
     CommonModule,
     SettingsModule,
     ScheduleModule.forRoot(),
-    JobsModule,
     AccessModule,
     AuthModule,
     HealthModule,

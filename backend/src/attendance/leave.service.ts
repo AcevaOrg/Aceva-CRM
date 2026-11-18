@@ -297,6 +297,9 @@ export class LeaveService {
     const days = await this.checkDates(actor, type, input);
     const today = this.today();
     const plan = await this.plan(actor, today);
+    // Only the top of the company (the Owner) has nobody above. For anyone else "no approver" means the routing found nobody who may
+    // decide right now (for example a stand-in without approval rights): the request is refused, never silently approved.
+    if (!plan.step1.approver && actor.levelNumber !== 1) throw conflict('no_approver', 'Nobody can approve leave right now. Ask the Director.');
     const year = leaveYearOf(input.from);
 
     const id = await withDbRules(() =>

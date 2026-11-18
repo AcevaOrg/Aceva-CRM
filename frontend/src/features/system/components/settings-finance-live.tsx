@@ -1,16 +1,17 @@
 "use client";
 /**
- * Approval limits in LIVE mode (m9), read from and saved to the server (plan s.13): a journal entry is approved by a
- * different person at the level its PKR amount needs. The most senior tier (the Owner, level 1) has no upper limit and
- * approves every share capital and loan entry. The "confirm again" amount is in the same section. Every change asks for a
- * reason and for the password (and code) again; the server checks both and keeps the change in the audit log.
- * Only the Owner edits (finance.authority_manage, decision D22); everyone else with finance access sees them read-only.
+ * Finance approval settings in LIVE mode (m9), read from and saved to the server (decision D26): the Director approves every
+ * journal entry whatever its amount, so there are no approval tiers. Two amounts remain: the "confirm again" amount (approving
+ * an entry above it asks for the password and code again, plan s.16) and the amount above which the Owner is told about an
+ * entry (the Owner only views; capital and loan entries are always reported). Every change asks for a reason and for the
+ * password (and code) again; the server checks both and keeps the change in the audit log.
+ * Only the Director edits (finance.authority_manage); everyone else with finance access sees them read-only.
  */
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Save } from "lucide-react";
-import type { ApprovalLimitView, FinanceSettingsView } from "@aceva/contracts";
+import type { FinanceSettingsView } from "@aceva/contracts";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
@@ -23,43 +24,31 @@ import { NumberInput } from "./settings-kit";
 import { SettingRow } from "./settings-sections-work";
 
 const KEY = ["m9-settings"] as const;
-const WHO: Record<number, string> = { 1: "Owner", 2: "CEO", 3: "Director" };
 
 export function LiveApprovalLimitsSection() {
-  const limits = useQuery({ queryKey: [...KEY, "limits"], queryFn: () => http.get<ApprovalLimitView[]>("/settings/approval-limits") });
   const finance = useQuery({ queryKey: [...KEY, "finance"], queryFn: () => http.get<FinanceSettingsView>("/settings/finance") });
-  if (limits.isError) return <ErrorState error={limits.error} onRetry={() => limits.refetch()} />;
   if (finance.isError) return <ErrorState error={finance.error} onRetry={() => finance.refetch()} />;
-  if (!limits.data || !finance.data) return <Skeleton className="h-80 rounded-xl" />;
-  return <LimitsForm key={JSON.stringify([limits.data, finance.data])} limits={limits.data} finance={finance.data} />;
+  if (!finance.data) return <Skeleton className="h-60 rounded-xl" />;
+  return <FinanceForm key={JSON.stringify(finance.data)} finance={finance.data} />;
 }
 
-function LimitsForm({ limits, finance }: { limits: ApprovalLimitView[]; finance: FinanceSettingsView }) {
-  const can = useCan("finance.authority_manage"); // decision D22: the Owner only; the server checks it too
+function FinanceForm({ finance }: { finance: FinanceSettingsView }) {
+  const can = useCan("finance.authority_manage"); // decision D26: the Director only; the server checks it too
   const qc = useQueryClient();
   const askReason = useReason();
   const stepUp = useStepUp();
-  const capped = limits.filter((l) => l.maxAmount !== null).sort((a, b) => b.approverLevel - a.approverLevel);
-  const [draft, setDraft] = React.useState<Record<number, number>>(() => Object.fromEntries(capped.map((l) => [l.approverLevel, Number(l.maxAmount)])));
   const [stepUpAbove, setStepUpAbove] = React.useState(() => Number(finance.stepUpAbove));
+  const [ownerNotifyAbove, setOwnerNotifyAbove] = React.useState(() => Number(finance.ownerNotifyAbove));
 
-  const increasing = capped.every((l, i) => i === 0 || draft[l.approverLevel] > draft[capped[i - 1].approverLevel]);
-  const valid = capped.every((l) => draft[l.approverLevel] > 0) && increasing && stepUpAbove >= 0;
-  const limitsChanged = capped.some((l) => draft[l.approverLevel] !== Number(l.maxAmount));
-  const financeChanged = stepUpAbove !== Number(finance.stepUpAbove);
+  const valid = stepUpAbove >= 0 && ownerNotifyAbove >= 0;
+  const changed = stepUpAbove !== Number(finance.stepUpAbove) || ownerNotifyAbove !== Number(finance.ownerNotifyAbove);
 
   const save = async () => {
-    const reason = await askReason({ title: "Change approval rules", description: "Approval rules protect the ledger. Your reason is kept in the audit log.", confirmLabel: "Continue" });
+    const reason = await askReason({ title: "Change finance approval settings", description: "These settings protect the ledger. Your reason is kept in the audit log.", confirmLabel: "Continue" });
     if (!reason) return;
-    if (!(await stepUp({ action: "Change approval rules", detail: "Approval limits and the confirm-again amount need your password (and code) again." }))) return;
+    if (!(await stepUp({ action: "Change finance approval settings", detail: "The confirm-again amount and the Owner notice amount need your password (and code) again." }))) return;
     try {
-      if (limits.length && limitsChanged) {
-        await http.put("/settings/approval-limits", {
-          reason,
-          limits: limits.map((l) => ({ approverLevel: l.approverLevel, label: l.label, maxAmount: l.maxAmount === null ? null : String(draft[l.approverLevel]) })),
-        });
-      }
-      if (financeChanged) await http.put("/settings/finance", { reason, stepUpAbove: String(stepUpAbove), financeYearStartMonth: finance.financeYearStartMonth });
+      await http.put("/settings/finance", { reason, stepUpAbove: String(stepUpAbove), ownerNotifyAbove: String(ownerNotifyAbove), financeYearStartMonth: finance.financeYearStartMonth });
       toast.success("Saved", { description: "Logged in the audit trail." });
       await qc.invalidateQueries({ queryKey: KEY });
       await qc.invalidateQueries({ queryKey: ["ledger"] });
@@ -68,43 +57,33 @@ function LimitsForm({ limits, finance }: { limits: ApprovalLimitView[]; finance:
     }
   };
 
-  const sorted = [...limits].sort((a, b) => b.approverLevel - a.approverLevel);
   return (
     <Card>
       <CardContent className="space-y-4 pt-6">
-        <div className="grid gap-2 sm:grid-cols-3">
-          {sorted.map((l, i) => {
-            const below = i > 0 ? sorted[i - 1] : null;
-            const from = below && below.maxAmount !== null ? `Above ${formatMoneyCompact(draft[below.approverLevel] ?? Number(below.maxAmount))}` : "Any amount";
-            return (
-              <div key={l.approverLevel} className="rounded-xl border border-border bg-muted/40 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Level {l.approverLevel}</p>
-                <p className="mt-1 font-semibold">{WHO[l.approverLevel] ?? l.label}</p>
-                <p className="text-[12.5px] text-muted-foreground">
-                  {l.maxAmount === null
-                    ? `${i > 0 ? from : "Any amount"} and every share capital or loan entry. No upper limit.`
-                    : `${i === 0 ? "Up to" : `${from}, up to`} ${formatMoneyCompact(draft[l.approverLevel])}.`}
-                </p>
-              </div>
-            );
-          })}
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Level 2</p>
+            <p className="mt-1 font-semibold">Director</p>
+            <p className="text-[12.5px] text-muted-foreground">Approves every journal entry, whatever its amount, including capital and loan entries.</p>
+          </div>
+          <div className="rounded-xl border border-border bg-muted/40 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Level 1</p>
+            <p className="mt-1 font-semibold">CEO / Founder / Owner</p>
+            <p className="text-[12.5px] text-muted-foreground">Only views. Approves just the entries the Director made, and is told about large and capital or loan entries.</p>
+          </div>
         </div>
-        {capped.map((l) => (
-          <SettingRow key={l.approverLevel} label={`${WHO[l.approverLevel] ?? l.label} approves up to`} hint="PKR, total of the entry. A more senior level always has a higher limit.">
-            <NumberInput value={draft[l.approverLevel]} onChange={(n) => setDraft((d) => ({ ...d, [l.approverLevel]: n }))} suffix="PKR" step={10000} disabled={!can} />
-          </SettingRow>
-        ))}
-        <SettingRow label="Confirm again above" hint="Approving an entry above this amount asks for the password (and code) again (plan s.16).">
+        <SettingRow label="Confirm again above" hint={`Approving an entry above this amount asks for the password (and code) again (plan s.16). Now ${formatMoneyCompact(Number(finance.stepUpAbove))}.`}>
           <NumberInput value={stepUpAbove} onChange={setStepUpAbove} suffix="PKR" step={10000} disabled={!can} />
         </SettingRow>
-        <p className="text-[12.5px] text-muted-foreground">
-          Nobody approves their own entry. If the approver at the needed level made it, it goes one level up. The Owner tier has no limit and cannot be removed.
-        </p>
-        {!valid && <p className="text-[12.5px] text-danger">Each limit must be more than zero, and a more senior level must have a higher limit.</p>}
+        <SettingRow label="Tell the Owner above" hint={`An entry above this amount is reported to the Owner (view only; it does not wait for the Owner). Now ${formatMoneyCompact(Number(finance.ownerNotifyAbove))}.`}>
+          <NumberInput value={ownerNotifyAbove} onChange={setOwnerNotifyAbove} suffix="PKR" step={50000} disabled={!can} />
+        </SettingRow>
+        <p className="text-[12.5px] text-muted-foreground">Nobody approves their own entry. An entry the Director made goes one level up, to the Owner.</p>
+        {!valid && <p className="text-[12.5px] text-danger">Each amount must be zero or more.</p>}
       </CardContent>
       {can && (
         <CardFooter className="justify-end">
-          <Button onClick={save} disabled={!valid || (!limitsChanged && !financeChanged)}>
+          <Button onClick={save} disabled={!valid || !changed}>
             <Save /> Save changes
           </Button>
         </CardFooter>

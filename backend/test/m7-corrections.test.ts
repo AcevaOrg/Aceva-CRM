@@ -15,7 +15,6 @@ const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 const DEV1 = 'ACV-0006';
 const DEV2 = 'ACV-0007';
-const DEV3 = 'ACV-0008';
 const SALES1 = 'ACV-0009';
 const FINANCE = 'ACV-0010';
 const SQA1 = 'ACV-0011';
@@ -100,10 +99,12 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
     const self = await (await as(CTO)).post(`${API}/attendance/corrections/${ctoCorrection}/approve`).send({}).expect(403);
     expect(self.body.code).toBe('self_approval');
     // D23: the person's own manager (the CTO) and the levels above the Director are not the approver either
-    for (const who of [CTO, FINANCE, CEO, OWNER]) {
+    for (const who of [CTO, CEO, OWNER]) {
       const res = await (await as(who)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(403);
       expect(res.body.code).toBe('not_routed_approver');
     }
+    // Finance holds no correction approval at all (the final structure: Finance prepares, never approves)
+    expect((await (await as(FINANCE)).post(`${API}/attendance/corrections/${dev1Correction}/approve`).send({}).expect(403)).body.code).toBe('forbidden');
   });
 
   it('the manager sees it view only; the Director sees it in the team list and approves: corrected time applied, lateness recomputed, original kept', async () => {
@@ -161,26 +162,27 @@ describe('M7 corrections: deciding (the routed approver only, never yourself)', 
     await (await as(CTO)).post(`${API}/attendance/corrections/${again.body.id}/cancel`).send({}).expect(409);
   });
 
-  it("the Director's own correction goes to the CEO", async () => {
+  it("the Director's own correction goes to the Owner", async () => {
     const res = await correction(DIRECTOR, { date: '2027-04-05', checkIn: '09:00', checkOut: '17:00', reason: 'Board meeting off-site' }, 201);
     expect(res.body.approverEmpId).toBe(CEO);
-    await (await as(OWNER)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(403);
     await (await as(CEO)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(200);
   });
 
-  it("the Director's stand-in decides while the Director is away; the away Director and the person's manager cannot", async () => {
-    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(FINANCE), startsOn: new Date('2027-04-06T00:00:00.000Z'), endsOn: new Date('2027-04-09T00:00:00.000Z'), reason: 'Director on leave' } });
-    const res = await correction(DEV3, { date: '2027-04-05', checkIn: '09:00', reason: 'Worked from a cafe, VPN down' }, 201);
-    expect(res.body.approverEmpId).toBe(FINANCE);
-    for (const who of [DIRECTOR, CTO]) {
-      const refused = await (await as(who)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(403);
+  it("the Director's stand-in decides while the Director is away; the away Director cannot", async () => {
+    // The stand-in must hold correction approval (the CTO does; Finance holds none). SALES1 reports to the Director, not to the CTO.
+    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(CTO), startsOn: new Date('2027-04-06T00:00:00.000Z'), endsOn: new Date('2027-04-09T00:00:00.000Z'), reason: 'Director on leave' } });
+    try {
+      const res = await correction(SALES1, { date: '2027-04-05', checkIn: '09:00', reason: 'Worked from a cafe, VPN down' }, 201);
+      expect(res.body.approverEmpId).toBe(CTO);
+      const refused = await (await as(DIRECTOR)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(403);
       expect(refused.body.code).toBe('not_routed_approver');
+      const list = await (await as(CTO)).get(`${API}/attendance/corrections?scope=team`).expect(200);
+      expect(list.body.items.find((c: { id: string }) => c.id === res.body.id)).toMatchObject({ canDecide: true });
+      const decided = await (await as(CTO)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(200);
+      expect(decided.body).toMatchObject({ status: 'approved', decidedBy: CTO });
+    } finally {
+      await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } }); // the Director is back
     }
-    const list = await (await as(FINANCE)).get(`${API}/attendance/corrections?scope=team`).expect(200);
-    expect(list.body.items.map((c: { id: string }) => c.id)).toEqual([res.body.id]); // only what is routed to them
-    const decided = await (await as(FINANCE)).post(`${API}/attendance/corrections/${res.body.id}/approve`).send({}).expect(200);
-    expect(decided.body).toMatchObject({ status: 'approved', decidedBy: FINANCE });
-    await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } }); // the Director is back
   });
 });
 
@@ -201,7 +203,7 @@ describe('M7 attendance views: hierarchy scope', () => {
     expect(rows.map((r) => r.empId).sort()).toEqual(['ACV-0006', 'ACV-0007', 'ACV-0008', 'ACV-0011', 'ACV-0013']);
     expect(rows.find((r) => r.empId === DEV1)!.state).toBe('checked_out');
     expect(rows.find((r) => r.empId === DEV2)!.state).toBe('not_in');
-    expect((await (await as(FINANCE)).get(`${API}/attendance/team`).expect(200)).body.rows).toEqual([]);
+    await (await as(FINANCE)).get(`${API}/attendance/team`).expect(403); // Finance has nobody to manage and no team permission
     const director = await (await as(DIRECTOR)).get(`${API}/attendance/team/summary?month=2027-04`).expect(200);
     expect(director.body.rows.map((r: { empId: string }) => r.empId)).toContain(SALES1);
     expect(director.body.rows.map((r: { empId: string }) => r.empId)).not.toContain(DIRECTOR);

@@ -209,7 +209,7 @@ describe('M9 transfers between bank accounts', () => {
     await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1100'], date: '2026-09-20', amount: '10' }).expect(400);
     expect((await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00' }).expect(400)).body.code).toBe('to_amount_required');
     const e = (await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00', toAmount: '1000.00' }).expect(201)).body;
-    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 3 }); // D25: within the Director's limit
+    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 2 }); // D26: the Director approves any amount
     expect(e.lines.map((l: { accountCode: string; debit: string; baseDebit: string; baseCredit: string }) => [l.accountCode, l.debit, l.baseDebit, l.baseCredit])).toEqual([
       ['1110', '1000.00', '278000.00', '0.00'],
       ['1100', '0.00', '0.00', '278000.00'],

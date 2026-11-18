@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  approvalLimitsSchema,
   createAccountSchema,
+  financeSettingsSchema,
   createBillSchema,
   createEntrySchema,
   createInvoiceSchema,
@@ -11,70 +11,37 @@ import {
   reverseEntrySchema,
 } from '@aceva/contracts';
 import { dec } from '../common/money';
-import { labelFor, levelCovers, requiredApprovalLevel, type Tier } from './approval-tier';
+import { labelFor, levelCovers, ownerNotice, requiredApprovalLevel } from './approval-tier';
 import { csvCell } from './finance-export.service';
 import { parseCsv, parseStatement } from './statement-csv';
 
-/** Pure M9 rules: approval tiers, statement CSV, CSV export cells, and the shared request schemas. */
-const TIERS: Tier[] = [
-  { approverLevel: 3, maxAmount: dec(50000), label: 'Director (plan example limit)' },
-  { approverLevel: 2, maxAmount: dec(500000), label: 'CEO (plan example limit)' },
-  { approverLevel: 1, maxAmount: null, label: 'Owner' },
-];
-
-describe('approval tier (plan section 13)', () => {
-  it('picks the tier whose limit covers the PKR total', () => {
-    expect(requiredApprovalLevel(dec('50000.00'), TIERS, false, 4)).toEqual({ ok: true, level: 3, label: 'Director' });
-    expect(requiredApprovalLevel(dec('50000.01'), TIERS, false, 4)).toMatchObject({ level: 2, label: 'CEO' });
-    expect(requiredApprovalLevel(dec('500000.00'), TIERS, false, 4)).toMatchObject({ level: 2 });
-    expect(requiredApprovalLevel(dec('500000.01'), TIERS, false, 4)).toMatchObject({ level: 1 });
+/** Pure M9 rules: who approves an entry, statement CSV, CSV export cells, and the shared request schemas. */
+describe('who approves an entry (decision D26)', () => {
+  it('the Director approves every entry made by Level 3, 4 or 5, whatever the amount', () => {
+    for (const makerLevel of [3, 4, 5]) expect(requiredApprovalLevel(makerLevel)).toEqual({ ok: true, level: 2, label: 'Director' });
+    expect(requiredApprovalLevel(null)).toEqual({ ok: true, level: 2, label: 'Director' });
   });
 
-  it('capital and loan accounts always need the Owner', () => {
-    expect(requiredApprovalLevel(dec('10'), TIERS, true, 4)).toMatchObject({ level: 1 });
+  it('an entry the Director made goes one level up, to the Owner; an entry the Owner made has nobody above', () => {
+    expect(requiredApprovalLevel(2)).toEqual({ ok: true, level: 1, label: 'CEO / Founder / Owner' });
+    expect(requiredApprovalLevel(1)).toEqual({ ok: false, reason: 'no_eligible_approver' });
   });
 
-  it('goes one level up when the maker is at the required level or above it', () => {
-    expect(requiredApprovalLevel(dec('100'), TIERS, false, 3)).toMatchObject({ level: 2 });
-    expect(requiredApprovalLevel(dec('100'), TIERS, false, 2)).toMatchObject({ level: 1 });
-    expect(requiredApprovalLevel(dec('600000'), TIERS, false, 2)).toMatchObject({ level: 1 });
-    expect(requiredApprovalLevel(dec('100'), TIERS, false, 1)).toEqual({ ok: false, reason: 'no_eligible_approver' });
-    expect(requiredApprovalLevel(dec('100'), TIERS, true, 1)).toEqual({ ok: false, reason: 'no_eligible_approver' });
-  });
-
-  it('without a tier covering the amount there is no approver', () => {
-    expect(requiredApprovalLevel(dec('100'), TIERS.slice(0, 1), false, 4)).toMatchObject({ level: 3 });
-    expect(requiredApprovalLevel(dec('60000'), TIERS.slice(0, 1), false, 4)).toEqual({ ok: false, reason: 'no_tier' });
-  });
-});
-
-describe('decision D25: the Director approves, the CEO only what the Director made', () => {
-  const D25: Tier[] = [
-    { approverLevel: 3, maxAmount: dec(5000000), label: 'Director (default limit, D25)' },
-    { approverLevel: 1, maxAmount: null, label: 'Owner (above the Director limit; all capital and loan entries)' },
-  ];
-
-  it('the Director approves up to the limit, the Owner above it and capital and loans', () => {
-    expect(requiredApprovalLevel(dec('5000000.00'), D25, false, 4)).toEqual({ ok: true, level: 3, label: 'Director' });
-    expect(requiredApprovalLevel(dec('5000000.01'), D25, false, 4)).toEqual({ ok: true, level: 1, label: 'Owner' });
-    expect(requiredApprovalLevel(dec('10'), D25, true, 4)).toMatchObject({ level: 1 });
-  });
-
-  it('an entry the Director made needs the CEO (level 2, which has no tier of its own)', () => {
-    expect(requiredApprovalLevel(dec('100'), D25, false, 3)).toEqual({ ok: true, level: 2, label: 'CEO' });
-    expect(requiredApprovalLevel(dec('6000000'), D25, false, 3)).toMatchObject({ level: 1 });
-    expect(labelFor(2, D25)).toBe('CEO');
-  });
-
-  it('an entry is approved at exactly its level, or by the Owner; the CEO never takes over the approvals of the Director', () => {
-    expect(levelCovers(3, 3)).toBe(true); // the Director
-    expect(levelCovers(2, 3)).toBe(false); // the CEO only views these
-    expect(levelCovers(2, 2)).toBe(true); // an entry the Director made
-    expect(levelCovers(3, 2)).toBe(false);
-    expect(levelCovers(2, 1)).toBe(false);
-    expect(levelCovers(1, 3)).toBe(true); // the Owner may approve any entry
-    expect(levelCovers(1, 2)).toBe(true);
+  it('an entry is approved at exactly its level: the Owner never takes over the Director' + "'" + 's approvals', () => {
+    expect(levelCovers(2, 2)).toBe(true);
     expect(levelCovers(1, 1)).toBe(true);
+    expect(levelCovers(1, 2)).toBe(false); // the Owner only views what the Director approves
+    expect(levelCovers(2, 1)).toBe(false);
+    expect(levelCovers(3, 2)).toBe(false);
+    expect(labelFor(2)).toBe('Director');
+    expect(labelFor(1)).toBe('CEO / Founder / Owner');
+  });
+
+  it('the Owner is told about large entries and capital or loan entries, and about nothing else', () => {
+    expect(ownerNotice(dec('500000.00'), dec('500000'), false)).toBeNull();
+    expect(ownerNotice(dec('500000.01'), dec('500000'), false)).toBe('large_amount');
+    expect(ownerNotice(dec('10'), dec('500000'), true)).toBe('capital_or_loan');
+    expect(ownerNotice(dec('600000'), dec('500000'), true)).toBe('capital_or_loan');
   });
 });
 
@@ -153,8 +120,10 @@ describe('M9 request schemas (packages/contracts/src/ledger.ts)', () => {
     expect(reverseEntrySchema.safeParse({ reason: 'no' }).success).toBe(false);
   });
 
-  it('approval limits: amounts are money strings or null', () => {
-    expect(approvalLimitsSchema.safeParse({ reason: 'Board decision', limits: [{ approverLevel: 3, maxAmount: '50000', label: 'Director' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] }).success).toBe(true);
-    expect(approvalLimitsSchema.safeParse({ reason: 'Board decision', limits: [{ approverLevel: 6, maxAmount: null, label: 'X' }] }).success).toBe(false);
+  it('finance settings: both amounts are money strings and the year starts in a real month', () => {
+    const ok = { stepUpAbove: '50000', ownerNotifyAbove: '500000', financeYearStartMonth: 7, reason: 'Board decision' };
+    expect(financeSettingsSchema.safeParse(ok).success).toBe(true);
+    expect(financeSettingsSchema.safeParse({ ...ok, ownerNotifyAbove: 'lots' }).success).toBe(false);
+    expect(financeSettingsSchema.safeParse({ ...ok, financeYearStartMonth: 13 }).success).toBe(false);
   });
 });

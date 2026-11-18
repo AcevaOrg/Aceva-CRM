@@ -2288,22 +2288,6 @@ model ExchangeRate {
   @@map("exchange_rates")
 }
 
-/// Approval tiers: an entry whose PKR total is up to max_amount needs an approver at approver_level or higher (a lower number).
-/// The seeded rows are the plan's EXAMPLE limits (management sets the real amounts). Temporary home until Module 12.
-model ApprovalLimit {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  /// Null = no upper limit.
-  maxAmount     Decimal? @map("max_amount") @db.Decimal(14, 2)
-  approverLevel Int      @unique @map("approver_level")
-  label         String
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  createdBy     String?  @map("created_by") @db.Uuid
-  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  updatedBy     String?  @map("updated_by") @db.Uuid
-
-  @@map("approval_limits")
-}
-
 model FinancePeriod {
   /// 'YYYY-MM'
   month            String              @id
@@ -2608,6 +2592,8 @@ model FinanceSetting {
   id                    Int      @id @default(1)
   /// Approving an entry whose PKR total is above this asks for the password and code again ("large entries", plan section 16).
   stepUpAbove           Decimal  @map("step_up_above") @db.Decimal(14, 2)
+  /// Entries above this PKR total (and every capital or loan entry) are reported to the Owner, who only views (decision D26).
+  ownerNotifyAbove      Decimal  @default(500000) @map("owner_notify_above") @db.Decimal(14, 2)
   /// First month of the finance year (7 = July, Pakistan's normal tax year).
   financeYearStartMonth Int      @map("finance_year_start_month")
   updatedAt             DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)

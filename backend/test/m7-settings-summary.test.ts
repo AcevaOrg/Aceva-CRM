@@ -38,6 +38,8 @@ beforeAll(async () => {
   await t.ensureFixtures();
   CEO = 'ACV-0001';
   prisma = createTestPrisma();
+  // Module 5 seeds demo holidays (for example Eid on 17 May 2027); these tests count working days on their own calendar.
+  await prisma.holiday.deleteMany();
   as = m7Personas(t);
 
   const dev1 = await idOf(DEV1);
@@ -163,8 +165,8 @@ describe('M7 payroll port: the month numbers for Module 8', () => {
     expect(row).toMatchObject({ present: 4, late: 1, leave: 4.5, absent: 10, missedCheckouts: 1, workingDays: 19, avgCheckIn: '09:11', avgLoginGapMin: 5 });
     expect(team.body.rows.find((r: { empId: string }) => r.empId === DEV2)).toMatchObject({ workingDays: 6, absent: 6 });
     expect(team.body.rows.find((r: { empId: string }) => r.empId === joiner.empId)).toMatchObject({ workingDays: 10, absent: 10 });
-    // The finance officer has attendance.view_team but nobody below.
-    expect((await (await as('ACV-0010')).get(`${API}/attendance/team/summary?month=2027-02`).expect(200)).body.rows).toEqual([]);
+    // The finance officer manages nobody and holds no team permission (final structure).
+    await (await as('ACV-0010')).get(`${API}/attendance/team/summary?month=2027-02`).expect(403);
   });
 });
 

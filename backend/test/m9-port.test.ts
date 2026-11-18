@@ -61,7 +61,7 @@ describe('M9 LedgerPostingPort (used by Module 8)', () => {
     const entry = await prisma.journalEntry.findUniqueOrThrow({ where: { id: result.id }, include: { lines: { orderBy: { lineNo: 'asc' }, include: { account: true } }, events: true } });
     expect(entry.source).toBe('payroll');
     expect(entry.makerId).toBe(financeId);
-    expect(entry.requiredLevel).toBe(3); // Director tier (finance officer is level 4)
+    expect(entry.requiredLevel).toBe(2); // the Director approves (the finance officer is level 4)
     expect(entry.totalBase.toFixed(2)).toBe('40000.10');
     expect(entry.lines.map((l) => l.account.systemRole)).toEqual(['salary_expense', 'salary_payable', 'tax_payable']);
     expect(entry.lines[1].credit.toFixed(2)).toBe('39000.10');
@@ -133,9 +133,9 @@ describe('M9 LedgerPostingPort (used by Module 8)', () => {
     expect(await prisma.journalEntry.count({ where: { sourceRef: 'run-6' } })).toBe(0);
   });
 
-  it('an entry made by the Director goes one level up, to the CEO', async () => {
+  it('an entry made by the Director goes one level up, to the Owner', async () => {
     const r = await db.$transaction((tx) => port.createSystemEntry(tx, salaryEntry('run-7', '30000.00', { makerId: directorId })));
-    expect((await prisma.journalEntry.findUniqueOrThrow({ where: { id: r.id } })).requiredLevel).toBe(2);
+    expect((await prisma.journalEntry.findUniqueOrThrow({ where: { id: r.id } })).requiredLevel).toBe(1);
   });
 
   it('a payment line can use a specific bank account; entryStatuses and findBankAccount answer for Module 8', async () => {

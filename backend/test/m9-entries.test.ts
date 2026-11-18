@@ -71,7 +71,6 @@ describe('M9 finance routes are invisible to people without finance access', () 
     ['get', '/periods'],
     ['post', '/periods/2026-10/close'],
     ['post', '/periods/2026-10/reopen'],
-    ['get', '/settings/approval-limits'],
     ['get', '/settings/finance'],
     ['get', '/ledger/reports/trial-balance'],
     ['get', '/ledger/export?from=2026-10-01&to=2026-10-31'],
@@ -139,11 +138,11 @@ describe('M9 debits must equal credits', () => {
   });
 });
 
-describe('M9 approval tiers and maker-checker (plan section 13)', () => {
-  it('40,000: needs the Director (level 3); the Director approves it and it is posted, with history, audit and an event', async () => {
+describe('M9 who approves an entry, and maker-checker (decision D26)', () => {
+  it('40,000: needs the Director (level 2); the Director approves it and it is posted, with history, audit and an event', async () => {
     const e = await submitted('40000.00');
     expect(e.status).toBe('pending_approval');
-    expect(e.requiredLevel).toBe(3);
+    expect(e.requiredLevel).toBe(2);
     const inbox = await t.as(DIRECTOR).get(`${API}/journal-entries?awaitingMe=true`).expect(200);
     expect(inbox.body.items.map((x: { id: string }) => x.id)).toContain(e.id);
     const r = await approve(e.id, DIRECTOR).expect(200);
@@ -159,11 +158,11 @@ describe('M9 approval tiers and maker-checker (plan section 13)', () => {
     expect((await approve(e.id, DIRECTOR).expect(409)).body.code).toBe('invalid_transition');
   });
 
-  it('60,000: the Director approves it (D25, no CEO tier) after confirming again (above PKR 50,000); the CEO is refused', async () => {
+  it('60,000: the Director approves it after confirming again (above PKR 50,000); the Owner is refused', async () => {
     const e = await submitted('60000.00');
-    expect(e.requiredLevel).toBe(3);
+    expect(e.requiredLevel).toBe(2);
     await t.stepUp(CEO);
-    expect((await approve(e.id, CEO).expect(403)).body.code).toBe('approval_limit'); // the CEO only views
+    expect((await approve(e.id, CEO).expect(403)).body.code).toBe('approval_limit'); // the Owner only views
     const inbox = await t.as(CEO).get(`${API}/journal-entries?awaitingMe=true`).expect(200);
     expect(inbox.body.items.map((x: { id: string }) => x.id)).not.toContain(e.id);
     expect((await approve(e.id, DIRECTOR).expect(403)).body.code).toBe('step_up_required');
@@ -171,25 +170,32 @@ describe('M9 approval tiers and maker-checker (plan section 13)', () => {
     expect((await approve(e.id, DIRECTOR).expect(200)).body.status).toBe('posted');
   });
 
-  it('above the Director limit (PKR 5,000,000) and any capital or loan account need the Owner', async () => {
+  it('any amount needs only the Director; large entries and capital or loan entries are reported to the Owner, who only views', async () => {
+    const small = await submitted('100.00');
     const within = await submitted('600000.00');
-    expect(within.requiredLevel).toBe(3); // was the Owner before D25; now within the Director's limit
     const big = await submitted('5000000.01');
-    expect(big.requiredLevel).toBe(1);
-    await t.stepUp(CEO);
-    expect((await approve(big.id, CEO).expect(403)).body.code).toBe('approval_limit');
-    expect((await approve(big.id, DIRECTOR).expect(403)).body.code).toBe('approval_limit');
+    for (const e of [small, within, big]) expect(e.requiredLevel).toBe(2);
     await t.stepUp(OWNER);
-    expect((await approve(big.id, OWNER).expect(200)).body.status).toBe('posted');
+    expect((await approve(big.id, OWNER).expect(403)).body.code).toBe('approval_limit'); // the Owner only views
+    await t.stepUp(DIRECTOR);
+    expect((await approve(big.id, DIRECTOR).expect(200)).body.status).toBe('posted');
 
     const capital = await submitted('1000.00', pair('1000.00', '1100', '3100'));
-    expect(capital.requiredLevel).toBe(1);
-    expect((await approve(capital.id, DIRECTOR).expect(403)).body.code).toBe('approval_limit');
+    expect(capital.requiredLevel).toBe(2);
     const loan = await submitted('500.00', pair('500.00', '1100', '2500'));
-    expect(loan.requiredLevel).toBe(1);
+    expect(loan.requiredLevel).toBe(2);
+    expect((await approve(capital.id, DIRECTOR).expect(200)).body.status).toBe('posted');
+
+    // the Owner is told (audit log) about large and capital or loan entries, and about nothing else
+    const told = (number: string) => prisma.auditLog.count({ where: { action: 'finance.entry.owner_notified', targetId: number } });
+    expect(await told(small.number)).toBe(0);
+    expect(await told(within.number)).toBe(1);
+    expect(await told(big.number)).toBe(1);
+    expect(await told(capital.number)).toBe(1);
+    expect(await told(loan.number)).toBe(1);
   });
 
-  it('an entry made by the Director goes one level up (CEO), and the Director cannot approve their own entry', async () => {
+  it('an entry made by the Director goes one level up (the Owner), and the Director cannot approve their own entry', async () => {
     const director = await prisma.employee.findUniqueOrThrow({ where: { empId: DIRECTOR } });
     const db = t.app.get(PrismaService);
     const port = t.app.get(LedgerPostingPort);
@@ -208,7 +214,7 @@ describe('M9 approval tiers and maker-checker (plan section 13)', () => {
       }),
     );
     const view = (await t.as(DIRECTOR).get(`${API}/journal-entries/${r.id}`).expect(200)).body;
-    expect(view.requiredLevel).toBe(2);
+    expect(view.requiredLevel).toBe(1);
     expect(view.makerEmpId).toBe(DIRECTOR);
     expect(view.canApprove).toBe(false);
     expect((await approve(r.id, DIRECTOR).expect(403)).body.code).toBe('self_approval');

@@ -129,13 +129,15 @@ describe('seed data integrity', () => {
       (await prisma.rolePermission.findMany({ where: { role: { key: role } }, include: { permission: true } })).map((p) => p.permission.key);
     const owner = await keys('owner');
     expect(owner).toEqual(expect.arrayContaining(['audit.view', 'finance.view', 'payroll.view', 'sales.all', 'settings.view', 'activity.view_all', 'people.view_pay']));
-    const managing = ['org.manage', 'roles.manage', 'people.manage', 'people.manage_pay', 'settings.manage', 'payroll.prepare', 'payroll.review', 'payroll.approve',
-      'finance.entry_create', 'finance.entry_approve', 'finance.close', 'finance.reopen', 'sales.commission_approve', 'sales.targets', 'duty.assign', 'task.assign', 'standin.manage'];
+    const managing = ['org.manage', 'roles.manage', 'people.manage', 'people.manage_pay', 'settings.manage', 'payroll.prepare', 'payroll.review',
+      'finance.entry_create', 'finance.close', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'sales.commission_approve', 'sales.targets', 'duty.assign', 'task.assign', 'standin.manage'];
     for (const key of managing) expect(owner, key).not.toContain(key);
     // kept only so the Director's own leave and attendance corrections can be approved (nobody approves their own)
     expect(owner).toEqual(expect.arrayContaining(['leave.approve', 'attendance.approve_correction', 'approval.approve']));
+    // decision D26: also the Director's own journal entries, hire requests and payroll (the services check that they are the Director's)
+    expect(owner).toEqual(expect.arrayContaining(['finance.entry_approve', 'people.approve_hire', 'payroll.approve']));
     // everything the old "Owner or CEO" could change now belongs to the Director
-    expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'sales.commission_approve', 'duty.assign']));
+    expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.view', 'payroll.export', 'people.approve_hire', 'sales.commission_approve', 'duty.assign']));
   });
 
   it('keeps passwords only as Argon2id hashes (the demo logins come from a separate dev-only script)', async () => {

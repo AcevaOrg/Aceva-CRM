@@ -208,6 +208,7 @@ export class PayrollRunsService {
     if (run.preparedBy === actor.id) forbidden('maker_checker', 'You prepared this payroll, so you cannot approve it');
     // Runs reviewed before D25: the reviewer and the approver stay two different people (security review, finding 4; database rule).
     if (run.reviewedBy === actor.id) forbidden('maker_checker', 'You reviewed this payroll, so a different person approves it');
+    await this.assertOwnerOnlyForDirectorRuns(actor, run);
     await this.stepUp.require(actor, sessionId, 'approve_payroll', { type: 'payroll_run', id: run.number }, client);
     const now = this.clock.now();
     const first = firstDayOfMonth(run.month);
@@ -327,12 +328,23 @@ export class PayrollRunsService {
     });
   }
 
+  /**
+   * Decision D26: the Owner decides a payroll run (approve or send back) only when the Director prepared it, because the Director
+   * cannot decide their own; the Director decides every other run.
+   */
+  private async assertOwnerOnlyForDirectorRuns(actor: Actor, run: { preparedBy: string | null }): Promise<void> {
+    if (actor.levelNumber !== 1) return;
+    const preparer = run.preparedBy ? await this.prisma.employee.findUnique({ where: { id: run.preparedBy }, select: { level: { select: { number: true } } } }) : null;
+    if (preparer?.level.number !== 2) forbidden('owner_approves_director_only', 'The Owner decides only a payroll that the Director prepared');
+  }
+
   /** Sent back to Finance (to `calculated`) with a reason, by the Director (D25). */
   async returnRun(actor: Actor, idOrNumber: string, reason: string, client: RequestInfo): Promise<PayrollRunView> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
     if (!access.permissions.has('payroll.review') && !access.permissions.has('payroll.approve')) forbidden('forbidden', 'Only the reviewer or the approver can send a run back');
     const run = await this.findRun(idOrNumber);
     if (run.stage !== 'prepared' && run.stage !== 'reviewed') conflict('invalid_transition', 'Only a prepared or reviewed run can be sent back');
+    await this.assertOwnerOnlyForDirectorRuns(actor, run);
     await this.prisma.$transaction(async (tx) => {
       const changed = await tx.payrollRun.updateMany({
         where: { id: run.id, stage: run.stage },

@@ -46,9 +46,6 @@ export const createAccountSchema = z
   })
   .refine((v) => v.code.startsWith(GROUP_FIRST_DIGIT[v.group]), { message: 'The code must start with the digit of its group (1 assets ... 5 expenses)', path: ['code'] });
 
-/** PUT /accounts/:id/owner-approval (Owner only, decision D22). */
-export const ownerApprovalSchema = z.object({ required: z.boolean(), reason: decisionReasonSchema });
-
 export const updateAccountSchema = z.object({
   name: text(120).optional(),
   archived: z.boolean().optional(),
@@ -521,27 +518,16 @@ export interface RevaluationPreviewView {
 
 // ----------------------------------------------------------------------------------------------------------- settings
 
-export const approvalLimitsSchema = z.object({
-  limits: z
-    .array(z.object({ approverLevel: z.number().int().min(1).max(5), maxAmount: positiveMoneySchema.nullable(), label: text(120) }))
-    .min(1)
-    .max(5),
-  reason: decisionReasonSchema,
-});
-export interface ApprovalLimitView {
-  approverLevel: number;
-  /** Null = no upper limit. */
-  maxAmount: string | null;
-  label: string;
-}
-
+/** PUT /settings/finance (the Director, decision D26): the "confirm again" amount, the amount above which the Owner is told, the finance year. */
 export const financeSettingsSchema = z.object({
   stepUpAbove: moneySchema,
+  ownerNotifyAbove: moneySchema,
   financeYearStartMonth: z.number().int().min(1).max(12),
   reason: decisionReasonSchema,
 });
 export interface FinanceSettingsView {
   stepUpAbove: string;
+  ownerNotifyAbove: string;
   financeYearStartMonth: number;
 }
 

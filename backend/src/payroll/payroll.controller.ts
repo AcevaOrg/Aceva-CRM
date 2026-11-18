@@ -125,7 +125,7 @@ export class PayrollController {
   @FinanceScreen()
   @RequirePermission('payroll.approve')
   @HttpCode(200)
-  @ApiOperation({ summary: 'The CEO approves a reviewed run (confirm again; never the preparer). Issues payslips and creates the salary entry' })
+  @ApiOperation({ summary: 'The Director approves a prepared run (confirm again; never the preparer), the Owner only a run the Director prepared. Issues payslips and creates the salary entry' })
   approve(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('id') id: string, @ClientInfo() client: RequestInfo) {
     return this.runs.approve(actor, sessionId, id, client);
   }

@@ -136,23 +136,24 @@ describe('M9 month close checklist and USD revaluation', () => {
     await expect(prisma.journalEntry.create({ data: { entryDate: new Date('2026-08-21'), description: 'Direct', makerId: maker.id } })).rejects.toThrow(/period_closed/);
   });
 
-  it('only the Director or the Owner reopen (D25), with a reason and "confirm again"; it is logged and alerted', async () => {
-    await t.as(CEO).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'CEO tries to reopen' }).expect(404); // D25: the CEO only views
+  it('only the Director reopens (D26), with a reason and "confirm again"; it is logged and alerted; the Owner only views', async () => {
+    await t.as(CEO).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Owner tries to reopen' }).expect(404); // D26: the Owner only views
     await fin().post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Finance tries to reopen' }).expect(404);
-    await t.as(OWNER).post(`${API}/periods/${MONTH}/reopen`).send({}).expect(400);
-    expect((await t.as(OWNER).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Missing supplier invoice' }).expect(403)).body.code).toBe('step_up_required');
-    await t.stepUp(OWNER);
-    const open = (await t.as(OWNER).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Missing supplier invoice' }).expect(200)).body;
+    await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({}).expect(400);
+    t.clock.advance(6 * 60_000);
+    expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Missing supplier invoice' }).expect(403)).body.code).toBe('step_up_required');
+    await t.stepUp(DIRECTOR);
+    const open = (await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reopen`).send({ reason: 'Missing supplier invoice' }).expect(200)).body;
     expect(open.status).toBe('reopened');
-    expect(open.events.at(-1)).toMatchObject({ action: 'reopened', byEmpId: OWNER, reason: 'Missing supplier invoice' });
+    expect(open.events.at(-1)).toMatchObject({ action: 'reopened', byEmpId: DIRECTOR, reason: 'Missing supplier invoice' });
     const event = await prisma.outboxEvent.findFirstOrThrow({ where: { type: 'finance.period.reopened' } });
-    expect(event.payload).toEqual({ month: MONTH, byEmpId: OWNER, reason: 'Missing supplier invoice' });
+    expect(event.payload).toEqual({ month: MONTH, byEmpId: DIRECTOR, reason: 'Missing supplier invoice' });
     expect(await prisma.auditLog.count({ where: { action: 'finance.period.reopened', targetId: MONTH, reason: 'Missing supplier invoice' } })).toBe(1);
     // entries are accepted again
     await fin().post(`${API}/journal-entries`).send({ date: '2026-08-20', description: 'Late', lines: [{ accountId: acc['5200'], debit: '10' }, { accountId: acc['1100'], credit: '10' }] }).expect(201);
   });
 
-  it('the Director can send a close back with a reason, and can also reopen; the CEO cannot', async () => {
+  it('the Director can send a close back with a reason, and can also reopen; the Owner cannot', async () => {
     // the draft made above must be submitted and posted first
     const drafts = await prisma.journalEntry.findMany({ where: { entryDate: { gte: new Date('2026-08-01'), lte: new Date('2026-08-31') }, status: 'draft' } });
     for (const d of drafts) {
@@ -160,7 +161,7 @@ describe('M9 month close checklist and USD revaluation', () => {
       await approve(d.id).expect(200);
     }
     await fin().post(`${API}/periods/${MONTH}/close`).expect(200);
-    await t.as(CEO).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'CEO sends it back' }).expect(404);
+    await t.as(CEO).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'Owner sends it back' }).expect(404);
     await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'no' }).expect(400);
     expect((await t.as(DIRECTOR).post(`${API}/periods/${MONTH}/reject-close`).send({ reason: 'Check the August rent again' }).expect(200)).body.status).toBe('reopened');
     await fin().post(`${API}/periods/${MONTH}/close`).expect(200);
@@ -174,72 +175,48 @@ describe('M9 month close checklist and USD revaluation', () => {
   });
 });
 
-describe('M9 approval limits and finance settings (temporary home until Module 12)', () => {
-  it('everyone in finance reads them; only the Owner changes them (D22), with a reason and "confirm again", validated and logged', async () => {
-    const limits = (await fin().get(`${API}/settings/approval-limits`).expect(200)).body;
-    expect(limits.map((l: { approverLevel: number; maxAmount: string | null }) => [l.approverLevel, l.maxAmount])).toEqual([
-      [3, '5000000.00'], // D25: the Director approves up to PKR 5,000,000; there is no CEO tier
-      [1, null],
-    ]);
-    const next = { reason: 'Management raised the Director limit', limits: [{ approverLevel: 3, maxAmount: '6000000.00', label: 'Director' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] };
-    // nobody but the Owner reaches the change, the Director included (they would be raising their own limit)
-    await put(FINANCE, `${API}/settings/approval-limits`).send(next).expect(404);
+describe('M9 finance settings (the Director changes them, decision D26)', () => {
+  it('everyone in finance reads them; only the Director changes them, with a reason and "confirm again", validated and logged; approval limits no longer exist', async () => {
+    expect((await fin().get(`${API}/settings/finance`).expect(200)).body).toEqual({ stepUpAbove: '50000.00', ownerNotifyAbove: '500000.00', financeYearStartMonth: 7 });
+    await fin().get(`${API}/settings/approval-limits`).expect(404); // the tiers are gone: the Director approves any amount
+    const next = { stepUpAbove: '70000', ownerNotifyAbove: '400000', financeYearStartMonth: 7, reason: 'Management decision' };
+    // Finance and the Owner (view only) do not reach the change
+    await put(FINANCE, `${API}/settings/finance`).send(next).expect(404);
+    await t.stepUp(OWNER);
+    await put(OWNER, `${API}/settings/finance`).send(next).expect(404);
     await t.stepUp(DIRECTOR);
-    await put(DIRECTOR, `${API}/settings/approval-limits`).send(next).expect(404);
-    await t.stepUp(CEO);
-    await put(CEO, `${API}/settings/approval-limits`).send(next).expect(404);
-    await put(OWNER, `${API}/settings/approval-limits`).send({ ...next, limits: [{ approverLevel: 3, maxAmount: null, label: 'D' }, { approverLevel: 1, maxAmount: null, label: 'O' }] }).expect(400);
-    await put(OWNER, `${API}/settings/approval-limits`).send({ ...next, limits: [{ approverLevel: 3, maxAmount: '600000', label: 'D' }, { approverLevel: 2, maxAmount: '500000', label: 'C' }, { approverLevel: 1, maxAmount: null, label: 'O' }] }).expect(400);
-    // the unlimited tier is always the Owner (level 1): nobody below can be given unlimited approval
-    expect((await put(OWNER, `${API}/settings/approval-limits`).send({ ...next, limits: [{ approverLevel: 3, maxAmount: null, label: 'D' }] }).expect(400)).body.code).toBe('invalid_limits');
-    expect((await put(OWNER, `${API}/settings/approval-limits`).send({ ...next, limits: [{ approverLevel: 3, maxAmount: '50000', label: 'D' }, { approverLevel: 2, maxAmount: null, label: 'C' }] }).expect(400)).body.code).toBe('invalid_limits');
-    // changing an approval rule needs "confirm again", checked by the server (past the 5-minute window of the Owner's last one)
+    await put(DIRECTOR, `${API}/settings/finance`).send({ ...next, financeYearStartMonth: 13 }).expect(400);
+    // changing a finance setting needs "confirm again", checked by the server (past the 5-minute window of the Director's last one)
     t.clock.advance(6 * 60_000);
-    expect((await put(OWNER, `${API}/settings/approval-limits`).send(next).expect(403)).body.code).toBe('step_up_required');
-    await t.stepUp(OWNER);
-    await put(OWNER, `${API}/settings/approval-limits`).send(next).expect(200);
-    const e = (await fin().post(`${API}/journal-entries`).send({ date: '2026-10-01', description: 'Laptop', submit: true, lines: [{ accountId: acc['5200'], debit: '60000' }, { accountId: acc['1100'], credit: '60000' }] }).expect(201)).body;
-    expect(e.requiredLevel).toBe(3);
-    expect(await prisma.auditLog.count({ where: { action: 'finance.approval_limits.changed', reason: next.reason } })).toBe(1);
-    // the database keeps unlimited approval with the Owner and never loses the Owner tier
-    await expect(prisma.approvalLimit.update({ where: { approverLevel: 3 }, data: { maxAmount: null } })).rejects.toThrow();
-    await expect(prisma.approvalLimit.update({ where: { approverLevel: 1 }, data: { maxAmount: dec(1_000_000) } })).rejects.toThrow();
-    await expect(prisma.approvalLimit.delete({ where: { approverLevel: 1 } })).rejects.toThrow(/owner_only/);
-
-    expect((await fin().get(`${API}/settings/finance`).expect(200)).body).toEqual({ stepUpAbove: '50000.00', financeYearStartMonth: 7 });
-    await put(FINANCE, `${API}/settings/finance`).send({ stepUpAbove: '70000', financeYearStartMonth: 7, reason: 'Finance tries' }).expect(404);
+    expect((await put(DIRECTOR, `${API}/settings/finance`).send(next).expect(403)).body.code).toBe('step_up_required');
     await t.stepUp(DIRECTOR);
-    await put(DIRECTOR, `${API}/settings/finance`).send({ stepUpAbove: '999999999', financeYearStartMonth: 7, reason: 'Director tries' }).expect(404);
-    await put(OWNER, `${API}/settings/finance`).send({ stepUpAbove: '70000', financeYearStartMonth: 13, reason: 'Bad month' }).expect(400);
-    await t.stepUp(OWNER);
-    expect((await put(OWNER, `${API}/settings/finance`).send({ stepUpAbove: '70000', financeYearStartMonth: 7, reason: 'Management decision' }).expect(200)).body.stepUpAbove).toBe('70000.00');
-    // 60,000 is now below the confirm-again threshold
+    const changed = (await put(DIRECTOR, `${API}/settings/finance`).send(next).expect(200)).body;
+    expect(changed).toMatchObject({ stepUpAbove: '70000.00', ownerNotifyAbove: '400000.00' });
+    expect(await prisma.auditLog.count({ where: { action: 'finance.settings.changed', reason: next.reason } })).toBe(1);
+    // an entry Finance makes needs the Director whatever its amount, and 60,000 is now below the confirm-again amount
+    const e = (await fin().post(`${API}/journal-entries`).send({ date: '2026-10-01', description: 'Laptop', submit: true, lines: [{ accountId: acc['5200'], debit: '60000' }, { accountId: acc['1100'], credit: '60000' }] }).expect(201)).body;
+    expect(e.requiredLevel).toBe(2);
     expect((await approve(e.id).expect(200)).body.status).toBe('posted');
   });
 
-  it('the "Owner approves" flag: on by default for equity, only the Owner removes it, and it is checked again at approval', async () => {
+  it('the report-to-Owner flag: on by default for equity, only ever added, and it tells the Owner instead of waiting for the Owner', async () => {
     const equity = (await fin().post(`${API}/accounts`).send({ code: '3400', name: 'Partner capital (test)', group: 'equity', currency: 'PKR' }).expect(201)).body;
     expect(equity.requiresOwnerApproval).toBe(true);
-    expect((await fin().post(`${API}/accounts`).send({ code: '3500', name: 'Unflagged capital (test)', group: 'equity', currency: 'PKR', requiresOwnerApproval: false }).expect(403)).body.code).toBe('owner_only');
+    expect((await fin().post(`${API}/accounts`).send({ code: '3500', name: 'Unflagged capital (test)', group: 'equity', currency: 'PKR', requiresOwnerApproval: false }).expect(403)).body.code).toBe('owner_flag_locked');
     const share = acc['3100'];
-    expect((await fin().patch(`${API}/accounts/${share}`).send({ requiresOwnerApproval: false, reason: 'Finance tries to drop the rule' }).expect(403)).body.code).toBe('owner_only');
-    await t.as(DIRECTOR).patch(`${API}/accounts/${share}`).send({ requiresOwnerApproval: false, reason: 'Director tries to drop the rule' }).expect((r) => expect([403, 404]).toContain(r.status));
+    expect((await fin().patch(`${API}/accounts/${share}`).send({ requiresOwnerApproval: false, reason: 'Finance tries to drop the flag' }).expect(403)).body.code).toBe('owner_flag_locked');
     expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: share } })).requiresOwnerApproval).toBe(true);
-    // an expense account flagged after an entry was submitted: the entry now needs the Owner
-    const e = (await fin().post(`${API}/journal-entries`).send({ date: '2026-10-02', description: 'Software', submit: true, lines: [{ accountId: acc['5300'], debit: '1000' }, { accountId: acc['1100'], credit: '1000' }] }).expect(201)).body;
-    expect(e.requiredLevel).toBe(3);
+    // the old Owner-approval route is gone for everybody
+    await t.as(OWNER).put(`${API}/accounts/${share}/owner-approval`).send({ required: false, reason: 'Owner tries' }).expect(404);
+    await t.as(DIRECTOR).put(`${API}/accounts/${share}/owner-approval`).send({ required: false, reason: 'Director tries' }).expect(404);
+    // an entry on a flagged account still needs the Director (not the Owner), and the Owner is told through the audit log
     await fin().patch(`${API}/accounts/${acc['5300']}`).send({ requiresOwnerApproval: true, reason: 'Owner wants to see software spend' }).expect(200);
-    expect((await approve(e.id).expect(403)).body.code).toBe('approval_limit');
-    expect((await approve(e.id, OWNER).expect(200)).body.status).toBe('posted');
-    // removing the rule is never done through the account edit, and only the Owner reaches the Owner-approval setting
-    expect((await fin().patch(`${API}/accounts/${acc['5300']}`).send({ requiresOwnerApproval: false, reason: 'Finance tries again' }).expect(403)).body.code).toBe('owner_only');
-    await t.as(DIRECTOR).put(`${API}/accounts/${acc['5300']}/owner-approval`).send({ required: false, reason: 'Director tries to drop the rule' }).expect(404);
-    await fin().put(`${API}/accounts/${acc['5300']}/owner-approval`).send({ required: false, reason: 'Finance tries to drop the rule' }).expect(404);
-    // the Owner removes it, after confirming again; it is logged
-    t.clock.advance(6 * 60_000);
-    expect((await t.as(OWNER).put(`${API}/accounts/${acc['5300']}/owner-approval`).send({ required: false, reason: 'Owner decision' }).expect(403)).body.code).toBe('step_up_required');
-    await t.stepUp(OWNER);
-    expect((await t.as(OWNER).put(`${API}/accounts/${acc['5300']}/owner-approval`).send({ required: false, reason: 'Owner decision' }).expect(200)).body.requiresOwnerApproval).toBe(false);
-    expect(await prisma.auditLog.count({ where: { action: 'finance.account.owner_approval_removed', targetId: '5300', reason: 'Owner decision' } })).toBe(1);
+    const e = (await fin().post(`${API}/journal-entries`).send({ date: '2026-10-02', description: 'Software', submit: true, lines: [{ accountId: acc['5300'], debit: '1000' }, { accountId: acc['1100'], credit: '1000' }] }).expect(201)).body;
+    expect(e.requiredLevel).toBe(2);
+    expect(await prisma.auditLog.count({ where: { action: 'finance.entry.owner_notified', targetId: e.number } })).toBe(1);
+    expect((await approve(e.id, OWNER).expect(403)).body.code).toBe('approval_limit');
+    expect((await approve(e.id).expect(200)).body.status).toBe('posted');
+    // removing the flag is refused
+    expect((await fin().patch(`${API}/accounts/${acc['5300']}`).send({ requiresOwnerApproval: false, reason: 'Finance tries again' }).expect(403)).body.code).toBe('owner_flag_locked');
   });
 });

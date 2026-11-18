@@ -72,7 +72,7 @@ const OWNER: Permission[] = [
   "sales.own", "sales.team", "sales.all", "sales.commission_view", "sales.export",
   "integrations.view", "announcements.publish",
   // Decision D25: only for the Director's own items (leave, corrections, journal entries, hire requests)
-  "leave.approve", "attendance.approve_correction", "approval.approve", "finance.entry_approve", "people.approve_hire",
+  "leave.approve", "attendance.approve_correction", "approval.approve", "finance.entry_approve", "people.approve_hire", "payroll.approve",
   "auth.unlock_account", "auth.reset_two_factor",
 ];
 

@@ -74,6 +74,8 @@ const OWNER: string[] = [
   'sales.all', 'sales.commission_view', 'sales.export', 'integrations.view', 'announcements.publish',
   // only for the Director's own items (see above): leave, attendance corrections, journal entries and hire requests
   'leave.approve', 'attendance.approve_correction', 'approval.approve', 'finance.entry_approve', 'people.approve_hire',
+  // a payroll run the Director prepared (the service checks it; the Director never approves their own)
+  'payroll.approve',
   // only for his direct report, the Director (see above)
   'auth.unlock_account', 'auth.reset_two_factor',
 ];

@@ -37,7 +37,7 @@ async function calculate(month: string): Promise<{ id: string; lines: Array<Reco
 
 async function approve(id: string): Promise<void> {
   await as(FINANCE).post(`${API}/payroll/runs/${id}/prepare`).expect(200);
-  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(404); // D25: the CEO only views payroll
+  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(403); // D26: the Owner approves only a run the Director prepared
   await t.stepUp(DIRECTOR);
   await as(DIRECTOR).post(`${API}/payroll/runs/${id}/approve`).expect(200); // one Director step (D25)
 }

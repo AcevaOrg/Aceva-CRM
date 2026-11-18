@@ -18,12 +18,12 @@ BEGIN
     -- The salary entry may be replaced only after the ledger rejected it.
     IF NEW.journal_entry_id IS DISTINCT FROM OLD.journal_entry_id
        AND NOT (OLD.journal_entry_id IS NOT NULL AND EXISTS (SELECT 1 FROM "journal_entries" e WHERE e.id = OLD.journal_entry_id AND e.status = 'rejected')) THEN
-      RAISE EXCEPTION 'the salary entry of an approved payroll run can only be replaced after the ledger rejected it' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'an approved payroll run cannot be changed: its salary entry can only be replaced after the ledger rejected it' USING ERRCODE = 'P0001';
     END IF;
     -- The payment record is added once, and may be replaced only after the ledger rejected the previous one.
     IF OLD.payment_entry_id IS NOT NULL AND NEW.payment_entry_id IS DISTINCT FROM OLD.payment_entry_id
        AND NOT EXISTS (SELECT 1 FROM "journal_entries" e WHERE e.id = OLD.payment_entry_id AND e.status = 'rejected') THEN
-      RAISE EXCEPTION 'the payment entry of a payroll run can only be replaced after the ledger rejected it' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'an approved payroll run cannot be changed: its payment entry can only be replaced after the ledger rejected it' USING ERRCODE = 'P0001';
     END IF;
   END IF;
   RETURN NEW;

@@ -51,31 +51,33 @@ afterAll(async () => {
 }, 120000);
 
 describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
-  it('calculating locks the month in attendance and deducts the approved unpaid leave', async () => {
+  it('calculating deducts the approved unpaid leave and does NOT lock the month; approval locks it', async () => {
     runId = (await as(FINANCE).post(`${API}/payroll/runs`).send({ month: '2026-10' }).expect(201)).body.id;
     const run = (await as(FINANCE).post(`${API}/payroll/runs/${runId}/calculate`).expect(200)).body;
-    expect(await prisma.attendancePeriod.findUnique({ where: { month: '2026-10' } })).not.toBeNull();
+    expect(await prisma.attendancePeriod.findUnique({ where: { month: '2026-10' } })).toBeNull(); // check-ins and leave stay possible until approval
     const lines = (await as(FINANCE).get(`${API}/payroll/runs/${runId}/lines`).expect(200)).body.lines;
     const dev1 = lines.find((l: { empId: string }) => l.empId === DEV1);
     expect(dev1.workingDays).toBe(run.workingDays);
     expect(dev1).toMatchObject({ unpaidDays: '1.0', unpaidDeduction: ONE_UNPAID_DAY[run.workingDays] });
     expect(lines.find((l: { empId: string }) => l.empId === DEV2)).toMatchObject({ unpaidDays: '0.0', net: '59900.00' });
-    // the locked month refuses new attendance (Module 7 rule, enforced by the database)
-    const dev2 = await prisma.employee.findUniqueOrThrow({ where: { empId: DEV2 } });
-    await expect(
-      prisma.attendanceRecord.create({ data: { employeeId: dev2.id, workDate: new Date('2026-10-20'), checkInAt: new Date('2026-10-20T04:00:00Z') } }),
-    ).rejects.toThrow();
-    // calculating again is allowed and does not lock twice
+    // calculating again is allowed
     await as(FINANCE).post(`${API}/payroll/runs/${runId}/calculate`).expect(200);
-    expect(await prisma.auditLog.count({ where: { action: 'attendance.month_locked', targetId: '2026-10' } })).toBe(1);
   });
 
   it('approval creates one balanced salary entry, made by the preparer, waiting for ledger approval', async () => {
     await as(FINANCE).post(`${API}/payroll/runs/${runId}/prepare`).expect(200);
-    await as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(404); // D25: the CEO only views payroll
+    await as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(403); // D26: the Owner approves only a run the Director prepared
     await t.stepUp(DIRECTOR);
     const approved = (await as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(200)).body; // one Director step (D25)
     expect(approved.salaryEntry).toMatchObject({ status: 'pending_approval' });
+
+    // approval locks the month in attendance (Module 7 rule, enforced by the database), once
+    const dev2 = await prisma.employee.findUniqueOrThrow({ where: { empId: DEV2 } });
+    await expect(
+      prisma.attendanceRecord.create({ data: { employeeId: dev2.id, workDate: new Date('2026-10-20'), checkInAt: new Date('2026-10-20T04:00:00Z') } }),
+    ).rejects.toThrow();
+    expect(await prisma.auditLog.count({ where: { action: 'attendance.month_locked', targetId: '2026-10' } })).toBe(1);
+
     expect(approved.salaryEntry.number).toMatch(/^JE-\d{4}-\d{4,}$/);
 
     const entries = await prisma.journalEntry.findMany({ where: { source: 'payroll', sourceRef: runId }, include: { lines: { include: { account: true } } } });
@@ -94,9 +96,9 @@ describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
     expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } })).journalEntryId).toBe(entry.id);
   });
 
-  it('the run shows the entry as posted once Module 9 approves it (the Director, at their tier, confirming again; D25)', async () => {
+  it('the run shows the entry as posted once Module 9 approves it (the Director, any amount, confirming again; D26)', async () => {
     const run = await prisma.payrollRun.findUniqueOrThrow({ where: { id: runId } });
-    expect((await as(CEO).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(403)).body.code).toBe('approval_limit'); // the CEO only views
+    expect((await as(CEO).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(403)).body.code).toBe('approval_limit'); // the Owner only views
     await t.stepUp(DIRECTOR);
     await as(DIRECTOR).post(`${API}/journal-entries/${run.journalEntryId}/approve`).send({}).expect(200);
     expect((await as(FINANCE).get(`${API}/payroll/runs/${runId}`).expect(200)).body.salaryEntry.status).toBe('posted');
@@ -104,7 +106,7 @@ describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
 
   it('marking paid creates the payment entry against the real bank account, once', async () => {
     const paid = (await as(FINANCE).post(`${API}/payroll/runs/${runId}/mark-paid`).send({ bankAccountId: bankId, paidOn: '2026-11-05' }).expect(200)).body;
-    expect(paid).toMatchObject({ paid: true, paymentEntry: { status: 'pending_approval' } });
+    expect(paid).toMatchObject({ paid: false, paymentEntry: { status: 'pending_approval' } }); // paid only once the ledger posts the payment
     const payment = await prisma.journalEntry.findFirstOrThrow({ where: { source: 'payroll_payment', sourceRef: runId }, include: { lines: { include: { account: true } } } });
     expect(payment.lines.map((l) => [l.account.systemRole ?? l.account.code, Number(l.debit).toFixed(2), Number(l.credit).toFixed(2)])).toEqual(
       expect.arrayContaining([
@@ -113,6 +115,9 @@ describe('M8 with the real attendance (M7) and ledger (M9) modules', () => {
       ]),
     );
     expect((await as(FINANCE).post(`${API}/payroll/runs/${runId}/mark-paid`).send({ bankAccountId: bankId, paidOn: '2026-11-05' }).expect(409)).body.code).toBe('already_paid');
+    await t.stepUp(DIRECTOR);
+    await as(DIRECTOR).post(`${API}/journal-entries/${payment.id}/approve`).send({}).expect(200);
+    expect((await as(FINANCE).get(`${API}/payroll/runs/${runId}`).expect(200)).body).toMatchObject({ paid: true });
   });
 
   it('an advance is paid through a real payout entry and repaid only after the Director posts it', async () => {

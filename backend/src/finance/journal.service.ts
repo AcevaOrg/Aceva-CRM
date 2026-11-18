@@ -12,7 +12,7 @@ import { dayOf, dbDate, firstDayOfMonth, lastDayOfMonth, monthOf, pkDate } from 
 import { OutboxService } from '../events/outbox.service';
 import type { Currency, JournalSource, Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { labelFor, levelCovers, requiredApprovalLevel, type Tier } from './approval-tier';
+import { DIRECTOR_LEVEL, labelFor, levelCovers, ownerNotice, requiredApprovalLevel } from './approval-tier';
 import { badRequest, conflict, forbidden, notFound } from './finance-errors';
 import { FinanceViews } from './finance-views';
 
@@ -105,15 +105,17 @@ export class JournalService {
     if (period?.status === 'closing') throw conflict('period_closing', `${month} is waiting for its close approval. New entries wait until the close is approved or rejected.`);
   }
 
-  async tiers(db: Db): Promise<Tier[]> {
-    const rows = await db.approvalLimit.findMany({ orderBy: { approverLevel: 'desc' } });
-    return rows.map((r) => ({ approverLevel: r.approverLevel, maxAmount: r.maxAmount === null ? null : dec(r.maxAmount), label: r.label }));
-  }
-
   async stepUpAbove(db: Db): Promise<Decimal> {
     const row = await db.financeSetting.findUnique({ where: { id: 1 } });
     if (!row) throw conflict('finance_settings_missing', 'Finance settings are not set up');
     return dec(row.stepUpAbove);
+  }
+
+  /** Entries above this PKR total are reported to the Owner (view only; they do not wait for the Owner). */
+  async ownerNotifyAbove(db: Db): Promise<Decimal> {
+    const row = await db.financeSetting.findUnique({ where: { id: 1 } });
+    if (!row) throw conflict('finance_settings_missing', 'Finance settings are not set up');
+    return dec(row.ownerNotifyAbove);
   }
 
   /** USD rate saved for a day (PKR per 1 USD), or null. */
@@ -256,12 +258,8 @@ export class JournalService {
       throw badRequest('unbalanced_entry', 'Total debits must equal total credits');
     }
     const maker = await tx.employee.findUnique({ where: { id: e.makerId }, select: { level: { select: { number: true } } } });
-    const tier = requiredApprovalLevel(bd, await this.tiers(tx), e.lines.some((l) => l.account.requiresOwnerApproval), maker?.level.number ?? null);
-    if (!tier.ok) {
-      throw tier.reason === 'no_tier'
-        ? conflict('approval_limits_missing', 'No approval limit covers this amount; settings must be completed')
-        : conflict('no_eligible_approver', 'Nobody is senior enough to approve an entry made by its maker');
-    }
+    const tier = requiredApprovalLevel(maker?.level.number ?? null);
+    if (!tier.ok) throw conflict('no_eligible_approver', 'Nobody is senior enough to approve an entry made by its maker');
     const { count } = await tx.journalEntry.updateMany({
       where: { id: entryId, status: 'draft' },
       data: { status: 'pending_approval', submittedAt: this.clock.now(), requiredLevel: tier.level, updatedBy: ctx.actorId },
@@ -272,6 +270,14 @@ export class JournalService {
       { actorId: ctx.actorId, action: 'finance.entry.submitted', targetType: 'journal_entry', targetId: e.number, details: { requiredLevel: tier.level }, ip: ctx.ip, userAgent: ctx.userAgent },
       tx,
     );
+    // The Owner only views: a large entry or a capital or loan entry is reported to the Owner (the audit log, the Owner reads it).
+    const notice = ownerNotice(bd, await this.ownerNotifyAbove(tx), e.lines.some((l) => l.account.requiresOwnerApproval));
+    if (notice) {
+      await this.audit.record(
+        { actorId: ctx.actorId, action: 'finance.entry.owner_notified', targetType: 'journal_entry', targetId: e.number, details: { notice }, ip: ctx.ip, userAgent: ctx.userAgent },
+        tx,
+      );
+    }
     return { id: e.id, number: e.number, requiredLevel: tier.level };
   }
 
@@ -448,11 +454,10 @@ export class JournalService {
       throw err;
     };
     if (e.makerId === actor.id) await deny('self_approval', forbidden('self_approval', 'You made this entry; a different person decides it'));
-    // The tier is stored at submit; an account flagged "Owner approves" since then still needs the Owner (security review, finding 1).
-    const ownerNow = (await this.prisma.journalLine.count({ where: { entryId: e.id, account: { requiresOwnerApproval: true } } })) > 0;
-    const required = Math.min(e.requiredLevel ?? 1, ownerNow ? 1 : Number.MAX_SAFE_INTEGER);
+    // The approver depends on the maker alone and is stored at submit: the Director, or the Owner for an entry the Director made.
+    const required = e.requiredLevel ?? DIRECTOR_LEVEL;
     if (!levelCovers(actor.levelNumber, required)) {
-      await deny('approval_limit', forbidden('approval_limit', `This entry needs ${labelFor(required, await this.tiers(this.prisma))} approval (level ${required} or higher)`));
+      await deny('approval_limit', forbidden('approval_limit', `This entry needs ${labelFor(required)} approval`));
     }
   }
 
@@ -475,8 +480,8 @@ export class JournalService {
     if (q.awaitingMe === 'true') {
       const canApprove = await this.permissions.can(actor.id, 'finance.entry_approve');
       if (!canApprove) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
-      // The same rule as levelCovers (D25): exactly the actor's level, or any level for the Owner.
-      and.push({ status: 'pending_approval', makerId: { not: actor.id }, requiredLevel: actor.levelNumber === 1 ? { gte: 1 } : actor.levelNumber });
+      // The same rule as levelCovers (D26): exactly the actor's level.
+      and.push({ status: 'pending_approval', makerId: { not: actor.id }, requiredLevel: actor.levelNumber });
     }
     if (and.length) where.AND = and;
     const [total, rows] = await Promise.all([

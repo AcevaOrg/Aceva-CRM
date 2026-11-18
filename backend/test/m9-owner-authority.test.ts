@@ -5,12 +5,11 @@ import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
 /**
- * Decision D22 and plan s.13 ("all share capital and loan entries need the Owner"):
- *  - a sub-account under an account that needs Owner approval (2500 Loans) inherits the rule, and it cannot be switched off
- *    through the API or directly in the database;
- *  - a loan entry posted through such a sub-account needs the Owner;
- *  - only the Owner removes the rule, after confirming again, and the database accepts the removal only with the Owner's
- *    audit row in the same transaction.
+ * Decision D26 (share capital and loan entries): the "report to the Owner" flag.
+ *  - a sub-account under a flagged account (2500 Loans) inherits the flag, and it cannot be switched off through the API
+ *    or directly in the database;
+ *  - a loan entry posted through such a sub-account is approved by the Director and reported to the Owner (view only);
+ *  - nobody removes the flag through the application; the database accepts a removal only with an Owner audit row.
  */
 const OWNER = 'ACV-0001';
 const DIRECTOR = 'ACV-0003';
@@ -55,10 +54,7 @@ describe('M9 loan sub-accounts inherit "Owner approves"', () => {
   });
 
   it('the rule cannot be switched off on the sub-account: not through the API, not directly in the database', async () => {
-    expect((await fin().patch(`${API}/accounts/${subId}`).send({ requiresOwnerApproval: false, reason: 'Finance tries to drop it' }).expect(403)).body.code).toBe('owner_only');
-    // not even by the Owner while the parent needs Owner approval (inherited)
-    await t.stepUp(OWNER);
-    expect((await ownerApproval(OWNER, subId, false).expect(409)).body.code).toBe('owner_approval_inherited');
+    expect((await fin().patch(`${API}/accounts/${subId}`).send({ requiresOwnerApproval: false, reason: 'Finance tries to drop it' }).expect(403)).body.code).toBe('owner_flag_locked');
     // the database: inherited, so it can be neither switched off nor inserted without it
     await expect(prisma.ledgerAccount.update({ where: { id: subId }, data: { requiresOwnerApproval: false } })).rejects.toThrow(/owner_approval_inherited/);
     await expect(
@@ -67,12 +63,13 @@ describe('M9 loan sub-accounts inherit "Owner approves"', () => {
     expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: subId } })).requiresOwnerApproval).toBe(true);
   });
 
-  it('a loan entry posted through the sub-account needs the Owner: the Director and the CEO are refused', async () => {
+  it('a loan entry posted through the sub-account is approved by the Director, not the Owner, and the Owner is told', async () => {
     const e = (await fin().post(`${API}/journal-entries`).send({ date: '2026-10-05', description: 'Loan received (test)', submit: true, lines: [{ accountId: acc['1100'], debit: '40000' }, { accountId: subId, credit: '40000' }] }).expect(201)).body;
-    expect(e.requiredLevel).toBe(1);
-    expect((await approve(e.id, DIRECTOR).expect(403)).body.code).toBe('approval_limit');
+    expect(e.requiredLevel).toBe(2);
+    expect(await prisma.auditLog.count({ where: { action: 'finance.entry.owner_notified', targetId: e.number } })).toBe(1);
+    expect((await approve(e.id, OWNER).expect(403)).body.code).toBe('approval_limit'); // the Owner only views
     expect((await approve(e.id, CEO).expect(403)).body.code).toBe('approval_limit');
-    expect((await approve(e.id, OWNER).expect(200)).body.status).toBe('posted');
+    expect((await approve(e.id, DIRECTOR).expect(200)).body.status).toBe('posted');
   });
 
   it('flagging an account flags its sub-accounts', async () => {
@@ -83,9 +80,9 @@ describe('M9 loan sub-accounts inherit "Owner approves"', () => {
   });
 });
 
-describe('M9 only the Owner changes the Owner-approval rule (D22)', () => {
-  it('everyone else is refused by the server: Finance, the Director, the CEO and a developer', async () => {
-    for (const who of [FINANCE, DIRECTOR, CEO, DEV]) {
+describe('M9 nobody removes the report-to-Owner flag through the application', () => {
+  it('the old Owner-approval route is gone for everybody, the Owner included, and a PATCH by the Director is refused', async () => {
+    for (const who of [FINANCE, DIRECTOR, OWNER, DEV]) {
       await ownerApproval(who, acc['2500'], false, `${who} tries to remove the rule`).expect(404);
     }
     await t.as(DIRECTOR).patch(`${API}/accounts/${acc['2500']}`).send({ requiresOwnerApproval: false, reason: 'Director tries' }).expect(404);
@@ -103,19 +100,5 @@ describe('M9 only the Owner changes the Owner-approval rule (D22)', () => {
       ]),
     ).rejects.toThrow(/owner_only/);
     expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { code: '2500' } })).requiresOwnerApproval).toBe(true);
-  });
-
-  it('the Owner removes it on a top account after confirming again; it is logged; the sub-account keeps its own rule', async () => {
-    t.clock.advance(6 * 60_000); // the earlier "confirm again" has expired
-    expect((await ownerApproval(OWNER, acc['3200'], false, 'Owner capital: Owner decision').expect(403)).body.code).toBe('step_up_required');
-    await t.stepUp(OWNER);
-    expect((await ownerApproval(OWNER, acc['3200'], false, 'Owner capital: Owner decision').expect(200)).body.requiresOwnerApproval).toBe(false);
-    expect(await prisma.auditLog.count({ where: { action: 'finance.account.owner_approval_removed', targetId: '3200', reason: 'Owner capital: Owner decision' } })).toBe(1);
-    // and adds it back
-    expect((await ownerApproval(OWNER, acc['3200'], true, 'Owner capital: back under Owner approval').expect(200)).body.requiresOwnerApproval).toBe(true);
-    // removing it from 2500 leaves 2510 flagged (sub-accounts keep it until the Owner removes it there too)
-    expect((await ownerApproval(OWNER, acc['2500'], false, 'Loans: Owner decision').expect(200)).body.requiresOwnerApproval).toBe(false);
-    expect((await prisma.ledgerAccount.findUniqueOrThrow({ where: { id: subId } })).requiresOwnerApproval).toBe(true);
-    await ownerApproval(OWNER, acc['2500'], true, 'Loans: back under Owner approval').expect(200);
   });
 });

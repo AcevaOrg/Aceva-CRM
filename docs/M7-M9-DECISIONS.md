@@ -208,3 +208,41 @@ permission, moves the role permissions, and replaces the approval limits only wh
 values (an Owner-set value is never overwritten); entries waiting at the old CEO tier move to the Director unless the
 Director made them. On aceva_dev it moves the role permissions only (it has no limits, entries, runs or hire requests
 yet). The payroll stage `reviewed` and the `/review` endpoint stay for runs reviewed before D25.
+
+## 9. Decision D26 and the merge with main (18 November 2026)
+
+Main now carries the final company structure (Level 1 CEO / Founder / Owner, view only; Level 2 Director, the only approver)
+and Modules 4, 5 and 6. This branch was brought up to date with it. Sections 1 to 8 describe the earlier CEO-based design; where
+they disagree with this section, this section wins.
+
+| Rule | Where it is enforced |
+|---|---|
+| The Director approves every journal entry of any amount. Above `finance_settings.step_up_above` (default PKR 50,000) the approver confirms again | `finance/approval-tier.ts`, `journal.service.ts` |
+| An entry the Director made goes one level up: the Owner approves only those (exact level match). An entry the Owner made has nobody above (`no_eligible_approver`) | `requiredApprovalLevel`, `levelCovers` |
+| The Owner is told (audit action `finance.entry.owner_notified`), not asked, about entries above `finance_settings.owner_notify_above` (default PKR 500,000) and every capital or loan entry. The account flag `requires_owner_approval` now means "report to the Owner"; it can only be added | `ownerNotice`, `master-data.service.ts`, database triggers |
+| Payroll: Finance prepares, the Director approves (one step). The Owner approves or sends back only a run the Director prepared | `payroll-runs.service.ts` (`assertOwnerOnlyForDirectorRuns`) |
+| Month close: Finance runs it, the Director approves and reopens (reason, confirm again, alert). The Owner only views | permissions `finance.close_approve`, `finance.reopen` |
+| Hire requests: the Director decides every request except the Director's own, which the Owner decides | `people/joining.service.ts` (`assertMayDecide`), permission `people.approve_hire` |
+| The Director changes the finance settings (permission `finance.authority_manage`, reason, confirm again). **This grant is a development default the project owner has not confirmed** | `finance.controller.ts` |
+| There are no approval tiers: migration `20261119090500_ledger_director_approves_all` drops `approval_limits` (the old limits are kept in the audit log) and moves waiting entries to the new approver | migration |
+
+Other changes made while merging with main
+
+- **Holidays:** Module 5 (already on main) creates the `holidays` table. Module 7's own copy of the table, its Prisma model and its
+  indexes were removed; Module 7 keeps the rules (archive, locked months) and serves `GET /holidays`, which Module 5's screens use too.
+- **Migrations:** the Module 7 to 9 migrations were renamed to `20261119090000` to `20261119090500` so they apply after Module 6.
+- **Routes:** Module 9's project list moved from `GET /projects` to `GET /finance-projects` (Module 5 owns `/projects`).
+- **Contracts:** the Module 7 and 9 names that clashed with `tasks.ts` are `AttendanceHolidayView`, `attendanceHolidaysQuerySchema`,
+  `CloseChecklistItemView` and `FinanceProjectView`.
+- **Jobs:** there is one job runner (the one in `CommonModule`). The extra `JobsModule` was removed: two runners meant job types
+  registered by Modules 5 and 6 were unknown to the other one.
+
+Fixes to the first version of this branch
+
+- Attendance for a month is locked when the payroll is **approved**, not when it is calculated.
+- A salary entry the ledger rejected can be replaced (`POST /payroll/runs/:id/repost-salary-entry`); a run is paid only when its
+  payment entry is posted, and a rejected payment can be recorded again. Migration `20261119090400_m7_m9_retry_rules` lets the
+  database accept the replacement only when the old entry was rejected.
+- A reversed revaluation no longer blocks revaluing the month and no longer counts on the close checklist.
+- A leave request with no approver who may decide it is refused (`409 no_approver`); before, any such request was approved by default.
+  Only the Owner's own leave is recorded without an approver.
