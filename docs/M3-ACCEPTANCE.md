@@ -24,6 +24,9 @@ and the server-verified confirm-again. Details and the test that proves each ite
 **No consumer exists**, because Module 5 (Tasks) and Module 8 (Payroll) do not exist. Nothing moves tasks or prepares a final
 salary today. The consumers are built with M5 and M8.
 
+*Superseded by Module 5:* the task hand-over now consumes `task.transfer.requested` (Module 5, decision 13). The text above
+describes the state when Module 3 was accepted.
+
 **3. Still outstanding, separate from M3.** **Redis hierarchy caching (M1-11) is not implemented** (the hierarchy cache is
 PostgreSQL only; Redis is used for sessions). Therefore **M1 is not fully complete** and is not marked as such.
 
@@ -81,7 +84,7 @@ the password only.
 | C1-C5 | Changes by role, history with old and new values, rules enforced on the server | Done and tested, now including the pay and job forms in the browser | `m3-profiles`, e2e |
 | J1-J2 | Emp-ID generated, welcome email with temporary password, changed at first login | Done and tested end to end (wizard, approval, Mailpit email, first login) | `m3-joining`, e2e |
 | L1-L3 | Last working day, job on the day, disable login and sessions, record kept; retries and crash recovery | Done and tested | `m3-leaving`, e2e |
-| L4 | Transfer open tasks to the manager | **Open by design**: only the event `task.transfer.requested` is written. Module 5 does not exist | `m3-leaving` |
+| L4 | Transfer open tasks to the manager | **Open by design** when accepted: only the event `task.transfer.requested` was written. *Superseded by Module 5*: the hand-over moves the tasks (`TaskHandover`, `m5-automation`) | `m3-leaving` |
 | L5 | Send the final salary to payroll | **Open by design**: only `payroll.final_settlement.requested` is written. Module 8 does not exist | `m3-leaving` |
 | K | Lost authenticator reset | Done and tested, including the dialog | `m2-reset-2fa`, e2e |
 

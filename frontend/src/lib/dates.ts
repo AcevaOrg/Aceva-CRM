@@ -92,16 +92,49 @@ export function addWorkingDays(start: DateInput, days: number, holidays: string[
   return d;
 }
 
-/** Working days from a to b inclusive. */
+const DAY_MS = 86_400_000;
+
+/** Whole days since 1970-01-01 of a calendar day (month 0 to 11), NaN when there is no such day. No time zone, no daylight saving. */
+function dayNumberOf(year: number, month: number, day: number) {
+  const t = new Date(0);
+  t.setUTCFullYear(year, month, day);
+  return t.getTime() / DAY_MS;
+}
+
+/** Monday to Friday? Day 0 (1970-01-01) was a Thursday. */
+function isWeekdayNumber(n: number) {
+  const w = (((n + 4) % 7) + 7) % 7;
+  return w !== 0 && w !== 6;
+}
+
+/** A day number written exactly as isoDay writes a day, so a holiday string counts only when isoDay could have produced it. */
+function dayKeyOf(n: number) {
+  const t = new Date(n * DAY_MS);
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Working days from a to b inclusive (0 when b is before a). Counted by arithmetic on calendar days (five a week, then the
+ * few days left over, minus the holidays that fall on a weekday in the range), never day by day, so a far-off date costs
+ * the same as a near one. The result is the same as walking the days one at a time with isWorkingDay.
+ */
 export function workingDaysBetween(a: DateInput, b: DateInput, holidays: string[] = []) {
-  let d = startOfDay(toDate(a));
-  const end = startOfDay(toDate(b));
-  let n = 0;
-  while (d <= end) {
-    if (isWorkingDay(d, holidays)) n++;
-    d = addDays(d, 1);
+  const from = toDate(a);
+  const to = toDate(b);
+  const first = dayNumberOf(from.getFullYear(), from.getMonth(), from.getDate());
+  const last = dayNumberOf(to.getFullYear(), to.getMonth(), to.getDate());
+  if (Number.isNaN(first) || Number.isNaN(last) || last < first) return 0;
+  const weeks = Math.floor((last - first + 1) / 7);
+  let count = weeks * 5;
+  for (let n = first + weeks * 7; n <= last; n++) if (isWeekdayNumber(n)) count++;
+  for (const holiday of new Set(holidays)) {
+    const match = /^(\d+)-(\d{2})-(\d{2})$/.exec(holiday);
+    if (!match) continue;
+    const n = dayNumberOf(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    // A holiday on a weekend takes nothing off; "2026-02-30" is no day (it rolls over), so it never matches.
+    if (n >= first && n <= last && isWeekdayNumber(n) && dayKeyOf(n) === holiday) count--;
   }
-  return n;
+  return count;
 }
 
 export type DueTone = "overdue" | "today" | "soon" | "later" | "done";

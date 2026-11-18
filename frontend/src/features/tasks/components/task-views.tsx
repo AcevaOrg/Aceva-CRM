@@ -19,6 +19,7 @@ import { MonthCalendar } from "@/components/shared/month-calendar";
 import { useReason } from "@/components/shared/dialogs";
 import { EmptyState, ListSkeleton, QueryState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
+import { ApiError } from "@/lib/api/mock";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatTime, isoDay } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,8 @@ import { useCreateTask, useTasks, useTransitionTask, useWorkload } from "../hook
 import { allowedTransitions, isOpen, isSettled, STATUS_LABEL } from "../logic";
 import type { Task, TaskStatus } from "../types";
 import { PriorityLabel, SizeChip, STATUS_COLOR, TaskStatusBadge } from "./task-bits";
+
+const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 /* ---------------- Row used by My tasks ---------------- */
 
@@ -58,7 +61,7 @@ function TaskRow({ task, showAssignee }: { task: Task; showAssignee?: boolean })
           {task.extensionsCount > 0 && <span>extended ×{task.extensionsCount}</span>}
         </span>
       </span>
-      <SizeChip size={task.size} />
+      <SizeChip size={task.size} points={task.points} />
       <PriorityLabel priority={task.priority} compact />
       <TaskStatusBadge status={task.status} />
       {showAssignee && <EmpChip empId={task.assignee} size="sm" showId={false} link={false} className="w-36" />}
@@ -126,7 +129,12 @@ function PersonalTodos({ todos }: { todos: Task[] }) {
     const d = new Date();
     d.setHours(18, 0, 0, 0);
     if (d < new Date()) d.setDate(d.getDate() + 1);
-    await create.mutateAsync({ title: text.trim(), description: "", assignee: "", priority: "low", size: "XS", estimatedHours: 1, startDate: new Date().toISOString(), deadline: d.toISOString(), checklist: [], personal: true });
+    try {
+      await create.mutateAsync({ title: text.trim(), description: "", assignee: "", priority: "low", size: "XS", estimatedHours: 1, startDate: new Date().toISOString(), deadline: d.toISOString(), checklist: [], personal: true });
+    } catch (e) {
+      toast.error(errorText(e, "Couldn't add the to-do."));
+      return;
+    }
     setText("");
   };
   return (
@@ -146,13 +154,18 @@ function PersonalTodos({ todos }: { todos: Task[] }) {
         </Button>
       </form>
       <ul className="mt-3 grid gap-1">
-        {todos.map((t) => {
+        {todos.filter((t) => t.status !== "cancelled").map((t) => {
           const done = t.status === "approved";
           return (
             <li key={t.id}>
               <button
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] hover:bg-muted"
-                onClick={() => transition.mutate({ id: t.id, to: done ? "assigned" : "approved", rating: 5 })}
+                onClick={() =>
+                  transition.mutate(
+                    { id: t.id, to: done ? "assigned" : "approved", rating: 5, from: t.status, personal: true },
+                    { onError: (e) => toast.error(errorText(e, "Couldn't update the to-do.")) },
+                  )
+                }
               >
                 {done ? <CheckCircle2 className="size-4 text-success" /> : <Circle className="size-4 text-muted-foreground" />}
                 <span className={cn("flex-1", done && "text-muted-foreground line-through")}>{t.title}</span>
@@ -161,7 +174,7 @@ function PersonalTodos({ todos }: { todos: Task[] }) {
             </li>
           );
         })}
-        {!todos.length && <li className="py-2 text-[12.5px] text-muted-foreground">Nothing here.</li>}
+        {!todos.some((t) => t.status !== "cancelled") && <li className="py-2 text-[12.5px] text-muted-foreground">Nothing here.</li>}
       </ul>
     </Card>
   );
@@ -170,10 +183,11 @@ function PersonalTodos({ todos }: { todos: Task[] }) {
 /* ---------------- List ---------------- */
 
 export function TaskListView({ scope }: { scope: "mine" | "team" | "all" }) {
-  const q = useTasks({ scope });
+  const [status, setStatus] = React.useState<"open" | "all" | TaskStatus>("open");
+  // The server leaves out tasks approved or cancelled more than 90 days ago; the filters that show finished work ask for all of them.
+  const q = useTasks({ scope, closed: status === "all" || status === "approved" || status === "cancelled" ? "all" : undefined });
   const router = useRouter();
   const lookup = useLookup();
-  const [status, setStatus] = React.useState<"open" | "all" | TaskStatus>("open");
   const [assignee, setAssignee] = React.useState("");
   const rows = (q.data ?? []).filter((t) => (status === "all" ? true : status === "open" ? isOpen(t.status) : t.status === status)).filter((t) => !assignee || t.assignee === assignee);
   const people = [...new Set((q.data ?? []).map((t) => t.assignee))];
@@ -215,7 +229,7 @@ export function TaskListView({ scope }: { scope: "mine" | "team" | "all" }) {
         { key: "number", header: "No.", cell: (t) => <span className="font-mono text-[12px] text-muted-foreground">{t.number}</span>, sortValue: (t) => t.number, hideOnMobile: true, width: "96px" },
         { key: "title", header: "Task", cell: (t) => <span className="font-medium">{t.title}</span>, sortValue: (t) => t.title },
         { key: "assignee", header: "Assignee", cell: (t) => <EmpChip empId={t.assignee} size="sm" showId={false} link={false} />, sortValue: (t) => lookup.employee(t.assignee)?.name ?? "" },
-        { key: "size", header: "Size", cell: (t) => <SizeChip size={t.size} />, sortValue: (t) => t.points },
+        { key: "size", header: "Size", cell: (t) => <SizeChip size={t.size} points={t.points} />, sortValue: (t) => t.points },
         { key: "priority", header: "Priority", cell: (t) => <PriorityLabel priority={t.priority} />, sortValue: (t) => ["low", "medium", "high", "urgent"].indexOf(t.priority), hideOnMobile: true },
         { key: "status", header: "Status", cell: (t) => <TaskStatusBadge status={t.status} />, sortValue: (t) => t.status },
         { key: "deadline", header: "Deadline", cell: (t) => <DeadlineChip deadline={t.deadline} done={isSettled(t.status)} />, sortValue: (t) => t.deadline },
@@ -256,7 +270,12 @@ export function TaskBoardView({ scope }: { scope: "mine" | "team" | "all" }) {
             reason = (await askReason({ title: target === "rework" ? "Send back for rework" : "Put on hold", confirmLabel: "Confirm" })) ?? undefined;
             if (!reason) return;
           }
-          await transition.mutateAsync({ id: t.id, to: target, reason });
+          try {
+            await transition.mutateAsync({ id: t.id, to: target, reason, from: t.status, personal: t.personal });
+          } catch (e) {
+            toast.error(errorText(e, "Couldn't move the task."));
+            return;
+          }
           toast.success(`Moved to ${STATUS_LABEL[target]}`);
         }}
         renderCard={(t) => (
@@ -265,7 +284,7 @@ export function TaskBoardView({ scope }: { scope: "mine" | "team" | "all" }) {
             <p className="mt-0.5 line-clamp-2 text-[13px] font-medium">{t.title}</p>
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <span className="flex items-center gap-1.5">
-                <SizeChip size={t.size} />
+                <SizeChip size={t.size} points={t.points} />
                 <PriorityLabel priority={t.priority} compact />
               </span>
               <DeadlineChip deadline={t.deadline} done={isSettled(t.status)} />

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../src/generated/prisma/client';
 import { DUTY_SEEDS, PERMISSION_KEYS, ROLE_SEEDS } from './permission-catalogue';
+import { seedTaskReferenceData } from './seed-tasks';
 
 /**
  * Development and test seed data. Safe to run more than once (it only adds what is missing).
@@ -267,6 +268,9 @@ export async function seedDatabase(prisma: PrismaClient): Promise<void> {
       await tx.$executeRaw`SELECT setval('emp_id_seq', GREATEST((SELECT last_value FROM emp_id_seq), 14))`;
 
       await rebuildReportingClosure(tx);
+
+      // Module 5: the demo projects and the company holidays (the size table itself is inserted by the migration).
+      await seedTaskReferenceData(tx);
     },
     { timeout: 60000 },
   );

@@ -519,7 +519,8 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   await hr.page.locator('#ob-date').fill(iso(today));
   await hr.page.locator('#ob-reason').fill('Resigned, notice period ends today');
-  await expect(hr.page.getByText('request to move their open tasks')).toBeVisible();
+  // The line says a request is queued while Module 5 is off, and how many open tasks move once it is on.
+  await expect(hr.page.getByText(/request to move their open tasks|open tasks? (to move|move to)/)).toBeVisible();
   await hr.page.getByRole('button', { name: 'Set last working day' }).last().click();
   await expect(toastText(hr.page, /Last working day set/)).toBeVisible();
   const dir = await apiAs(playwright, DIRECTOR);

@@ -142,6 +142,135 @@ strings. Logins, logouts and the person's own security changes come from the Mod
 hour (medium, default 5); repeated attempts to open finance screens (high, default 3 in 15 minutes). The thresholds are the
 `alert-rules` settings section (see `docs/M4-ACCEPTANCE.md`).
 
+## M5: tasks, size and deadline
+
+Shapes: `packages/contracts/src/tasks.ts` and `packages/contracts/src/approvals.ts` (the same as the frontend's
+`features/tasks/types.ts` and `features/approvals/types.ts`). Days are Pakistan days; times are ISO 8601 in UTC. A
+task is shown by its UUID or its number (`TSK-0001`; a personal to-do is `TODO-0001`). Every answer about a task
+the caller may not see is `404 not_found`, so a personal to-do of someone else looks like it does not exist.
+
+**Who may do what.** The rules are in the services, per task, because one person can be the assignee on one task and
+the reviewer on another. Nobody assigns upward, sideways or to themselves. The CEO / Founder / Owner (Level 1) is view
+only on work tasks: a comment is refused with `403 forbidden`, and a file or any status action with `403 not_allowed`
+(he is neither the assignee nor the assigner). A personal to-do belongs to its owner
+alone. Wrong status for everybody is `409 invalid_state`; the right status with the wrong person is `403 not_allowed`
+(only `403` counts as a blocked attempt in the Module 4 activity log).
+
+### Tasks
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /tasks?scope=mine\|team\|all&assignee=&status=&priority=&size=&projectId=&dueFrom=&dueTo=&includePersonal=&open=&closed=` | `task.view_own`; `scope=team` needs `task.view_team` (403 otherwise). `scope=mine` and `scope=all` need only `task.view_own` | Tasks I may see, sorted by deadline. `scope=mine` is My Tasks; `scope=all` is open to everyone and returns only the tasks they may see. `includePersonal=true` adds only my own to-dos. Dates are Pakistan days, both included. `open=true` leaves out every approved or cancelled task (open work only). `closed=recent` (the default) leaves out approved and cancelled tasks that were closed more than 90 days ago; `closed=all` brings them back. Open tasks are always all there |
+| `GET /tasks/workload` | `task.view_team` | One row per person below me: `{ empId, openHours, capacity, openTasks }` (open estimated hours against weekly capacity) |
+| `GET /tasks/:id` | `task.view_own`, and visible to me | `{ task, comments, extensions, history, reviewer }`. `reviewer` is the Emp-ID who reviews this task now (the assigner, a stand-in, or the next level up); `null` for a personal to-do. `actingAssigner` is the Emp-ID who may hold, resume, cancel, edit, move the deadline of, add steps to, attach files to and stop the repeat of this task now: the assigner while he is here and holds `task.assign`, otherwise the first person up the line who holds `task.assign`; `null` for a personal to-do. `task.isOverdue` is computed, never stored |
+| `POST /tasks` | logged in; `task.assign` for a work task | Body `createTaskRequestSchema`: `title`, `description?`, `assignee` (Emp-ID below me; omit for a personal to-do), `projectId?`, `goalId?`, `priority`, `size` (XS to L; XL is refused), `estimatedHours`, `startDate`, `deadline` (required, not in the past, not before the start, not more than 731 days after it; start and deadline must fall between 2020-01-01 and 2100-12-31), `checklist?`, `repeat?` (`{ every: week\|month, on, until? }`), `personal?`, `confirmWarnings?`. Answers `201` with the task, or `409 confirmation_required` (below) |
+| `PATCH /tasks/:id` | the assigner, or the person acting as assigner (see `actingAssigner` above); a personal to-do: its owner, without a reason | Edits an open task: `title`, `description`, `priority`, `projectId`, `goalId`, `estimatedHours`, `assignee` (hands it to someone else below me; allowed while assigned, in progress, rework or on hold), `deadline` + `reason` (a manager change, the original deadline is kept; the same date range and two-year limit as at creation), `confirmWarnings?`. The size and its points never change. A body with nothing to change is refused by validation (`400`, with `issues`) |
+| `POST /tasks/:id/start` | the assignee | Assigned or Rework to In progress (`200`) |
+| `POST /tasks/:id/submit` | the assignee | In progress or Rework to Submitted (`200`) |
+| `POST /tasks/:id/review` | the reviewer | Submitted to Under review: the reviewer picks the work up (`200`) |
+| `POST /tasks/:id/approve` | the reviewer, never for their own task | Body `{ rating: 1..5, comment? }`. Submitted or Under review to Approved; writes a review record and event `task.approved` (`200`) |
+| `POST /tasks/:id/rework` | the reviewer | Body `{ reason }` (at least 3 characters). Submitted or Under review to Rework; event `task.reworked` (`200`) |
+| `POST /tasks/:id/hold` | the assigner (or the person acting as assigner) | Body `{ reason }`. Any open status except On hold to On hold (`200`) |
+| `POST /tasks/:id/resume` | the assigner (or the person acting as assigner) | Body `{ reason? }`. On hold to In progress (`200`) |
+| `POST /tasks/:id/cancel` | the assigner (or the person acting as assigner); a personal to-do: its owner | Body `{ reason }`. Any open status to Cancelled (`200`) |
+| `POST /tasks/:id/done` | personal to-do only, its owner | Marks a to-do done. No review, no rating, not scored (`200`) |
+| `POST /tasks/:id/reopen` | personal to-do only, its owner | Done back to Assigned (`200`) |
+| `POST /tasks/:id/extensions` | the assignee | Body `{ requestedDeadline, reason }` (`requestedDeadline` between 2020-01-01 and 2100-12-31, and within 731 days of the start: `deadline_too_far`). Asks for more time in assigned, in progress, rework or on hold. A request after the deadline is allowed and marked `late`. Answers `201` with the request |
+| `POST /extensions/:id/approve` | the assigner (who may review this task), never the person who asked | Body `{ reason? }`. The new deadline is saved, the original kept, the event `task.deadline_changed` with `kind: extension_approved` (`200`) |
+| `POST /extensions/:id/reject` | the same | Body `{ reason }` (`200`) |
+| `POST /tasks/:id/repeat/stop` | the assigner (or the person acting as assigner) | Body `{ reason? }`. Stops the repeating series of this task; the tasks already made stay (`200`) |
+| `POST /tasks/:id/checklist` | the assigner (or the person acting as assigner) or the assignee | Body `{ text }`. Adds a step (`201`) |
+| `PATCH /tasks/:id/checklist/:itemId` | the assignee | Ticks or unticks a step (`200`) |
+| `GET /tasks/:id/comments` | visible to me | Comments, oldest first |
+| `POST /tasks/:id/comments` | visible to me, except the Owner | JSON `{ body }`, or multipart with `body` and a `file` (the field is named `file`). `@Firstname`, `@Full Name` and `@ACV-0007` mention people who can see the task; the mentions are stored and mailed. Answers `201` |
+| `POST /tasks/:id/attachments` | the assignee, or the assigner (or the person acting as assigner) (multipart, field `file`) | PDF, PNG, JPEG or .docx by its real content, 10 MB. Stored privately through Module 3's file storage (`FILE_STORAGE_ROOT`). Answers `201` |
+| `GET /tasks/:id/attachments/:attachmentId/download` | visible to me | The file, as an attachment. Permission is checked each time and every download is logged |
+| `DELETE /tasks/:id/attachments/:attachmentId` | the person who added the file, or the assigner (or the person acting as assigner) | Archives the file (kept, never deleted) |
+
+### Projects, holidays, size table
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /projects` | `task.view_own` | Projects and clients a task can link to (read only for now) |
+| `GET /holidays?year=` | `task.view_own` | The company holiday calendar for the year (default: this year) |
+| `GET /settings/task-sizes` | `task.view_own` | The size table: XS to XL, meaning, hours, points, suggested working days (XL has none: it must be split) |
+| `GET /settings/task-sizes/changes` | `settings.view` | Who changed which size row, when, and why |
+| `PATCH /settings/task-sizes/:size` | `settings.manage` (the Director) | Body: any of `meaning`, `hours`, `hoursLabel`, `points`, `days`, plus `reason` (at least 5 characters). The whole table is checked. Old tasks keep the points and hours they were made with |
+
+### Approvals inbox (Module 5 items)
+
+| Method and path | Who | What it does |
+|---|---|---|
+| `GET /approvals` | logged in | Everything waiting for my decision, oldest first. Task items: `task_review` (a submitted task I review) and `extension` (a request I decide). Each item has `id` (`task_review:<task id>` or `extension:<extension id>`), `title`, `subtitle`, `requester`, `href` (`/tasks/<id>`) and `createdAt` |
+| `GET /approvals/oversight` | logged in; empty unless I may see all activity | Read only: the same kinds of items waiting for people below me. Each item has `waitingFor` (the Emp-ID who must decide) |
+| `POST /approvals/:id/approve` | logged in | `task_review`: body `{ rating: 1..5, comment? }` (required: `rating_required`). `extension`: body `{ reason? }`. Answers `201 { "ok": true }` (a new resource of the inbox; the screen reads no status) |
+| `POST /approvals/:id/reject` | logged in | `task_review`: send to rework, body `{ reason }` (required). `extension`: body `{ reason }`. Answers `201 { "ok": true }` |
+
+A `task_review` item has `needsRating: true`, `approveLabel: "Approve"` and `rejectLabel: "Send to rework"`. An
+`extension` item has no rating and no labels; its subtitle shows the old and new deadline and the reason, with
+"asked after the deadline (counts as late)" when `late` is true. The task's own status buttons and this inbox do the
+same work: both go through the same rules.
+
+### Warnings that need a confirmation (409)
+
+Creating a task (`POST /tasks`) and moving its deadline (`PATCH /tasks/:id` with `deadline`) can give two soft
+warnings. The server answers **`409 confirmation_required`** and creates or changes nothing until the same request is
+sent again with `"confirmWarnings": true`:
+
+```json
+{
+  "statusCode": 409,
+  "code": "confirmation_required",
+  "message": "An M task usually needs 3 working days; you set 1. Continue?",
+  "warnings": [
+    { "code": "deadline_too_short", "message": "An M task usually needs 3 working days; you set 1. Continue?", "details": { "size": "M", "neededDays": 3, "givenDays": 1 } },
+    { "code": "overloaded", "message": "This puts Nida Aslam at 40 h of 20 h this week.", "details": { "empId": "ACV-0013", "openHours": 16, "addedHours": 24, "capacity": 20 } }
+  ]
+}
+```
+
+`deadline_too_short` means the deadline is shorter than the size normally needs. `overloaded` means the new task would
+put the assignee over their weekly capacity (`Employee.weeklyCapacityHours`, 40 by default). The `details` values
+are examples.
+
+### Error codes (Module 5)
+
+The body is always `{ statusCode, code, message }`; validation failures also carry `issues`. Where a rule fails, `code` is the rule's name.
+
+| Status | Codes | Meaning |
+|---|---|---|
+| `400` | `deadline_in_past`, `deadline_before_start`, `deadline_too_far` (the deadline is more than 731 days after the start; also for edits and personal to-dos), `deadline_required`, `deadline_unchanged` (the new deadline is the current one), `size_xl_not_assignable`, `reason_required`, `rating_required`, `assignee_left` (the assignee has left the company), `project_not_found`, `personal_fields` (a personal to-do may only change its title, description, priority and deadline), `not_for_personal` (asking for more time on a personal to-do: change its deadline yourself), `invalid_size_table`, `nothing_changed` (the size row already has these values), `extension_not_later` (the requested date is not after the current deadline), `repeat_until_before_start`, `no_file`, `file_type_not_allowed`, `invalid_item` (approvals: not an inbox item id) | Broken input or a rule refused the change |
+| `403` | `forbidden` | Assigning to someone who is not below me; the CEO / Founder / Owner commenting on a work task; approvals: the item is not waiting for me, or it is my own request |
+| `403` | `not_allowed` | The status allows this action, but not for this person: for example the assignee approving, the assigner submitting, someone other than the assignee ticking a step, someone other than the assignee or assigner attaching a file (the Owner included), or someone other than the assigner stopping a series |
+| `404` | `not_found` | Task not visible to me (also someone else's personal to-do), or the checklist step, file, extension request, size row or approval item does not exist |
+| `413` | (no `code`; Nest's `Payload Too Large`) | A task file over 10 MB. The file is not stored |
+| `409` | `confirmation_required` | Soft warnings (see above); send again with `confirmWarnings: true` |
+| `409` | `invalid_state` | This action is not possible in this status for anybody (for example approving a task that is not under review). A task waiting for its review also cannot be handed to someone else. Asking for or deciding more time on a task that is closed (approved, done, cancelled, or closed by hand-over) |
+| `409` | `task_closed` | The task is approved, done, cancelled or closed: no edits, deadline change, checklist change or file added |
+| `409` | `extension_pending` | A request for more time is already waiting for an answer (one pending request per task) |
+| `409` | `already_decided` | This extension request was already approved or rejected |
+| `409` | `extension_outdated` | The deadline has moved past this request since it was made: reject it and ask again |
+| `409` | `deadline_changed` | The deadline was changed by someone else in the meantime: reload the task and try again |
+| `409` | `not_repeating` | This task does not belong to a repeating series |
+| `409` | `already_stopped` | The repeating series was already stopped |
+
+**The assigner's powers.** Hold, resume, cancel, edit, move the deadline, add a step, attach or remove a file and stop
+a repeat belong to the assigner while he is here and holds `task.assign`. Once the assigner has left, or no longer holds
+`task.assign`, the first person up the assignee's line who holds `task.assign` may do the same (`403 not_allowed`
+for everyone else, as before). The real assigner stays in the history and as `assignedBy`. A stand-in for an assigner
+who is only away does not get these powers; he reviews tasks and decides extensions, nothing more. Dates in create,
+edit and extension requests (`startDate`, `deadline`, `requestedDeadline`) must be between 2020-01-01 and 2100-12-31
+(`400` validation with `issues`), and a deadline more than 731 days after the start is refused with `deadline_too_far`.
+
+**Repeating tasks.** A series is made by the `task.repeat` job at 00:05 Pakistan time on each occurrence day (see
+`docs/EVENTS.md`). The series stops at its stop date (`until`) or when it is stopped. `repeat.on` is a weekday 1 (Monday)
+to 7 (Sunday) for a weekly series and a day of the month 1 to 28 for a monthly one.
+
+**Mails.** The mails that go with these routes are sent through the normal mailer (Mailpit locally): a new task, the
+reminders, a mention, a task handed in (to the assigner), an approval (with the rating), a rework, a hold, a
+cancellation, an extension asked and decided. Never to the person who did the action, never for a personal to-do, and
+never to people who have left or who have no official address. Reassigning a task sends no mail and emits no event.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

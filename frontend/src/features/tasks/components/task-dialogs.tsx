@@ -12,10 +12,16 @@ import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { StarRating } from "@/components/shared/pickers";
 import { useNow } from "@/hooks/use-now";
+import { ApiError } from "@/lib/api/mock";
 import { formatDateTime } from "@/lib/dates";
+import { confirmationWarnings } from "../api";
 import { useChangeDeadline, useRequestExtension, useTransitionTask } from "../hooks";
+import { isTaskDate, TASK_DATE_RANGE_MESSAGE, TASK_DATETIME_INPUT_MAX, TASK_DATETIME_INPUT_MIN } from "../logic";
 import type { Task } from "../types";
 import { toLocalInput } from "./assign-task-sheet";
+import { ConfirmWarningsDialog } from "./task-bits";
+
+const errorText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
 type DialogProps = { task: Task; open: boolean; onOpenChange: (o: boolean) => void };
 
@@ -36,15 +42,22 @@ function ReviewForm({ task, initial, onClose }: { task: Task; initial: "approve"
   const transition = useTransitionTask();
   const valid = mode === "approve" ? rating > 0 : text.trim().length >= 3;
   const submit = async () => {
-    await transition.mutateAsync({
-      id: task.id,
-      to: mode === "approve" ? "approved" : "rework",
-      rating: mode === "approve" ? rating : undefined,
-      comment: mode === "approve" ? text : undefined,
-      reason: mode === "rework" ? text : undefined,
-    });
+    try {
+      await transition.mutateAsync({
+        id: task.id,
+        to: mode === "approve" ? "approved" : "rework",
+        from: task.status,
+        personal: task.personal,
+        rating: mode === "approve" ? rating : undefined,
+        comment: mode === "approve" ? text : undefined,
+        reason: mode === "rework" ? text : undefined,
+      });
+    } catch (e) {
+      toast.error(errorText(e, mode === "approve" ? "Couldn't approve the task." : "Couldn't send the task back."));
+      return;
+    }
     toast.success(mode === "approve" ? `Approved with ${rating} star${rating > 1 ? "s" : ""}` : "Sent back for rework", {
-      description: "The rating goes straight into the employee's figures.",
+      description: mode === "approve" ? "The rating goes straight into the employee's figures." : "The person sees your reason and can fix it.",
     });
     onClose();
   };
@@ -73,7 +86,7 @@ function ReviewForm({ task, initial, onClose }: { task: Task; initial: "approve"
           </Field>
         </div>
       ) : (
-        <Field label="Reason" hint="The task goes back to In progress with this reason.">
+        <Field label="Reason" hint="The task goes back to the person for rework, with this reason.">
           <Textarea autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="What needs to change" />
         </Field>
       )}
@@ -115,6 +128,8 @@ function ExtensionForm({ task, onClose }: { task: Task; onClose: () => void }) {
   const value = date ?? (now ? defaultExtensionDate(task.deadline, now) : "");
   const late = now > 0 && new Date(task.deadline).getTime() < now;
   const tooEarly = !value || new Date(value).getTime() <= new Date(task.deadline).getTime();
+  // A typing slip such as the year 20260 (the server only takes 2020 to 2100).
+  const outOfRange = !!value && !isTaskDate(new Date(value));
   return (
     <>
       <DialogHeader>
@@ -125,8 +140,8 @@ function ExtensionForm({ task, onClose }: { task: Task; onClose: () => void }) {
         </DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
-        <Field label="New deadline" error={value && tooEarly ? "Pick a date after the current deadline." : undefined}>
-          <Input type="datetime-local" value={value} onChange={(e) => setDate(e.target.value)} />
+        <Field label="New deadline" error={outOfRange ? TASK_DATE_RANGE_MESSAGE : value && tooEarly ? "Pick a date after the current deadline." : undefined}>
+          <Input type="datetime-local" min={TASK_DATETIME_INPUT_MIN} max={TASK_DATETIME_INPUT_MAX} value={value} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <Field label="Reason">
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why you need more time" />
@@ -137,10 +152,15 @@ function ExtensionForm({ task, onClose }: { task: Task; onClose: () => void }) {
           Cancel
         </Button>
         <Button
-          disabled={tooEarly || reason.trim().length < 3}
+          disabled={tooEarly || outOfRange || reason.trim().length < 3}
           loading={req.isPending}
           onClick={async () => {
-            await req.mutateAsync({ id: task.id, requestedDeadline: new Date(value).toISOString(), reason });
+            try {
+              await req.mutateAsync({ id: task.id, requestedDeadline: new Date(value).toISOString(), reason });
+            } catch (e) {
+              toast.error(errorText(e, "Couldn't send the request."));
+              return;
+            }
             toast.success("Extension requested", { description: "Your manager will see it in their approvals." });
             onClose();
           }}
@@ -166,8 +186,25 @@ function DeadlineForm({ task, onClose }: { task: Task; onClose: () => void }) {
   const now = useNow(60_000);
   const [date, setDate] = React.useState(() => toLocalInput(new Date(task.deadline)));
   const [reason, setReason] = React.useState("");
+  const [confirm, setConfirm] = React.useState<string[] | null>(null);
   const change = useChangeDeadline();
   const past = now > 0 && new Date(date).getTime() < now;
+  // A typing slip such as the year 20260 (the server only takes 2020 to 2100); an empty field is not a date either.
+  const badDate = !isTaskDate(new Date(date));
+  // Live: a new deadline shorter than the size usually needs comes back as a warning to confirm.
+  const save = async (confirmWarnings: boolean) => {
+    try {
+      await change.mutateAsync({ id: task.id, deadline: new Date(date).toISOString(), reason, confirmWarnings: confirmWarnings || undefined });
+    } catch (e) {
+      const lines = confirmationWarnings(e);
+      if (lines) setConfirm(lines);
+      else toast.error(errorText(e, "Couldn't change the deadline."));
+      return;
+    }
+    setConfirm(null);
+    toast.success("Deadline changed");
+    onClose();
+  };
   return (
     <>
       <DialogHeader>
@@ -175,8 +212,8 @@ function DeadlineForm({ task, onClose }: { task: Task; onClose: () => void }) {
         <DialogDescription>A reason is required and the change is logged.</DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
-        <Field label="New deadline" error={past ? "A deadline can't be in the past." : undefined}>
-          <Input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} />
+        <Field label="New deadline" error={date && badDate ? TASK_DATE_RANGE_MESSAGE : past ? "A deadline can't be in the past." : undefined}>
+          <Input type="datetime-local" min={TASK_DATETIME_INPUT_MIN} max={TASK_DATETIME_INPUT_MAX} value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <Field label="Reason">
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} />
@@ -186,18 +223,11 @@ function DeadlineForm({ task, onClose }: { task: Task; onClose: () => void }) {
         <Button variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button
-          disabled={past || reason.trim().length < 3}
-          loading={change.isPending}
-          onClick={async () => {
-            await change.mutateAsync({ id: task.id, deadline: new Date(date).toISOString(), reason });
-            toast.success("Deadline changed");
-            onClose();
-          }}
-        >
+        <Button disabled={past || badDate || reason.trim().length < 3} loading={change.isPending && !confirm} onClick={() => save(false)}>
           Save
         </Button>
       </DialogFooter>
+      {confirm && <ConfirmWarningsDialog lines={confirm} confirmLabel="Change it anyway" busy={change.isPending} onConfirm={() => save(true)} onCancel={() => setConfirm(null)} />}
     </>
   );
 }

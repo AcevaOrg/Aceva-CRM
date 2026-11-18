@@ -24,6 +24,11 @@ export interface ActivityNote {
   target?: string;
   /** The sentence for the timeline, for example "Approved leave request #58". */
   description?: string;
+  /**
+   * Record no target at all, even when the route has an id (the recorder would otherwise take the id from the URL). For a
+   * private item, such as a personal to-do, whose id must not appear on anyone's timeline.
+   */
+  hideTarget?: boolean;
   /** Small structured extras (numbers, codes). Never secrets, never request bodies. */
   details?: Record<string, string | number | boolean | null>;
   /**

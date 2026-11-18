@@ -78,8 +78,9 @@ Install the three services with your operating system's normal installer or pack
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave `m4` out to keep Activity on demo data) |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
 | Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
+| Only the Module 5 database tests | `npm run build:contracts`, then `npm test -w backend -- m5-` |
 
 Open the website at http://localhost:3000, not http://127.0.0.1:3000: the API accepts only the `localhost` address for the website.
 
@@ -131,6 +132,27 @@ change them with SQL for a check by hand.
 The database sessions must run in UTC. The API sets this itself on every database connection, so a PostgreSQL in another
 time zone (for example Pakistan time, `Asia/Karachi`) works without changes. `SHOW timezone;` in `psql` shows the
 server's own setting, which the API does not use.
+
+## Module 5 (tasks, size and deadline) setup
+
+No new environment variables. Module 5 uses the settings above (`FILE_STORAGE_ROOT`, `OUTBOX_DISPATCH_INTERVAL_MS`).
+
+1. After pulling the changes, from the repository root:
+   - `npm run build:contracts` (the shared task and approval shapes)
+   - `npm run db:migrate` (applies `20261116100000_m5_tasks`: the task tables and the size table, and `20261117100000_m5_task_indexes`: six indexes for the task lists and the "tasks touched" count)
+   - `npm run db:seed` (demo projects and holidays; a holiday is a placeholder until the Director edits the calendar)
+2. Show the tasks on the website against the real API: in `frontend/.env.local` set
+   `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5` (and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`), then restart the
+   website's dev server. The `m5` flag switches the tasks screens and the approvals inbox; without it they show demo data.
+3. Reminders and repeating tasks run inside the API. They need the API running with `OUTBOX_DISPATCH_INTERVAL_MS` above 0
+   (the default 5000). With 0 they are switched off. The job runner checks its jobs every 30 seconds, so a reminder can
+   be up to half a minute late. Mails from the reminders and the other task events arrive in Mailpit
+   (http://127.0.0.1:8025).
+4. Task files (PDF, PNG, JPEG, .docx, 10 MB) are kept in the same private folder as the employee documents,
+   `FILE_STORAGE_ROOT`. Nothing is kept in the repository.
+5. The Module 5 database tests (they use `aceva_test`, so run them only when no other test run is going): `npm run build:contracts`, then `npm test -w backend -- m5-`.
+   If a clock-moving test fails only late in the evening, check it first: a test that moves the fake clock by a fixed number
+   of hours can cross midnight in Pakistan time (after 23:00 Pakistan time), which changes the day it expects.
 
 ## Not used locally (on purpose)
 MinIO or any other object storage: uploaded files are kept in the private folder `FILE_STORAGE_ROOT`

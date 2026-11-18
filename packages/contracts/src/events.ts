@@ -196,6 +196,179 @@ export const payrollFinalSettlementRequestedV1 = defineEvent(
   }),
 );
 
+// ---------- Module 5 (task management) ----------
+
+/** The task sizes and statuses (plan section 9). The task contracts (tasks.ts) build their schemas from these lists. */
+export const TASK_SIZES = ['XS', 'S', 'M', 'L', 'XL'] as const;
+export const TASK_STATUSES = ['assigned', 'in_progress', 'submitted', 'under_review', 'approved', 'rework', 'on_hold', 'cancelled'] as const;
+
+const taskSizeEnum = z.enum(TASK_SIZES);
+const taskStatusEnum = z.enum(TASK_STATUSES);
+/** What every task event says about the task. */
+const taskRef = { taskId: z.uuid(), number: z.string().min(1) };
+
+/**
+ * A task was created (by a manager, by a person for themselves, or by a repeating series). Module 5 automation reads it
+ * to set the reminders, start a repeating series and mail the assignee; Module 6 counts assigned work from it.
+ * actor = the person who created it, or "system" for a repeating series.
+ */
+export const taskCreatedV1 = defineEvent(
+  'task.created',
+  1,
+  z.object({
+    ...taskRef,
+    assignee: empIdSchema,
+    assignedBy: empIdSchema,
+    personal: z.boolean(),
+    size: taskSizeEnum,
+    points: z.number().int().min(0),
+    estimatedHours: z.number().positive(),
+    startDate: z.iso.datetime(),
+    deadline: z.iso.datetime(),
+    /** Set when the task starts or belongs to a repeating series. */
+    repeatRuleId: z.uuid().nullable(),
+  }),
+);
+
+/** Any change of a task's status (including a hand-over that cancels it). actor = who did it. */
+export const taskStatusChangedV1 = defineEvent(
+  'task.status_changed',
+  1,
+  z.object({
+    ...taskRef,
+    assignee: empIdSchema,
+    assignedBy: empIdSchema,
+    personal: z.boolean(),
+    from: taskStatusEnum,
+    to: taskStatusEnum,
+    reason: z.string().nullable(),
+  }),
+);
+
+/** A reviewer approved a task with a rating. The figures Module 6 needs for the scorecard. actor = the reviewer. */
+export const taskApprovedV1 = defineEvent(
+  'task.approved',
+  1,
+  z.object({
+    ...taskRef,
+    assignee: empIdSchema,
+    reviewer: empIdSchema,
+    rating: z.number().int().min(1).max(5),
+    size: taskSizeEnum,
+    points: z.number().int().min(0),
+    estimatedHours: z.number().positive(),
+    /** The deadline in force when it was handed in (the approved deadline: on-time is measured against it). */
+    deadline: z.iso.datetime(),
+    originalDeadline: z.iso.datetime(),
+    startedAt: z.iso.datetime().nullable(),
+    submittedAt: z.iso.datetime().nullable(),
+    /** Handed in at or before the approved deadline. */
+    onTime: z.boolean(),
+    extensionsCount: z.number().int().min(0),
+    reworkCount: z.number().int().min(0),
+  }),
+);
+
+/** A reviewer sent a task back with a reason. actor = the reviewer. */
+export const taskReworkedV1 = defineEvent(
+  'task.reworked',
+  1,
+  z.object({
+    ...taskRef,
+    assignee: empIdSchema,
+    reviewer: empIdSchema,
+    reason: z.string().min(1),
+    /** How many times it has been sent back, this one included. */
+    reworkCount: z.number().int().min(1),
+  }),
+);
+
+/** The deadline moved: the manager changed it (with a reason) or an extension was approved. */
+export const taskDeadlineChangedV1 = defineEvent(
+  'task.deadline_changed',
+  1,
+  z.object({
+    ...taskRef,
+    assignee: empIdSchema,
+    assignedBy: empIdSchema,
+    from: z.iso.datetime(),
+    to: z.iso.datetime(),
+    kind: z.enum(['manager_change', 'extension_approved']),
+    reason: z.string().nullable(),
+  }),
+);
+
+/** The person asked for more time. `late` = asked after the deadline. actor = the person asking. */
+export const taskExtensionRequestedV1 = defineEvent(
+  'task.extension_requested',
+  1,
+  z.object({
+    ...taskRef,
+    extensionId: z.uuid(),
+    assignee: empIdSchema,
+    assignedBy: empIdSchema,
+    currentDeadline: z.iso.datetime(),
+    requestedDeadline: z.iso.datetime(),
+    late: z.boolean(),
+  }),
+);
+
+/** The assigner decided an extension request. newDeadline is set only when it was approved. actor = the decider. */
+export const taskExtensionDecidedV1 = defineEvent(
+  'task.extension_decided',
+  1,
+  z.object({
+    ...taskRef,
+    extensionId: z.uuid(),
+    requestedBy: empIdSchema,
+    decidedBy: empIdSchema,
+    decision: z.enum(['approved', 'rejected']),
+    newDeadline: z.iso.datetime().nullable(),
+    late: z.boolean(),
+  }),
+);
+
+/** A comment was added. `mentions` are the Emp-IDs it @mentioned (the mention mail goes to them). actor = the author. */
+export const taskCommentAddedV1 = defineEvent(
+  'task.comment_added',
+  1,
+  z.object({
+    ...taskRef,
+    commentId: z.uuid(),
+    assignee: empIdSchema,
+    assignedBy: empIdSchema,
+    mentions: z.array(empIdSchema),
+  }),
+);
+
+/** A task moved to someone else because its owner left (Module 3 asked with task.transfer.requested). actor = "system". */
+export const taskTransferredV1 = defineEvent(
+  'task.transferred',
+  1,
+  z.object({
+    ...taskRef,
+    fromEmpId: empIdSchema,
+    toEmpId: empIdSchema,
+    reason: z.literal('employee_left'),
+  }),
+);
+
+/** A reminder is due: half the time passed without a start, 24 hours before, at the deadline, or a daily overdue notice. actor = "system". */
+export const TASK_REMINDER_KINDS = ['half_time', 'day_before', 'deadline', 'overdue'] as const;
+export const taskReminderDueV1 = defineEvent(
+  'task.reminder.due',
+  1,
+  z.object({
+    ...taskRef,
+    kind: z.enum(TASK_REMINDER_KINDS),
+    /** The person doing it, and for an overdue notice also their manager. */
+    recipients: z.array(empIdSchema).min(1),
+    deadline: z.iso.datetime(),
+    /** The Pakistan day the notice is for (makes a daily overdue notice unique per day). */
+    day: z.iso.date(),
+  }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -207,6 +380,16 @@ export const outboxEventSchemas = {
   'employee.offboarded': { 1: employeeOffboardedV1 },
   'task.transfer.requested': { 1: taskTransferRequestedV1 },
   'payroll.final_settlement.requested': { 1: payrollFinalSettlementRequestedV1 },
+  'task.created': { 1: taskCreatedV1 },
+  'task.status_changed': { 1: taskStatusChangedV1 },
+  'task.approved': { 1: taskApprovedV1 },
+  'task.reworked': { 1: taskReworkedV1 },
+  'task.deadline_changed': { 1: taskDeadlineChangedV1 },
+  'task.extension_requested': { 1: taskExtensionRequestedV1 },
+  'task.extension_decided': { 1: taskExtensionDecidedV1 },
+  'task.comment_added': { 1: taskCommentAddedV1 },
+  'task.transferred': { 1: taskTransferredV1 },
+  'task.reminder.due': { 1: taskReminderDueV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -221,6 +404,16 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   employeeOffboardedV1,
   taskTransferRequestedV1,
   payrollFinalSettlementRequestedV1,
+  taskCreatedV1,
+  taskStatusChangedV1,
+  taskApprovedV1,
+  taskReworkedV1,
+  taskDeadlineChangedV1,
+  taskExtensionRequestedV1,
+  taskExtensionDecidedV1,
+  taskCommentAddedV1,
+  taskTransferredV1,
+  taskReminderDueV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

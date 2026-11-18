@@ -151,7 +151,7 @@ insert-only), `system_settings` (settings by section, read-only for now), `outbo
 |---|---|---|
 | Sales tool activity (emails sent, replies, bounces, calls, email checks) | Module 16 | `source` column and check, the five actions, `ActivityRecorder.record({ source: 'apollo', ... })` |
 | Retention clean-up | A decision with the project owner (see Retention) | Indexes, `finance_linked` |
-| Tasks touched | Module 5 | `ActivitySummaryHooks.useTasksTouched(...)`; until then the number of different tasks acted on in the Tasks module (0 today) |
+| Tasks touched | Module 5 | `ActivitySummaryHooks.useTasksTouched(...)`; until then the number of different tasks acted on in the Tasks module (0 today). *Superseded by Module 5*: the number is now read from the task tables (M5 decision 16) |
 | Attendance check-in next to the first login | Module 7 | `ActivitySummaryHooks.useCheckIns(...)`; the screen already shows the gap |
 | Settings screen for the alert rules and working hours; in-app notifications (bell) for alerts | Module 12 | `system_settings` + `SettingsService`; event `activity.alert.raised` |
 | Finance, payroll and statements routes | Modules 8 to 10 | Recorded automatically; they mark sensitive reads with `@SensitiveView` and call `noteActivity({ blocked: true })` when they answer 404 to someone without permission. **Every export must be reported with its row count**: `POST /activity/export { rows, format, module, dataset }` from the screen, or `noteActivity({ details: { rows } })` on a server export route. The shared ExportDialog does not report exports yet (Activity search does) |
@@ -185,7 +185,8 @@ insert-only), `system_settings` (settings by section, read-only for now), `outbo
 - Recording something outside a request: import `ActivityModule`, inject `ActivityRecorder`, call `record({...})`.
 - Tasks touched: in your module's `onModuleInit`, `hooks.useTasksTouched(async ({ employeeIds, start, end }) => new Map(...))`.
 - Events: register a consumer on `OutboxDispatcher` (docs/EVENTS.md, "Consuming events"). The leaving events
-  `task.transfer.requested` and `employee.offboarded` are waiting unprocessed for Module 5.
+  `task.transfer.requested` and `employee.offboarded` are waiting unprocessed for Module 5. *Superseded by Module 5:*
+  the hand-over consumes `task.transfer.requested`; `employee.offboarded` is still not consumed by anyone.
 - Scheduled work: `JobRunner` is global; `register(type, handler)` in `onModuleInit`; `scheduleOnce()` for one job per period.
 
 ## Switching the screens to the live API
@@ -269,8 +270,6 @@ correct (step 13 shows the rule on purpose).
     `"outsideFrom": "00:00", "outsideTo": "23:59"` in place of 02:00 and 03:00. Window A: sign out and sign in again as
     ACV-0007. Within a few seconds the CTO's **Alerts** tab (reload) shows a Low alert "Login outside working hours:
     Signed in at HH:MM (Pakistan time) from Karachi, Chrome ... on Windows."
-    Without Docker or psql, run `node .claude/cycle2-build/local-db.mjs test-rules` instead of that SQL (it sets the same
-    window and the 5-row limit). Step 14 has the matching `reset-rules`.
 
 **The Director: search, changes, export, maker-checker**
 
@@ -287,7 +286,6 @@ correct (step 13 shows the rule on purpose).
     again. The export is recorded, but there is no second alert and no second mail: one large-export alert per person,
     kind of data and hour.
     Then, in psql, put the defaults back: `DELETE FROM system_settings WHERE section = 'alert-rules';` and type `\q`.
-    Without Docker or psql, run `node .claude/cycle2-build/local-db.mjs reset-rules` instead.
 
 **New device and new city**
 

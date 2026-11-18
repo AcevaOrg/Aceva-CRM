@@ -16,7 +16,6 @@ import { StarRating } from "@/components/shared/pickers";
 import { EmptyState, QueryState } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { useTasks } from "@/features/tasks/hooks";
-import { sizeRule } from "@/features/tasks/logic";
 import type { Task } from "@/features/tasks/types";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey, formatRelative } from "@/lib/dates";
@@ -116,7 +115,7 @@ function ReviewCard({ t, onReview }: { t: Task; onReview: () => void }) {
         <div className="flex flex-wrap items-center gap-2">
           <Mono className="text-[12px] text-muted-foreground">{t.number}</Mono>
           <Badge tone="outline">
-            {t.size} · {sizeRule(t.size).points} pts
+            {t.size} · {t.points} pts
           </Badge>
           <Badge tone={onTime ? "success" : "warning"} dot>
             {onTime ? "Submitted on time" : "Submitted late"}

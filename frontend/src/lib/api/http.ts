@@ -38,6 +38,7 @@ export function toApiError(status: number, body: unknown, fallback: string): Api
     details?: Record<string, string[]>;
     issues?: Array<{ path: string; message: string }>;
     violations?: Array<{ code: string; message: string }>;
+    warnings?: Array<{ code: string; message: string }>;
   };
   let message = Array.isArray(b.message) ? b.message.join(" ") : (b.message ?? fallback);
   let details = b.details;
@@ -45,6 +46,11 @@ export function toApiError(status: number, body: unknown, fallback: string): Api
   if (b.issues?.length) {
     message = b.issues.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message)).join(" ");
     details = b.issues.reduce<Record<string, string[]>>((acc, i) => ((acc[i.path || "form"] ||= []).push(i.message), acc), {});
+  }
+  // Soft warnings of a 409 "confirmation_required" answer: each sentence is kept so the screen can ask the person about them.
+  if (b.warnings?.length) {
+    details = { ...(details ?? {}), warnings: b.warnings.map((w) => w.message) };
+    message = b.warnings.map((w) => w.message).join(" ");
   }
   return new ApiError(b.code ?? CODE_BY_STATUS[status] ?? "http_error", message, status, details);
 }

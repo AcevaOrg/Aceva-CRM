@@ -149,7 +149,8 @@ describe('M3 leaving: scheduled for a future day', () => {
     expect((await prisma.employee.findUniqueOrThrow({ where: { empId: SALES1 } })).status).toBe('on_notice');
 
     // through the whole last working day the person keeps access: still on notice on that day, even late in the evening
-    t.clock.advance(3 * 86_400_000 + 3600_000);
+    // (worked out from the job's own time: a fixed 3 days and an hour fell after midnight in Pakistan when the test ran late in the evening there)
+    t.clock.advance(accessEndsAt(day).getTime() - 3600_000 - t.clock.now().getTime());
     expect(await runner.tick()).toBe(0);
     expect((await prisma.employee.findUniqueOrThrow({ where: { empId: SALES1 } })).status).toBe('on_notice');
     // access ends at 00:00 Pakistan time on the next day

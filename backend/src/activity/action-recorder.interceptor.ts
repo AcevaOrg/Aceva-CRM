@@ -127,7 +127,7 @@ export class ActionRecorderInterceptor implements NestInterceptor {
       action: classified.action,
       module: classified.module,
       description: classified.description,
-      target: note?.target ?? classified.target,
+      target: note?.hideTarget ? null : (note?.target ?? classified.target),
       sessionId: request.sessionId ?? null,
       ip: request.ip ?? null,
       requestId: request.requestId ?? null,

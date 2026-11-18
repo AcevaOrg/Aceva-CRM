@@ -161,7 +161,14 @@ describe('M4 active and idle time on the screens', () => {
     expect(res.body.summary.tasksTouched).toBe(0); // until Module 5 exists
     expect(res.body.summary.checkIn).toBeUndefined(); // until Module 7 exists
     expect(res.body.summary.actions).toBe(0); // a login and a screen are not actions
-    expect(res.body.events.map((e: { action: string }) => e.action)).toEqual(expect.arrayContaining(['login', 'screen_view']));
+    // The sign-in and the opened screen belong to the day the work began. Over midnight (two worked days) that is the
+    // first day, not the last one, so the events are collected over all the worked days.
+    const actions: string[] = [];
+    for (const date of workedDays) {
+      const day = await t.as(CTO).get('/api/v1/activity/timeline').query({ empId: WORKER, date }).expect(200);
+      actions.push(...day.body.events.map((e: { action: string }) => e.action));
+    }
+    expect(actions).toEqual(expect.arrayContaining(['login', 'screen_view']));
   });
 
   it('"My activity": today so far, own records, this session\'s screens and heartbeats', async () => {
@@ -286,18 +293,24 @@ describe('M4 nightly daily summary', () => {
 
   it('Module 5 and Module 7 plug in "tasks touched" and the check-in through the hooks', async () => {
     const hooks = t.app.get(ActivitySummaryHooks);
-    const workerId = (await prisma.employee.findUniqueOrThrow({ where: { empId: WORKER }, select: { id: true } })).id;
-    const day = workedDays[workedDays.length - 1];
+    // A person who signs in right now, so the day is "today" by the test clock. Today is never stored (the nightly job
+    // keeps only finished days, insert-only), so the hooks decide its numbers. WORKER's own day cannot be used here: the
+    // tests above move the clock about half an hour ahead, and when that crosses midnight Pakistan time his day is already
+    // finished and stored by the job test, with the numbers it had at the time.
+    await t.signIn(NIGHT);
+    const nightId = (await prisma.employee.findUniqueOrThrow({ where: { empId: NIGHT }, select: { id: true } })).id;
+    const day = pakistanDay(t.clock.now());
     const checkIn = new Date(t.clock.now().getTime() - 3 * 3_600_000);
-    hooks.useTasksTouched(async ({ employeeIds }) => new Map(employeeIds.map((id) => [id, id === workerId ? 3 : 0])));
-    hooks.useCheckIns(async () => new Map([[workerId, checkIn]]));
+    const previousTasksSource = hooks.tasksTouchedSource();
+    hooks.useTasksTouched(async ({ employeeIds }) => new Map(employeeIds.map((id) => [id, id === nightId ? 3 : 0])));
+    hooks.useCheckIns(async () => new Map([[nightId, checkIn]]));
     try {
-      const [computed] = await summaries.compute([workerId], [day]);
-      expect(computed).toMatchObject({ employeeId: workerId, tasksTouched: 3, checkIn });
-      const res = await t.as(CTO).get('/api/v1/activity/timeline').query({ empId: WORKER, date: day }).expect(200);
+      const [computed] = await summaries.compute([nightId], [day]);
+      expect(computed).toMatchObject({ employeeId: nightId, tasksTouched: 3, checkIn });
+      const res = await t.as(CTO).get('/api/v1/activity/timeline').query({ empId: NIGHT, date: day }).expect(200);
       expect(res.body.summary).toMatchObject({ tasksTouched: 3, checkIn: checkIn.toISOString() });
     } finally {
-      hooks.useTasksTouched(null);
+      hooks.useTasksTouched(previousTasksSource);
       hooks.useCheckIns(null);
     }
   });

@@ -150,6 +150,80 @@ enum AlertSeverity {
   @@map("alert_severity")
 }
 
+/// Task size (plan section 9). XL cannot be assigned: it must be split first.
+enum TaskSize {
+  XS
+  S
+  M
+  L
+  XL
+
+  @@map("task_size")
+}
+
+/// The task status flow. "Overdue" is NOT a status: it is worked out from the deadline.
+enum TaskStatus {
+  assigned
+  in_progress
+  submitted
+  under_review
+  approved
+  rework
+  on_hold
+  cancelled
+
+  @@map("task_status")
+}
+
+enum TaskPriority {
+  low
+  medium
+  high
+  urgent
+
+  @@map("task_priority")
+}
+
+enum ExtensionStatus {
+  pending
+  approved
+  rejected
+
+  @@map("extension_status")
+}
+
+/// A reviewer either approves (with a rating) or sends the task back (with a reason).
+enum ReviewDecision {
+  approved
+  rework
+
+  @@map("review_decision")
+}
+
+enum RepeatUnit {
+  week
+  month
+
+  @@map("repeat_unit")
+}
+
+/// What one line of a task's history is. Only "status" changes the status; the other kinds are recorded with
+/// from = to = the current status so the screen can show one timeline.
+enum TaskHistoryKind {
+  created
+  status
+  deadline_changed
+  extension_requested
+  extension_approved
+  extension_rejected
+  reassigned
+  transferred
+  edited
+  repeat_stopped
+
+  @@map("task_history_kind")
+}
+
 // ---------------------------------------------------------------------------
 // M1: levels, roles, permissions, duties, departments, offices
 // ---------------------------------------------------------------------------
@@ -364,31 +438,40 @@ model Employee {
   reportsTo     Employee?    @relation("ReportsTo", fields: [reportsToId], references: [id])
   directReports Employee[]   @relation("ReportsTo")
 
-  personal            EmployeePersonal?
-  pay                 EmployeePay?
-  duties              EmployeeDuty[]
-  ancestors           ReportingClosure[]     @relation("ClosureDescendant")
-  descendants         ReportingClosure[]     @relation("ClosureAncestor")
-  standInsAsManager   StandIn[]              @relation("StandInManager")
-  standInsAsCover     StandIn[]              @relation("StandInCover")
-  credential          Credential?
-  totpSecret          TotpSecret?
-  passwordHistory     PasswordHistory[]
-  passwordResets      PasswordResetToken[]
-  sessions            Session[]
-  loginAttempts       LoginAttempt[]
-  employmentHistory   EmploymentHistory[]
-  profileChanges      ProfileChange[]
-  documents           EmployeeDocument[]
-  hireRequestsMade    HireRequest[]          @relation("HireRequester")
-  hireRequestsDecided HireRequest[]          @relation("HireDecider")
-  hireRequestOf       HireRequest?           @relation("HireResult")
-  auditEntries        AuditLog[]
-  activityEvents      ActivityEvent[]
-  activityHeartbeats  ActivityHeartbeat[]
-  activitySummaries   ActivityDailySummary[]
-  securityAlerts      SecurityAlert[]        @relation("AlertSubject")
-  alertChecks         SecurityAlertCheck[]   @relation("AlertChecker")
+  personal              EmployeePersonal?
+  pay                   EmployeePay?
+  duties                EmployeeDuty[]
+  ancestors             ReportingClosure[]     @relation("ClosureDescendant")
+  descendants           ReportingClosure[]     @relation("ClosureAncestor")
+  standInsAsManager     StandIn[]              @relation("StandInManager")
+  standInsAsCover       StandIn[]              @relation("StandInCover")
+  credential            Credential?
+  totpSecret            TotpSecret?
+  passwordHistory       PasswordHistory[]
+  passwordResets        PasswordResetToken[]
+  sessions              Session[]
+  loginAttempts         LoginAttempt[]
+  employmentHistory     EmploymentHistory[]
+  profileChanges        ProfileChange[]
+  documents             EmployeeDocument[]
+  hireRequestsMade      HireRequest[]          @relation("HireRequester")
+  hireRequestsDecided   HireRequest[]          @relation("HireDecider")
+  hireRequestOf         HireRequest?           @relation("HireResult")
+  auditEntries          AuditLog[]
+  activityEvents        ActivityEvent[]
+  activityHeartbeats    ActivityHeartbeat[]
+  activitySummaries     ActivityDailySummary[]
+  securityAlerts        SecurityAlert[]        @relation("AlertSubject")
+  alertChecks           SecurityAlertCheck[]   @relation("AlertChecker")
+  tasksOwned            Task[]                 @relation("TaskAssignee")
+  tasksAssigned         Task[]                 @relation("TaskAssigner")
+  taskReviews           TaskReview[]           @relation("TaskReviewer")
+  taskComments          TaskComment[]          @relation("TaskCommentAuthor")
+  taskMentions          TaskCommentMention[]   @relation("TaskMentioned")
+  taskExtensions        TaskExtension[]        @relation("ExtensionRequester")
+  taskExtensionsDecided TaskExtension[]        @relation("ExtensionDecider")
+  taskHistoryEntries    TaskHistory[]          @relation("TaskHistoryActor")
+  taskAttachments       TaskAttachment[]       @relation("TaskAttachmentUploader")
 
   @@index([departmentId])
   @@index([officeId])
@@ -910,6 +993,352 @@ model SecurityAlertCheck {
 
   @@index([checkedAt])
   @@map("security_alert_checks")
+}
+
+// ---------------------------------------------------------------------------
+// M5: task management (plan section 9). History tables are insert-only (a trigger blocks UPDATE and DELETE):
+// task_history, task_reviews, task_size_setting_changes, task_comments, task_comment_mentions.
+// A decided extension request can no longer change. Tasks are never deleted: they are cancelled.
+// ---------------------------------------------------------------------------
+
+/// The size table of plan section 9 (one row per size), editable by the Director. Old tasks keep the points and hours
+/// they were created with (tasks.points and tasks.estimated_hours are copies), so changing a row never rewrites the past.
+model TaskSizeSetting {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  size       TaskSize @unique
+  meaning    String
+  /// Estimated work in hours.
+  hours      Decimal  @db.Decimal(6, 2)
+  /// What the screens show, for example "2 to 4 h" or "1 to 2 days".
+  hoursLabel String   @map("hours_label")
+  points     Int
+  /// Suggested working days for the deadline. Null for XL: it must be split before it is assigned.
+  days       Int?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?  @map("updated_by") @db.Uuid
+
+  @@map("task_size_settings")
+}
+
+/// One line per change of the size table: the row before and after, who and why. Insert-only.
+model TaskSizeSettingChange {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  size      TaskSize
+  /// { meaning, hours, hoursLabel, points, days } before and after.
+  before    Json
+  after     Json
+  reason    String
+  changedBy String   @map("changed_by") @db.Uuid
+  changedAt DateTime @default(now()) @map("changed_at") @db.Timestamptz(3)
+
+  @@index([changedAt])
+  @@index([size, changedAt])
+  @@map("task_size_setting_changes")
+}
+
+/// Projects or clients a task can be linked to (so finance can show profit by project later). Minimal for now: read-only
+/// demo rows; real projects and clients belong to a later module.
+model Project {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String    @unique
+  name       String
+  client     String?
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  tasks       Task[]
+  repeatRules TaskRepeatRule[]
+
+  @@map("projects")
+}
+
+/// The company holiday calendar. Tasks skip these days when they suggest a deadline; Module 7 (attendance) and
+/// Module 8 (payroll) read the same table. One holiday per date among the active rows: a partial unique index
+/// ("holidays_active_date", in the migration) allows an archived row and a new active row on the same date.
+model Holiday {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date       DateTime  @db.Date
+  name       String
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  @@index([date])
+  @@map("holidays")
+}
+
+/// A task: one owner, a size and a deadline. A personal to-do (personal = true) belongs to its owner alone: not scored,
+/// not visible to managers, no review.
+model Task {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// What people see: TSK-0001 for work tasks, TODO-0001 for personal to-dos. Generated by the service from a sequence.
+  number           String       @unique
+  title            String
+  description      String       @default("")
+  assigneeId       String       @map("assignee_id") @db.Uuid
+  /// The person who assigned it (from the login). For a personal to-do: the owner.
+  assignedById     String       @map("assigned_by_id") @db.Uuid
+  projectId        String?      @map("project_id") @db.Uuid
+  /// Link to a department goal (a later module owns goals): a plain reference, no table yet.
+  goalId           String?      @map("goal_id")
+  priority         TaskPriority @default(medium)
+  size             TaskSize
+  /// Copies of the size table's points and hours at the time the task was created.
+  points           Int
+  estimatedHours   Decimal      @map("estimated_hours") @db.Decimal(6, 2)
+  startDate        DateTime     @map("start_date") @db.Timestamptz(3)
+  /// The current deadline (changes when an extension is approved or the manager moves it).
+  deadline         DateTime     @db.Timestamptz(3)
+  /// The first deadline, never changed. On-time is measured against the approved (current) deadline.
+  originalDeadline DateTime     @map("original_deadline") @db.Timestamptz(3)
+  status           TaskStatus   @default(assigned)
+  personal         Boolean      @default(false)
+  /// When the person first started it (first move to in_progress). Null while not started (the "half time" reminder).
+  startedAt        DateTime?    @map("started_at") @db.Timestamptz(3)
+  /// The last time it was handed in for review.
+  submittedAt      DateTime?    @map("submitted_at") @db.Timestamptz(3)
+  /// When it was approved or cancelled.
+  closedAt         DateTime?    @map("closed_at") @db.Timestamptz(3)
+  extensionsCount  Int          @default(0) @map("extensions_count")
+  reworkCount      Int          @default(0) @map("rework_count")
+  /// Set on tasks created by a repeating series, with the day this one stands for. Unique together, so a retried job
+  /// can never create the same occurrence twice.
+  repeatRuleId     String?      @map("repeat_rule_id") @db.Uuid
+  occurrenceOn     DateTime?    @map("occurrence_on") @db.Date
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy        String?      @map("created_by") @db.Uuid
+  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?      @map("updated_by") @db.Uuid
+
+  assignee   Employee        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  assignedBy Employee        @relation("TaskAssigner", fields: [assignedById], references: [id], onDelete: Restrict)
+  project    Project?        @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  repeatRule TaskRepeatRule? @relation(fields: [repeatRuleId], references: [id], onDelete: Restrict)
+
+  checklist   TaskChecklistItem[]
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+  extensions  TaskExtension[]
+  reviews     TaskReview[]
+  history     TaskHistory[]
+
+  @@unique([repeatRuleId, occurrenceOn])
+  @@index([assigneeId, status])
+  @@index([assigneeId, deadline])
+  @@index([assignedById, status])
+  @@index([status, deadline])
+  @@index([deadline])
+  @@index([projectId])
+  @@map("tasks")
+}
+
+/// Smaller steps inside a task. Ticked and unticked by the person doing the task.
+model TaskChecklistItem {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId    String    @map("task_id") @db.Uuid
+  position  Int
+  text      String
+  done      Boolean   @default(false)
+  doneAt    DateTime? @map("done_at") @db.Timestamptz(3)
+  doneBy    String?   @map("done_by") @db.Uuid
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Restrict)
+
+  @@unique([taskId, position])
+  @@index([doneBy, doneAt])
+  @@map("task_checklist_items")
+}
+
+/// A comment on a task. Insert-only: comments are never edited or removed.
+model TaskComment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId    String   @map("task_id") @db.Uuid
+  authorId  String   @map("author_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  task        Task                 @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  author      Employee             @relation("TaskCommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  mentions    TaskCommentMention[]
+  attachments TaskAttachment[]
+
+  @@index([taskId, createdAt])
+  @@index([authorId, createdAt])
+  @@map("task_comments")
+}
+
+/// Who a comment @mentioned. Insert-only.
+model TaskCommentMention {
+  commentId  String   @map("comment_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  comment  TaskComment @relation(fields: [commentId], references: [id], onDelete: Restrict)
+  employee Employee    @relation("TaskMentioned", fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@id([commentId, employeeId])
+  @@index([employeeId])
+  @@map("task_comment_mentions")
+}
+
+/// A file on a task or on one of its comments. The file lives in private storage (FileStorage) under storage_key; this
+/// table never holds file bytes or public links. Archived, never deleted.
+model TaskAttachment {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId           String    @map("task_id") @db.Uuid
+  /// Set when the file was added with a comment.
+  commentId        String?   @map("comment_id") @db.Uuid
+  uploadedById     String    @map("uploaded_by_id") @db.Uuid
+  storageKey       String    @unique @map("storage_key")
+  originalFilename String    @map("original_filename")
+  mimeType         String    @map("mime_type")
+  sizeBytes        Int       @map("size_bytes")
+  sha256           String
+  archivedAt       DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?   @map("updated_by") @db.Uuid
+
+  task       Task         @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  comment    TaskComment? @relation(fields: [commentId], references: [id], onDelete: Restrict)
+  uploadedBy Employee     @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([taskId])
+  @@index([commentId])
+  @@index([uploadedById, createdAt])
+  @@map("task_attachments")
+}
+
+/// A request for more time. A request before the deadline is on time; after it the request is "late". The assigner
+/// decides. One pending request per task (partial unique index). Once decided the row never changes (trigger).
+model TaskExtension {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId            String          @map("task_id") @db.Uuid
+  requestedById     String          @map("requested_by_id") @db.Uuid
+  /// The deadline when the request was made, and the one asked for.
+  currentDeadline   DateTime        @map("current_deadline") @db.Timestamptz(3)
+  requestedDeadline DateTime        @map("requested_deadline") @db.Timestamptz(3)
+  reason            String
+  status            ExtensionStatus @default(pending)
+  /// Asked after the deadline: counts as late.
+  late              Boolean         @default(false)
+  decidedById       String?         @map("decided_by_id") @db.Uuid
+  decidedAt         DateTime?       @map("decided_at") @db.Timestamptz(3)
+  /// Required when rejecting.
+  decisionReason    String?         @map("decision_reason")
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  requestedBy Employee  @relation("ExtensionRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  decidedBy   Employee? @relation("ExtensionDecider", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt])
+  @@index([status, createdAt])
+  @@index([requestedById, createdAt])
+  @@index([decidedById, decidedAt])
+  @@map("task_extensions")
+}
+
+/// The review of a submitted task: approved with a rating 1 to 5 (and an optional comment) or sent back with a reason.
+/// Insert-only. Module 6 builds the performance figures on top of it; a later rating change (a dispute) adds its own
+/// row in Module 6, it never edits this one.
+model TaskReview {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId           String         @map("task_id") @db.Uuid
+  reviewerId       String         @map("reviewer_id") @db.Uuid
+  decision         ReviewDecision
+  /// 1 to 5 on approve, null on rework.
+  rating           Int?
+  /// The approve comment (optional).
+  comment          String?
+  /// The rework reason (required on rework).
+  reason           String?
+  /// When the task was handed in, and the deadline in force at that moment (so on-time can be worked out later).
+  submittedAt      DateTime?      @map("submitted_at") @db.Timestamptz(3)
+  deadlineAtReview DateTime       @map("deadline_at_review") @db.Timestamptz(3)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  task     Task     @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  reviewer Employee @relation("TaskReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, createdAt])
+  @@index([reviewerId, createdAt])
+  @@map("task_reviews")
+}
+
+/// The full history of a task: creation, every status change, deadline changes, extensions, hand-overs. Insert-only.
+/// by_id is null for the system (a repeating series, the leaver hand-over, an automatic job).
+model TaskHistory {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId     String          @map("task_id") @db.Uuid
+  kind       TaskHistoryKind @default(status)
+  fromStatus TaskStatus?     @map("from_status")
+  toStatus   TaskStatus      @map("to_status")
+  byId       String?         @map("by_id") @db.Uuid
+  reason     String?
+  /// Small extras: { fromDeadline, toDeadline } for a deadline change, { fromEmpId, toEmpId } for a hand-over...
+  details    Json?
+  at         DateTime        @default(now()) @db.Timestamptz(3)
+
+  task Task      @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  by   Employee? @relation("TaskHistoryActor", fields: [byId], references: [id], onDelete: Restrict)
+
+  @@index([taskId, at])
+  @@index([byId, at])
+  @@index([at])
+  @@map("task_history")
+}
+
+/// A repeating task (for example a weekly report every Monday). It keeps its own copy of what to create; the job
+/// "task.repeat" creates one task per due day and arms itself for the next. It repeats until the stop date or until
+/// someone stops it. Tasks it created point back to it (tasks.repeat_rule_id).
+model TaskRepeatRule {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  every            RepeatUnit
+  /// Weekly: 1 = Monday ... 7 = Sunday. Monthly: day of the month 1 to 28.
+  on               Int
+  /// Stop date (Pakistan day, included). Null = until stopped.
+  until            DateTime?    @db.Date
+  active           Boolean      @default(true)
+  stoppedAt        DateTime?    @map("stopped_at") @db.Timestamptz(3)
+  stoppedBy        String?      @map("stopped_by") @db.Uuid
+  /// The last occurrence day a task was created for. Starts as the Pakistan day of the task that began the series.
+  lastOccurrenceOn DateTime?    @map("last_occurrence_on") @db.Date
+  /// What each new task copies.
+  title            String
+  description      String       @default("")
+  assigneeId       String       @map("assignee_id") @db.Uuid
+  assignedById     String       @map("assigned_by_id") @db.Uuid
+  projectId        String?      @map("project_id") @db.Uuid
+  priority         TaskPriority
+  size             TaskSize
+  estimatedHours   Decimal      @map("estimated_hours") @db.Decimal(6, 2)
+  /// The start time of day in Pakistan time ("09:00") and how long each task runs (deadline minus start).
+  startTime        String       @map("start_time")
+  durationMinutes  Int          @map("duration_minutes")
+  /// The checklist texts to copy: ["Write the report", "Send it"].
+  checklist        Json         @default("[]")
+  personal         Boolean      @default(false)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy        String?      @map("created_by") @db.Uuid
+  updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?      @map("updated_by") @db.Uuid
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  tasks   Task[]
+
+  @@index([active, every])
+  @@map("task_repeat_rules")
 }
 
 /// Temporary PostgreSQL-backed job queue (BullMQ replaces it once Redis exists).
