@@ -156,12 +156,7 @@ export function seedReads(convs: ConversationRecord[]) {
 
 export function seedPresence(): Presence[] {
   const online = ["ACV-0006", "ACV-0004", "ACV-0013", "ACV-0003", "ACV-0009", "ACV-0010", "ACV-0014", "ACV-0011"];
-  const away = ["ACV-0001", "ACV-0008"];
-  return EMPLOYEES.map((e, i) => ({
-    empId: e.empId,
-    state: online.includes(e.empId) ? "online" : away.includes(e.empId) ? "away" : "offline",
-    lastSeenAt: online.includes(e.empId) ? minutesAgo(1) : minutesAgo(20 + i * 37),
-  }));
+  return EMPLOYEES.map((e) => ({ empId: e.empId, state: online.includes(e.empId) ? "online" : "offline" }));
 }
 
 export function seedAnnouncements(): Announcement[] {

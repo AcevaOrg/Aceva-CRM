@@ -18,7 +18,7 @@ export class SessionIdentityProvider extends IdentityProvider {
     super();
   }
 
-  async resolve(request: Request, options: { financeScreen: boolean }): Promise<ResolvedIdentity | null> {
+  async resolve(request: Request, options: { financeScreen: boolean; passive?: boolean }): Promise<ResolvedIdentity | null> {
     const token = (request.cookies as Record<string, string> | undefined)?.[SESSION_COOKIE];
     if (!token || typeof token !== 'string') return null;
 

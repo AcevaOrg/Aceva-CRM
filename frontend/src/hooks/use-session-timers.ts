@@ -52,14 +52,14 @@ export function useSessionTimers() {
   useEffect(() => {
     const tick = setInterval(compute, 5_000);
     const beat = setInterval(() => {
-      if (empId) sendHeartbeat(empId, activeThisMinute.current);
+      if (empId) sendHeartbeat(empId, activeThisMinute.current, limitMin === 10);
       activeThisMinute.current = false;
     }, 60_000);
     return () => {
       clearInterval(tick);
       clearInterval(beat);
     };
-  }, [empId, compute]);
+  }, [empId, compute, limitMin]);
 
   // Screen view events.
   useEffect(() => {

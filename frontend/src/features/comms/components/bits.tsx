@@ -39,8 +39,8 @@ export function dmOther(c: Pick<Conversation, "kind" | "memberEmpIds">, me?: str
   return c.kind === "dm" ? c.memberEmpIds.find((p) => p !== me) : undefined;
 }
 
-const DOT: Record<PresenceState, string> = { online: "bg-success", away: "bg-warning", offline: "bg-muted-foreground/50" };
-const DOT_LABEL: Record<PresenceState, string> = { online: "Online", away: "Away", offline: "Offline" };
+const DOT: Record<PresenceState, string> = { online: "bg-success", offline: "bg-muted-foreground/50" };
+const DOT_LABEL: Record<PresenceState, string> = { online: "Online", offline: "Offline" };
 
 export function PresenceDot({ state, className }: { state?: PresenceState; className?: string }) {
   if (!state) return null;

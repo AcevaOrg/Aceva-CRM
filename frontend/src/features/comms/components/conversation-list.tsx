@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { Bookmark, Plus, Search } from "lucide-react";
+import { Bookmark, Plus, Search, TextSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tip } from "@/components/ui/overlays";
@@ -20,13 +20,17 @@ function when(iso: string) {
 export function ConversationList({
   activeId,
   savedActive,
+  searchActive = false,
   onNew,
   onSaved,
+  onSearch,
 }: {
   activeId?: string;
   savedActive: boolean;
+  searchActive?: boolean;
   onNew: () => void;
   onSaved: () => void;
+  onSearch?: () => void;
 }) {
   const q = useConversations();
   const title = useConversationTitle();
@@ -59,6 +63,17 @@ export function ConversationList({
           </span>
           Saved messages
         </button>
+        {onSearch && (
+          <button
+            onClick={onSearch}
+            className={cn("mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition hover:bg-muted", searchActive && "bg-accent")}
+          >
+            <span className="grid size-8 place-content-center rounded-lg bg-muted text-muted-foreground">
+              <TextSearch className="size-4" />
+            </span>
+            Search messages
+          </button>
+        )}
         {q.isPending ? (
           <ListSkeleton rows={6} className="mt-2" />
         ) : q.isError ? (

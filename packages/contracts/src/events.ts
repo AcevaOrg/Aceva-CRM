@@ -288,6 +288,21 @@ export const commsMessageCreatedV1 = defineEvent(
   }),
 );
 
+/**
+ * M14.2: a saved message changed (never its text): edited, deleted by its author, removed by a moderator, a reaction
+ * added or taken back, pinned or unpinned. Read by the live-delivery safety net (`comms-realtime`), which re-sends the
+ * live update when the first one was lost, so open screens always end up showing what the database holds.
+ */
+export const commsMessageChangedV1 = defineEvent(
+  'comms.message.changed',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    messageId: z.uuid(),
+    change: z.enum(['edited', 'deleted', 'removed', 'reaction', 'pinned', 'unpinned']),
+  }),
+);
+
 /** M14: someone stopped being a member of a conversation (removed by a moderator or admin, left, or left the company). */
 export const commsMemberRemovedV1 = defineEvent(
   'comms.member.removed',
@@ -325,6 +340,7 @@ export const outboxEventSchemas = {
   'comms.mention': { 1: commsMentionV1 },
   'comms.announcement.published': { 1: commsAnnouncementPublishedV1 },
   'comms.message.created': { 1: commsMessageCreatedV1 },
+  'comms.message.changed': { 1: commsMessageChangedV1 },
   'comms.member.removed': { 1: commsMemberRemovedV1 },
 } as const;
 
@@ -354,6 +370,7 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   commsMentionV1,
   commsAnnouncementPublishedV1,
   commsMessageCreatedV1,
+  commsMessageChangedV1,
   commsMemberRemovedV1,
 ]);
 

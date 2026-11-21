@@ -9,6 +9,7 @@ import type {
   OrgNode,
   TeamMember,
 } from '@aceva/contracts';
+import { AccessChangeNotifier } from '../access/access-change.notifier';
 import { AuditService } from '../access/audit.service';
 import type { Actor } from '../access/access.types';
 import type { RequestInfo } from '../access/decorators';
@@ -45,6 +46,7 @@ export class OrgService {
     private readonly scope: ScopeService,
     private readonly hierarchy: HierarchyService,
     private readonly audit: AuditService,
+    private readonly accessChanges: AccessChangeNotifier,
   ) {}
 
   // ---------------------------------------------------------------- reading
@@ -263,7 +265,7 @@ export class OrgService {
 
   /** Owner or CEO changes someone's level (and role). Everything is validated before saving. */
   async changeLevel(actor: Actor, targetEmpId: string, dto: ChangeLevelRequest, client: RequestInfo) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await this.hierarchy.lock(tx);
       const target = await this.requirePerson(tx, targetEmpId);
 
@@ -330,6 +332,8 @@ export class OrgService {
       );
       return { empId: target.empId, level: dto.level, roleKey: role.key };
     });
+    await this.accessChanges.changed([result.empId]); // the new role's permissions apply to live connections at once
+    return result;
   }
 
   /** Owner or CEO moves someone under a different reporting person. */
@@ -380,7 +384,7 @@ export class OrgService {
 
   /** The Director gives someone an extra duty (for example Finance duty). */
   async assignDuty(actor: Actor, targetEmpId: string, dto: AssignDutyRequest, client: RequestInfo) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const target = await this.requirePerson(tx, targetEmpId);
       const duty = await tx.duty.findUnique({ where: { key: dto.dutyKey } });
       if (!duty) throw new NotFoundException(`Unknown duty "${dto.dutyKey}"`);
@@ -397,10 +401,12 @@ export class OrgService {
       );
       return { empId: target.empId, duty: duty.key };
     });
+    await this.accessChanges.changed([result.empId]);
+    return result;
   }
 
   async endDuty(actor: Actor, targetEmpId: string, dutyKey: string, dto: EndDutyRequest, client: RequestInfo) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const target = await this.requirePerson(tx, targetEmpId);
       const active = await tx.employeeDuty.findFirst({
         where: { employeeId: target.id, endedAt: null, duty: { key: dutyKey } },
@@ -413,6 +419,8 @@ export class OrgService {
       );
       return { empId: target.empId, duty: dutyKey, ended: true };
     });
+    await this.accessChanges.changed([result.empId]); // a permission held through this duty stops at once
+    return result;
   }
 
   // ---------------------------------------------------------------- helpers

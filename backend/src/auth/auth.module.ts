@@ -32,6 +32,6 @@ import { TotpService } from './totp.service';
     // The session cookie is the only way to be identified.
     { provide: IdentityProvider, useClass: SessionIdentityProvider },
   ],
-  exports: [AuthService, SessionService, StepUpService, PasswordService, IdentityProvider, Mailer],
+  exports: [AuthService, AuthStateService, SessionService, StepUpService, PasswordService, IdentityProvider, Mailer],
 })
 export class AuthModule {}

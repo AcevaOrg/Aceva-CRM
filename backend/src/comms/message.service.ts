@@ -25,6 +25,7 @@ import { CommsAccessService, conversationInclude, notFound, type ConversationRow
 import { CommsDbError, commsDb } from './comms-errors';
 import { decodeCursor, encodeCursor } from './cursor';
 import { MessageViewBuilder, messageSelect, type MessageRow } from './message-views';
+import { CommsRealtimePublisher } from './realtime/comms-realtime.publisher';
 
 type Tx = Prisma.TransactionClient;
 
@@ -54,6 +55,7 @@ export class MessageService {
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly clock: Clock,
+    private readonly realtime: CommsRealtimePublisher,
   ) {}
 
   // ---------- Sending ----------
@@ -98,7 +100,7 @@ export class MessageService {
             await tx.messageMention.createMany({ data: mentioned.map((m) => ({ messageId: created.id, employeeId: m.id, createdAt: now })) });
           }
           await this.advance(tx, c.id, actor.id, created.seq, now);
-          await this.outbox.emit(
+          const eventId = await this.outbox.emit(
             {
               type: 'comms.message.created',
               actor: actor.empId,
@@ -107,9 +109,11 @@ export class MessageService {
             tx,
           );
           await this.emitMentions(tx, actor, c.id, created.id, mentioned);
-          return created;
+          return { ...created, eventId };
         }),
       );
+      // Saved and committed first; only then told to the live sockets (Module 14, part 2).
+      await this.realtime.messageCreated(c.id, message.id, message.eventId);
       return { message: await this.view(actor.id, message.id, c), created: true };
     } catch (error) {
       // Two sends with the same retry key at the same moment: the second one finds the first one's message.
@@ -304,7 +308,7 @@ export class MessageService {
     }
     if (current.body === body) return this.view(actor.id, message.id, c);
     const mentioned = await this.validateMentions(c, body);
-    await commsDb(() =>
+    const eventId = await commsDb(() =>
       this.prisma.$transaction(async (tx) => {
         const locked = await this.lock(tx, message.id);
         if (locked.deleted_at) deletedMessage();
@@ -319,8 +323,10 @@ export class MessageService {
         if (added.length) await tx.messageMention.createMany({ data: added.map((m) => ({ messageId: message.id, employeeId: m.id, createdAt: now })) });
         await this.emitMentions(tx, actor, c.id, message.id, added);
         await this.audit.record({ actorId: actor.id, action: 'comms.message.edited', targetType: 'message', targetId: message.id, details: { conversationId: c.id, seq: message.seq, revision: next }, ...client }, tx);
+        return this.changed(tx, actor, c.id, message.id, 'edited');
       }),
     );
+    await this.realtime.messageUpdated(c.id, message.id, eventId);
     return this.view(actor.id, message.id, c);
   }
 
@@ -343,10 +349,10 @@ export class MessageService {
 
   private async takeDown(actor: Actor, message: MessageRow, c: ConversationRow, kind: 'deleted' | 'removed', reason: string | null, client: RequestInfo): Promise<void> {
     const now = this.clock.now();
-    await commsDb(() =>
+    const eventId = await commsDb(() =>
       this.prisma.$transaction(async (tx) => {
         const locked = await this.lock(tx, message.id);
-        if (locked.deleted_at) return; // already deleted: nothing more to do
+        if (locked.deleted_at) return null; // already deleted: nothing more to do
         const next = locked.revision + 1;
         await tx.messageRevision.create({ data: { messageId: message.id, revision: next, kind, body: locked.body, changedById: actor.id, createdAt: now } });
         await tx.message.update({ where: { id: message.id }, data: { body: '', deletedAt: now, deletedById: actor.id, deletedAs: kind, revision: next } });
@@ -363,8 +369,18 @@ export class MessageService {
           },
           tx,
         );
+        return this.changed(tx, actor, c.id, message.id, kind);
       }),
     );
+    if (eventId) await this.realtime.messageUpdated(c.id, message.id, eventId);
+  }
+
+  /**
+   * Records that a message changed (ids only), in the same transaction as the change. The live update is sent after the
+   * commit; if it is lost, the outbox safety net re-sends it (Module 14, part 2). Returns the event id.
+   */
+  private changed(tx: Tx, actor: Actor, conversationId: string, messageId: string, change: 'edited' | 'deleted' | 'removed' | 'reaction' | 'pinned' | 'unpinned'): Promise<string> {
+    return this.outbox.emit({ type: 'comms.message.changed', actor: actor.empId, payload: { conversationId, messageId, change } }, tx);
   }
 
   private async lock(tx: Tx, messageId: string) {
@@ -383,12 +399,16 @@ export class MessageService {
     if (on) {
       if (message.deletedAt) deletedMessage();
       if (c.archivedAt) archived();
-      await commsDb(() =>
-        this.prisma.messageReaction.createMany({ data: [{ messageId: message.id, employeeId: actor.id, emoji, createdAt: this.clock.now() }], skipDuplicates: true }),
-      );
-    } else {
-      await commsDb(() => this.prisma.messageReaction.deleteMany({ where: { messageId: message.id, employeeId: actor.id, emoji } }));
     }
+    const eventId = await commsDb(() =>
+      this.prisma.$transaction(async (tx) => {
+        const changed = on
+          ? await tx.messageReaction.createMany({ data: [{ messageId: message.id, employeeId: actor.id, emoji, createdAt: this.clock.now() }], skipDuplicates: true })
+          : await tx.messageReaction.deleteMany({ where: { messageId: message.id, employeeId: actor.id, emoji } });
+        return changed.count ? this.changed(tx, actor, c.id, message.id, 'reaction') : null;
+      }),
+    );
+    if (eventId) await this.realtime.messageUpdated(c.id, message.id, eventId);
     return this.view(actor.id, message.id, c);
   }
 
@@ -398,16 +418,19 @@ export class MessageService {
     if (c.archivedAt) archived();
     if (!this.access.capabilities(access).pin) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'Only a moderator can pin messages in a channel' });
     if (on && message.deletedAt) deletedMessage();
-    await commsDb(() =>
+    const eventId = await commsDb(() =>
       this.prisma.$transaction(async (tx) => {
         const changed = on
           ? await tx.pinnedMessage.createMany({ data: [{ messageId: message.id, conversationId: c.id, pinnedById: actor.id, pinnedAt: this.clock.now() }], skipDuplicates: true })
           : await tx.pinnedMessage.deleteMany({ where: { messageId: message.id } });
         if (changed.count) {
           await this.audit.record({ actorId: actor.id, action: on ? 'comms.message.pinned' : 'comms.message.unpinned', targetType: 'message', targetId: message.id, details: { conversationId: c.id, seq: message.seq }, ...client }, tx);
+          return this.changed(tx, actor, c.id, message.id, on ? 'pinned' : 'unpinned');
         }
+        return null;
       }),
     );
+    if (eventId) await this.realtime.messageUpdated(c.id, message.id, eventId);
     return this.view(actor.id, message.id, c);
   }
 

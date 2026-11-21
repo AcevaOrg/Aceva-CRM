@@ -96,18 +96,45 @@ export function Composer({
   };
 
   const scanning = files.some((f) => f.scan === "scanning");
-  const canSend = !disabled && !send.isPending && !scanning && (text.trim().length > 0 || files.length > 0);
+  // Sending never blocks typing: Enter hands the message to an ordered send queue and the box is free at once.
+  const canSend = !disabled && !scanning && (text.trim().length > 0 || files.length > 0);
 
-  const submit = async () => {
-    if (!canSend) return;
+  // Messages waiting to be sent, in the order they were written. They go out one at a time, so they keep their order.
+  const queue = React.useRef<Array<{ body: string; attachments: Array<{ fileName: string; sizeBytes: number; mimeType: string }> }>>([]);
+  const draining = React.useRef(false);
+  const [sending, setSending] = React.useState(false);
+
+  const drain = async () => {
+    if (draining.current) return;
+    draining.current = true;
+    setSending(true);
     try {
-      await send.mutateAsync({ conversationId, parentId, body: text, attachments: files.map(({ fileName, sizeBytes, mimeType }) => ({ fileName, sizeBytes, mimeType })) });
-      setText("");
-      setFiles([]);
-      setMention(null);
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't send the message.");
+      while (queue.current.length) {
+        const next = queue.current[0];
+        try {
+          await send.mutateAsync({ conversationId, parentId, body: next.body, attachments: next.attachments });
+          queue.current.shift();
+        } catch (e) {
+          // Nothing is lost: what could not be sent goes back into the box, ahead of anything typed since.
+          const unsent = queue.current.splice(0).map((m) => m.body).filter((b) => b.trim());
+          if (unsent.length) setText((current) => [...unsent, current].filter((t) => t.trim()).join("\n"));
+          toast.error(e instanceof ApiError ? e.message : "Couldn't send the message.", { description: "It is back in the message box." });
+        }
+      }
+    } finally {
+      draining.current = false;
+      setSending(false);
     }
+  };
+
+  const submit = () => {
+    if (!canSend) return;
+    queue.current.push({ body: text, attachments: files.map(({ fileName, sizeBytes, mimeType }) => ({ fileName, sizeBytes, mimeType })) });
+    // Only what was just sent leaves the box; the person can type the next message straight away.
+    setText("");
+    setFiles([]);
+    setMention(null);
+    void drain();
   };
 
   if (disabled)
@@ -196,7 +223,7 @@ export function Composer({
           className="max-h-[180px] min-h-8 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-snug outline-none placeholder:text-muted-foreground/70"
         />
         <Button type="button" size="icon-sm" onClick={submit} disabled={!canSend} aria-label="Send">
-          {send.isPending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
+          {sending ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
         </Button>
       </div>
       {!compact && (

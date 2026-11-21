@@ -20,6 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CommsAccessService, conversationInclude, notFound, type ConversationRow, type MemberAccess } from './comms-access.service';
 import { CommsDbError, commsDb } from './comms-errors';
 import { decodeCursor, encodeCursor } from './cursor';
+import { CommsRealtimePublisher } from './realtime/comms-realtime.publisher';
 
 type Tx = Prisma.TransactionClient;
 
@@ -40,6 +41,7 @@ export class ConversationService {
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly clock: Clock,
+    private readonly realtime: CommsRealtimePublisher,
   ) {}
 
   // ---------- Reading ----------
@@ -212,6 +214,7 @@ export class ConversationService {
             return c.id;
           }),
         );
+        await this.realtime.conversationChanged(id);
         return { conversation: await this.detail(actor, id), created: true };
       } catch (error) {
         // Two "start a DM" requests at the same moment: the second one gets the first one's conversation.
@@ -239,6 +242,7 @@ export class ConversationService {
           return c.id;
         }),
       );
+      await this.realtime.conversationChanged(id);
       return { conversation: await this.detail(actor, id), created: true };
     }
 
@@ -281,6 +285,7 @@ export class ConversationService {
         return c.id;
       }),
     );
+    await this.realtime.conversationChanged(id);
     return { conversation: await this.detail(actor, id), created: true };
   }
 
@@ -317,6 +322,7 @@ export class ConversationService {
         await this.audit.record({ actorId: actor.id, action: 'comms.conversation.updated', targetType: 'conversation', targetId: c.id, details: { changed: Object.keys(input).filter((k) => input[k as keyof UpdateConversationInput] !== undefined) }, ...client }, tx);
       }),
     );
+    await this.realtime.conversationChanged(c.id);
     return this.detail(actor, c.id);
   }
 
@@ -348,6 +354,7 @@ export class ConversationService {
           await this.audit.record({ actorId: actor.id, action: 'comms.member.added', targetType: 'conversation', targetId: c.id, details: { empIds: adding.map((p) => p.empId) }, ...client }, tx);
         }),
       );
+      await this.realtime.conversationChanged(c.id);
     }
     return this.detail(actor, c.id);
   }
@@ -382,6 +389,8 @@ export class ConversationService {
         }
       }),
     );
+    // Live sockets: every server re-checks this conversation's recipients; the removed person's sockets leave its room.
+    await this.realtime.conversationChanged(c.id);
     return { removed: true };
   }
 
@@ -420,6 +429,7 @@ export class ConversationService {
         await this.audit.record({ actorId: actor.id, action: moderator ? 'comms.moderator.added' : 'comms.moderator.removed', targetType: 'conversation', targetId: c.id, details: { empId: person.empId }, ...client }, tx);
       }),
     );
+    await this.realtime.conversationChanged(c.id);
     return this.detail(actor, c.id);
   }
 
@@ -436,6 +446,7 @@ export class ConversationService {
         await this.audit.record({ actorId: actor.id, action: 'comms.conversation.archived', targetType: 'conversation', targetId: c.id, reason, details: { kind: c.kind }, ...client }, tx);
       }),
     );
+    await this.realtime.conversationChanged(c.id);
     return this.detail(actor, c.id);
   }
 
@@ -471,6 +482,7 @@ export class ConversationService {
               "last_delivered_seq" = GREATEST("conversation_reads"."last_delivered_seq", EXCLUDED."last_delivered_seq"),
               "updated_at" = EXCLUDED."updated_at"`,
     );
+    await this.realtime.receipt(c.id, actor.id);
     const ctx = await this.access.actorContext(actor);
     const [summary] = await this.summaries(actor.id, ctx.departmentId, [c], () => 'member');
     const read = await commsDb(() => this.prisma.conversationRead.findUniqueOrThrow({ where: { conversationId_employeeId: { conversationId: c.id, employeeId: actor.id } } }));

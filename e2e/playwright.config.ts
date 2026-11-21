@@ -19,6 +19,13 @@ if (!testDb || !new URL(testDb).pathname.includes('test')) {
 
 export const API = 'http://localhost:4100/api/v1';
 
+/**
+ * PW_PREBUILT=1: the backend (npm run build -w backend) and the frontend (next build, with the NEXT_PUBLIC_* values
+ * below) were built beforehand, so the servers only reset the test database and start. Both builds at the same time
+ * (the default) need a lot of memory at once; on a machine short of memory, build first, one after the other.
+ */
+const PREBUILT = process.env.PW_PREBUILT === '1';
+
 // Saved logins and authenticator secrets belong to ONE run (the database is rebuilt for every run).
 if (!process.env.PW_E2E_RUN) {
   process.env.PW_E2E_RUN = String(Date.now());
@@ -37,7 +44,7 @@ export default defineConfig({
   use: { baseURL: 'http://localhost:3100', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   webServer: [
     {
-      command: 'npx tsx e2e/reset-test-db.ts && npm run build -w backend && node backend/dist/main.js',
+      command: PREBUILT ? 'npx tsx e2e/reset-test-db.ts && node backend/dist/main.js' : 'npx tsx e2e/reset-test-db.ts && npm run build -w backend && node backend/dist/main.js',
       cwd: '..',
       url: `${API}/health`,
       timeout: 240_000,
@@ -55,7 +62,7 @@ export default defineConfig({
       },
     },
     {
-      command: 'npx next build && npx next start -p 3100',
+      command: PREBUILT ? 'npx next start -p 3100' : 'npx next build && npx next start -p 3100',
       cwd: '../frontend',
       url: 'http://localhost:3100/login',
       timeout: 480_000,
@@ -63,7 +70,7 @@ export default defineConfig({
       env: {
         NODE_ENV: 'production', // Playwright sets NODE_ENV=test, which breaks next build
         NEXT_PUBLIC_API_MODE: 'mock',
-        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m7,m8,m9,m12,m13',
+        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m7,m8,m9,m12,m13,m14',
         NEXT_PUBLIC_API_URL: API,
       },
     },

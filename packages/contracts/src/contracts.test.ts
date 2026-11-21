@@ -59,6 +59,7 @@ describe('outbox event contracts', () => {
       'comms.announcement.published',
       'comms.member.removed',
       'comms.mention',
+      'comms.message.changed',
       'comms.message.created',
       'employee.offboarded',
       'finance.period.reopened',
@@ -241,5 +242,43 @@ describe('Module 14 part 1: conversation and message contracts', () => {
     const removed = { ...base, type: 'comms.member.removed', payload: { conversationId: key, empId: 'ACV-0008', byEmpId: 'ACV-0006', reason: 'removed' } };
     expect(outboxEventSchema.safeParse(removed).success).toBe(true);
     expect(outboxEventSchema.safeParse({ ...removed, payload: { ...removed.payload, reason: 'kicked' } }).success).toBe(false);
+  });
+});
+
+describe('Module 14, part 2: live delivery contract', () => {
+  it('fixes the agreed socket limits and the passive-read header', async () => {
+    const rt = await import('./realtime');
+    expect(rt.MAX_SOCKETS_PER_PERSON).toBe(5);
+    expect(rt.SOCKET_EVENTS_PER_SECOND).toBe(20);
+    expect(rt.REALTIME_PATH).toBe('/socket.io');
+    expect(rt.PASSIVE_REQUEST_HEADER).toBe('x-aceva-passive');
+  });
+
+  it('lets a browser send only the catch-up request; everything else is a change and goes through REST', async () => {
+    const rt = await import('./realtime');
+    expect([...rt.CLIENT_EVENTS]).toEqual(['sync']);
+  });
+
+  it('names every refusal a screen must handle', async () => {
+    const rt = await import('./realtime');
+    expect(rt.realtimeRefusalSchema.options.sort()).toEqual(
+      ['auth_incomplete', 'forbidden', 'origin_not_allowed', 'realtime_unavailable', 'too_many_attempts', 'too_many_connections', 'unauthenticated'].sort(),
+    );
+    expect(rt.realtimeRefusalSchema.safeParse('kicked').success).toBe(false);
+  });
+});
+
+describe('Module 14, part 2: message change events', () => {
+  it('describe a change by ids only, never the text', async () => {
+    const { outboxEventSchema } = await import('./events');
+    const base = { id: '7f2c1f1e-1d2a-4f61-9c0e-4c3b9a5d1e10', version: 1, occurredAt: '2026-11-20T10:00:00.000Z', actor: 'ACV-0006' };
+    const ids = { conversationId: '1b0b6b4e-2a7c-4d3e-9a6f-0c1d2e3f4a5b', messageId: '2c1c7c5f-3b8d-4e4f-8b7a-1d2e3f4a5b6c' };
+    for (const change of ['edited', 'deleted', 'removed', 'reaction', 'pinned', 'unpinned']) {
+      expect(outboxEventSchema.safeParse({ ...base, type: 'comms.message.changed', payload: { ...ids, change } }).success).toBe(true);
+    }
+    expect(outboxEventSchema.safeParse({ ...base, type: 'comms.message.changed', payload: { ...ids, change: 'renamed' } }).success).toBe(false);
+    // Unknown keys (such as a body) are not part of the event.
+    const parsed = outboxEventSchema.parse({ ...base, type: 'comms.message.changed', payload: { ...ids, change: 'edited', body: 'secret' } });
+    expect(parsed.payload).not.toHaveProperty('body');
   });
 });

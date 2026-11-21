@@ -5,7 +5,7 @@
  */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { setCsrf } from "@/lib/api/csrf";
+import { getCsrf, setCsrf } from "@/lib/api/csrf";
 import { isoDay } from "@/lib/dates";
 
 export type SessionStage = "signed_out" | "needs_2fa" | "needs_2fa_setup" | "needs_first_login" | "signed_in";
@@ -112,9 +112,12 @@ export const useSession = create<SessionState>()(
         set({ empId: null, liveMe: null, stage: "signed_out", signedInAt: null });
       },
       signOut: () => {
-        // Live mode: end the session on the server first (every logout is recorded there).
+        // Live mode: end the session on the server (every logout is recorded there, and every other open tab and device
+        // of this session is closed at once). The request needs this tab's CSRF token, which is forgotten just below, so
+        // it is taken now and sent explicitly (the HTTP client is loaded asynchronously).
+        const csrf = getCsrf();
         void import("@/lib/api/http").then(({ http, isLive }) => {
-          if (isLive("m2")) void http.post("/auth/logout", {}).catch(() => undefined);
+          if (isLive("m2")) void http.post("/auth/logout", {}, csrf ? { "X-CSRF-Token": csrf } : undefined).catch(() => undefined);
         });
         setCsrf(null);
         set({ empId: null, stage: "signed_out", signedInAt: null });

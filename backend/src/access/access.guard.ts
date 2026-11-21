@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { PASSIVE_REQUEST_HEADER, SCREEN_HEADER } from '@aceva/contracts';
 import { CryptoService } from '../auth/crypto.service';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env';
@@ -58,7 +59,14 @@ export class AccessGuard implements CanActivate {
 
     // 1. Who is calling?
     const financeScreen = !!this.reflector.getAllAndOverride<boolean>(FINANCE_SCREEN, targets);
-    const identity = await this.identity.resolve(request, { financeScreen });
+    // A screen catching up on its own after a live update (Module 14, part 2) marks its read with this header: the
+    // session is checked exactly as usual but the request does not count as activity. Only reads can be passive, and
+    // the header can only make a session end sooner, never later.
+    const passive = !changesData && request.header(PASSIVE_REQUEST_HEADER) === '1';
+    // The screen's own word that it is a finance screen (the heartbeat): the 10-minute limit applies, and the session
+    // remembers it for its live socket. It can only make the limit stricter.
+    const financeIdle = financeScreen || request.header(SCREEN_HEADER) === 'finance';
+    const identity = await this.identity.resolve(request, { financeScreen: financeIdle, passive });
     const actor = identity ? await this.loadActor(identity.empId) : null;
     if (!identity || !actor) {
       await this.audit.record({ actorId: null, action: 'access.denied', targetType: 'route', targetId: route, outcome: 'denied', reason: 'unauthenticated', ...client });

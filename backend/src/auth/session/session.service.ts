@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Clock } from '../../common/clock';
 import { OutboxService } from '../../events/outbox.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { RealtimeBus } from '../../redis/realtime-bus.service';
 import { CryptoService } from '../crypto.service';
 import { parseUserAgent } from '../user-agent';
 import { CachedSession, SessionStore } from './session-store';
@@ -12,12 +13,29 @@ export const FINANCE_IDLE_LIMIT_MS = 10 * 60_000; // finance screens
 export const MAX_SESSION_MS = 12 * 3_600_000; // in any case
 /** PostgreSQL gets the "last active" time at most this often (Redis always has the exact value). */
 const PG_SYNC_EVERY_MS = 60_000;
+/** Relay topic: a session has ended (payload: the session id only). Every server closes that session's sockets. */
+export const SESSION_ENDED_TOPIC = 'session-ended';
 
 export type EndReason = 'user' | 'idle_timeout' | 'max_duration' | 'password_changed' | 'forced' | 'employee_left';
 
 export type SessionCheck =
   | { ok: true; session: CachedSession }
   | { ok: false; reason: 'invalid' | 'expired' };
+
+/**
+ * The idle limit that applies to a session right now, for checks that are not tied to a screen (a live socket): the
+ * finance limit when the person's last activity was on a finance screen, the normal one otherwise. When that is not known
+ * (Redis lost the session and it was rebuilt from PostgreSQL) `financeFallback` decides: true for people with Finance
+ * duty, so the stricter limit is never lost.
+ */
+export function idleLimitOf(session: CachedSession, financeFallback = false): number {
+  return (session.financeActivity ?? financeFallback) ? FINANCE_IDLE_LIMIT_MS : IDLE_LIMIT_MS;
+}
+
+/** When this session ends if nothing happens: the idle limit above, or the 12-hour end, whichever comes first. */
+export function sessionDeadline(session: CachedSession, financeFallback = false): number {
+  return Math.min(session.lastActiveAt + idleLimitOf(session, financeFallback), session.absoluteExpiresAt);
+}
 
 export interface NewSession {
   employeeId: string;
@@ -46,6 +64,7 @@ export class SessionService {
     private readonly crypto: CryptoService,
     private readonly clock: Clock,
     private readonly outbox: OutboxService,
+    private readonly bus: RealtimeBus,
   ) {}
 
   /** Creates a session. Returns the secret token (for the cookie) and the CSRF token (for the page); neither is stored. */
@@ -97,8 +116,13 @@ export class SessionService {
   /**
    * Checks the cookie token. On success the "last active" time moves to now. An expired or unknown session
    * is ended (if it exists) and refused.
+   *
+   * `passive: true` does NOT count as activity (nothing is written): used for the WebSocket handshake and for requests a
+   * screen makes on its own (catching up after a live update), so an open screen never keeps a session alive without the
+   * person doing anything (Module 14, part 2, decision D1). A passive check applies the limit of the screen the person
+   * was last active on (idleLimitOf), or the finance limit when the request itself is for a finance screen.
    */
-  async authenticate(token: string, options: { financeScreen: boolean }): Promise<SessionCheck> {
+  async authenticate(token: string, options: { financeScreen: boolean; passive?: boolean; financeFallback?: boolean }): Promise<SessionCheck> {
     const now = this.clock.now().getTime();
     const tokenHash = this.crypto.sha256(token);
 
@@ -106,23 +130,46 @@ export class SessionService {
     if (!session) session = await this.restoreFromDatabase(tokenHash);
     if (!session) return { ok: false, reason: 'invalid' };
 
-    if (now > session.absoluteExpiresAt) {
-      await this.end(session.id, 'max_duration');
-      return { ok: false, reason: 'expired' };
-    }
-    const idleLimit = options.financeScreen ? FINANCE_IDLE_LIMIT_MS : IDLE_LIMIT_MS;
-    if (now - session.lastActiveAt > idleLimit) {
-      await this.end(session.id, 'idle_timeout');
-      return { ok: false, reason: 'expired' };
-    }
+    const idleLimit = options.passive
+      ? Math.min(idleLimitOf(session, options.financeFallback), options.financeScreen ? FINANCE_IDLE_LIMIT_MS : IDLE_LIMIT_MS)
+      : options.financeScreen ? FINANCE_IDLE_LIMIT_MS : IDLE_LIMIT_MS;
+    const expired = await this.endIfExpired(session, now, idleLimit);
+    if (expired) return expired;
+    if (options.passive) return { ok: true, session };
 
     session.lastActiveAt = now;
+    session.financeActivity = options.financeScreen;
     if (now - session.pgSyncedAt >= PG_SYNC_EVERY_MS) {
       session.pgSyncedAt = now;
       await this.prisma.session.updateMany({ where: { id: session.id, revokedAt: null }, data: { lastActiveAt: new Date(now) } });
     }
     await this.store.set(tokenHash, session, (session.absoluteExpiresAt - now) / 1000);
     return { ok: true, session };
+  }
+
+  /**
+   * The read-only check without the token: used to re-check a live socket's session (by its id). Never counts as
+   * activity. Applies the idle limit of the screen the person was last active on (idleLimitOf).
+   */
+  async validateById(sessionId: string, options: { financeFallback?: boolean } = {}): Promise<SessionCheck> {
+    const row = await this.prisma.session.findUnique({ where: { id: sessionId }, select: { tokenHash: true, revokedAt: true } });
+    if (!row || row.revokedAt) return { ok: false, reason: 'invalid' };
+    const session = (await this.store.get(row.tokenHash)) ?? (await this.restoreFromDatabase(row.tokenHash));
+    if (!session) return { ok: false, reason: 'invalid' };
+    const expired = await this.endIfExpired(session, this.clock.now().getTime(), idleLimitOf(session, options.financeFallback));
+    return expired ?? { ok: true, session };
+  }
+
+  private async endIfExpired(session: CachedSession, now: number, idleLimit: number): Promise<SessionCheck | null> {
+    if (now > session.absoluteExpiresAt) {
+      await this.end(session.id, 'max_duration');
+      return { ok: false, reason: 'expired' };
+    }
+    if (now - session.lastActiveAt > idleLimit) {
+      await this.end(session.id, 'idle_timeout');
+      return { ok: false, reason: 'expired' };
+    }
+    return null;
   }
 
   /** Redis lost the session (restart, flush, outage): the PostgreSQL record is the truth, so rebuild from it. */
@@ -200,6 +247,10 @@ export class SessionService {
       data: { revokedAt: this.clock.now(), revokedReason: reason },
     });
     await this.store.delete(row.tokenHash);
+    // Close this session's live sockets on every server (Module 14, part 2). Sent even when the session had already
+    // ended (harmless), never with anything but the id. If Redis is down the signal is lost: each server also re-checks
+    // its sockets' sessions every minute against PostgreSQL.
+    await this.bus.publish(SESSION_ENDED_TOPIC, { sessionId: row.id });
     if (count > 0) {
       await this.outbox.emit({
         type: 'auth.logout',

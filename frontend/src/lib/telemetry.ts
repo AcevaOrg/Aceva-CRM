@@ -27,11 +27,12 @@ export function trackScreen(empId: string, screen: string) {
   liveScreens().unshift({ empId, screen, at: new Date().toISOString() });
 }
 
-export function sendHeartbeat(empId: string, active: boolean) {
+export function sendHeartbeat(empId: string, active: boolean, financeScreen = false) {
   // Live login (Module 2): a minute with real activity counts as activity for the server's idle timer.
   // A minute with no mouse or keyboard use sends nothing, so the idle limit keeps counting down.
+  // On a finance screen the heartbeat says so: the session keeps the 10-minute limit there (also for its live socket).
   if (isLive("m2")) {
-    if (active) void http.get("/auth/me").catch(() => undefined);
+    if (active) void http.get("/auth/me", undefined, financeScreen ? { "X-Aceva-Screen": "finance" } : undefined).catch(() => undefined);
     return;
   }
   liveHeartbeats().unshift({ empId, active, at: new Date().toISOString() });

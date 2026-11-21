@@ -131,8 +131,8 @@ test('forced logout ends every device at once', async ({ browser, playwright }) 
   expect(res.status()).toBe(200);
   expect((await res.json()).ended).toBeGreaterThanOrEqual(2);
 
-  await a.page.goto('/tasks');
-  await b.page.goto('/org');
+  // Module 14 live: the server closes both tabs' sockets at once and the tabs go to the login screen by themselves,
+  // without a click or a request of their own.
   await a.page.waitForURL(/\/login/);
   await b.page.waitForURL(/\/login/);
   await a.context.close();
@@ -147,12 +147,32 @@ test('My devices lists where I am signed in and signs out the others', async ({ 
   await expect(a.page.getByText(/signed in on [2-9] devices/)).toBeVisible();
   await a.page.getByRole('button', { name: 'Sign out all other devices' }).click();
   await expect(a.page.getByText(/signed in on 1 device\b/)).toBeVisible();
-  await b.page.goto('/tasks');
-  await expect(b.page).toHaveURL(/\/login/); // the other device is signed out at once (polled: the redirect can cancel a page-load wait)
+  // The other device is signed out at once: its live connection is closed and it goes to the login screen by itself.
+  // (If its connection was not up yet, its next request finds the session gone.)
+  const left = await b.page.waitForURL(/\/login/, { timeout: 10_000 }).then(() => true, () => false);
+  if (!left) await b.page.goto('/tasks');
+  await expect(b.page).toHaveURL(/\/login/);
   await a.page.goto('/account?tab=devices');
   await expect(a.page.getByText('This device')).toBeVisible(); // this one is still in
   await a.context.close();
   await b.context.close();
+});
+
+test('Sign out from the account menu ends the session on the server, and the other open tab leaves at once', async ({ browser }) => {
+  const { context, page } = await loggedInContext(browser, NIDA);
+  const other = await context.newPage(); // the same session in a second tab
+  await other.goto('/tasks');
+  await expect(other).toHaveURL(/\/tasks/);
+  const logout = page.waitForResponse((r) => r.url().endsWith('/auth/logout'));
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: /Sign out/ }).click();
+  expect((await logout).status()).toBe(200); // the request carries the CSRF token, so the server really ends the session
+  await page.waitForURL(/\/login/);
+  // The other tab does nothing: the server closes its live connection and it goes to the login screen.
+  await other.waitForURL(/\/login\?expired=1/, { timeout: 15_000 });
+  // The cookie no longer opens anything.
+  expect((await context.request.get(`${API}/auth/me`)).status()).toBe(401);
+  await context.close();
 });
 
 test('password reset: a one-time link arrives by email, works once, and ends every session', async ({ page, request, playwright }) => {

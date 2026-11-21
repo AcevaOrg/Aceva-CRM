@@ -21,5 +21,6 @@ export interface ResolvedIdentity {
  * The real implementation reads the session cookie (SessionIdentityProvider).
  */
 export abstract class IdentityProvider {
-  abstract resolve(request: Request, options: { financeScreen: boolean }): Promise<ResolvedIdentity | null>;
+  /** `passive`: check the session without counting the request as the person's activity (see SessionService.authenticate). */
+  abstract resolve(request: Request, options: { financeScreen: boolean; passive?: boolean }): Promise<ResolvedIdentity | null>;
 }

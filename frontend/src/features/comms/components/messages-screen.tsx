@@ -12,37 +12,55 @@ import { useLookup } from "@/hooks/use-directory";
 import { ApiError } from "@/lib/api/mock";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
-import { formatDateTime, formatRelative } from "@/lib/dates";
+import { formatDateTime } from "@/lib/dates";
+import { isLive } from "@/lib/api/http";
 import { cn } from "@/lib/utils";
 import { useMarkConversationRead, useMessages, useSavedMessages } from "../hooks";
 import { groupByDay, isContinuation } from "../logic";
+import { whenPersonIsHere } from "../realtime";
 import type { Conversation, Message } from "../types";
 import { ConversationAvatar, dmOther, useConversationTitle, useMediaQuery, usePresenceOf } from "./bits";
 import { Composer } from "./composer";
 import { ConversationList } from "./conversation-list";
 import { DeleteMessageDialog, LinkTaskDialog, NewConversationDialog } from "./dialogs";
 import { MessageBody, MessageItem, type MessageActions } from "./message-item";
+import { SearchView } from "./search-view";
 import { DetailsPanel, ThreadPanel } from "./side-panels";
 
 type Panel = { kind: "details" } | { kind: "thread"; id: string } | null;
 
+/** Module 14 live: linking a message to a task comes with Module 5, so the action is hidden there. */
+const LIVE_API = isLive("m14");
+
 export function MessagesScreen({ conversationId }: { conversationId?: string }) {
   const [newParam, setNewParam] = useUrlState<string>("new", "");
-  // The saved view belongs to the conversation that was open when it was chosen, so opening another conversation closes it.
-  const [savedFor, setSavedFor] = React.useState<string | null>(null);
-  const saved = savedFor === (conversationId ?? "");
-  const setSaved = (on: boolean) => setSavedFor(on ? (conversationId ?? "") : null);
-  const showCenter = !!conversationId || saved;
+  // The saved and search views belong to the conversation that was open when they were chosen, so opening another
+  // conversation closes them.
+  const [side, setSide] = React.useState<{ view: "saved" | "search"; for: string } | null>(null);
+  const open = (view: "saved" | "search") => setSide({ view, for: conversationId ?? "" });
+  const saved = side?.view === "saved" && side.for === (conversationId ?? "");
+  const searching = side?.view === "search" && side.for === (conversationId ?? "");
+  const setSaved = (on: boolean) => (on ? open("saved") : setSide(null));
+  const showCenter = !!conversationId || saved || searching;
 
   return (
     <RequireAccess permission="comms.use">
       <PageHeader title="Messages" description="Direct messages, groups and team channels. Only people in a conversation can read it." className="mb-4 pb-4" />
       <div className="-mb-10 flex h-[calc(100dvh-13.5rem)] min-h-[480px] overflow-hidden rounded-xl border border-border bg-card shadow-strata">
         <aside className={cn("w-full min-w-0 md:w-72 md:shrink-0 md:border-r md:border-border", showCenter && "max-md:hidden")}>
-          <ConversationList activeId={conversationId} savedActive={saved} onNew={() => setNewParam("1")} onSaved={() => setSaved(true)} />
+          <ConversationList
+            activeId={conversationId}
+            savedActive={saved}
+            searchActive={searching}
+            onNew={() => setNewParam("1")}
+            onSaved={() => setSaved(true)}
+            onSearch={() => open("search")}
+          />
         </aside>
         {saved ? (
           <SavedView onBack={() => setSaved(false)} />
+        ) : searching ? (
+          <SearchView onBack={() => setSide(null)} />
         ) : conversationId ? (
           <ConversationView key={conversationId} id={conversationId} />
         ) : (
@@ -79,13 +97,36 @@ function ConversationView({ id }: { id: string }) {
   const count = q.data?.messages.length ?? 0;
   const lastAuthor = q.data?.messages[count - 1]?.author;
 
-  // Mark as read when opened and whenever new messages arrive.
+  // Mark as read when opened and whenever new messages arrive, but only while the person is actually here: a message
+  // landing on an unattended screen is not read (and marking it would count as activity, keeping an idle session alive).
   const { mutate: mark } = markRead;
+  const loaded = !!q.data;
   React.useEffect(() => {
-    if (q.data) mark(id);
-  }, [id, count, q.data, mark]);
+    if (!loaded) return;
+    return whenPersonIsHere(() => mark(id));
+  }, [id, count, loaded, mark]);
 
   // Stick to the bottom on open and when new messages arrive (if already near the bottom, or it's mine).
+  // Opened from a search result (?m=<message>): show that message once it is on the screen.
+  const [focusMessage] = useUrlState<string>("m", "");
+  const focused = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!focusMessage || !q.data || focused.current === focusMessage) return;
+    const el = document.getElementById(`msg-${focusMessage}`);
+    if (!el) return;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      focused.current = focusMessage;
+      el.scrollIntoView({ block: "center" });
+      setFlash(focusMessage);
+      t = setTimeout(() => setFlash(null), 1600);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      if (t) clearTimeout(t);
+    };
+  }, [focusMessage, q.data]);
+
   const firstScroll = React.useRef(true);
   React.useEffect(() => {
     const el = scroller.current;
@@ -128,15 +169,13 @@ function ConversationView({ id }: { id: string }) {
         ? "Account disabled"
         : p?.state === "online"
           ? `Online · ${other?.designation ?? ""}`
-          : p
-            ? `Last seen ${formatRelative(p.lastSeenAt)} · ${other?.designation ?? ""}`
-            : other?.designation
+          : other?.designation
       : `${c.memberEmpIds.length} members${c.topic ? ` · ${c.topic}` : ""}`;
 
   const actions: MessageActions = {
     onReply: (m) => setPanel({ kind: "thread", id: m.id }),
     onDelete: setDeleting,
-    onLinkTask: setLinking,
+    onLinkTask: LIVE_API ? undefined : setLinking,
   };
 
   const jump = (msgId: string) => {
@@ -196,8 +235,8 @@ function ConversationView({ id }: { id: string }) {
                       m={m}
                       kind={c.kind}
                       compact={isContinuation(g.items[i - 1], m)}
-                      pinned={c.pinnedMessageIds.includes(m.id)}
-                      saved={savedIds.has(m.id)}
+                      pinned={m.pinned ?? c.pinnedMessageIds.includes(m.id)}
+                      saved={m.savedByMe ?? savedIds.has(m.id)}
                       canPin={canPin}
                       actions={actions}
                     />

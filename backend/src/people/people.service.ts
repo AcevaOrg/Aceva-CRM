@@ -12,6 +12,7 @@ import type {
   UpdatePersonalRequest,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
+import { AccessChangeNotifier } from '../access/access-change.notifier';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
 import { PermissionService } from '../access/permission.service';
@@ -99,6 +100,7 @@ export class PeopleService {
     private readonly audit: AuditService,
     private readonly org: OrgService,
     private readonly stepUp: StepUpService,
+    private readonly accessChanges: AccessChangeNotifier,
   ) {}
 
   // ===================================================================== reading
@@ -300,6 +302,8 @@ export class PeopleService {
       }
       await this.audit.record({ actorId: actor.id, action: 'employee.profile.updated', targetType: 'employee', targetId: empId, reason: dto.reason ?? null, details: { section: 'basic', fields: changes.map((c) => c.field) }, ...client }, tx);
     });
+    // A department move changes the department channels this person is in: live connections follow at once.
+    if (dto.departmentId !== undefined && dto.departmentId !== target.department.code) await this.accessChanges.changed([empId]);
     return this.profile(actor, empId);
   }
 

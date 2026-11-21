@@ -22,7 +22,8 @@ import type { ConversationKind, Message } from "../types";
 export interface MessageActions {
   onReply?: (m: Message) => void;
   onDelete: (m: Message) => void;
-  onLinkTask: (m: Message) => void;
+  /** Absent when linking to tasks is not available (Module 14 live, until Module 5). */
+  onLinkTask?: (m: Message) => void;
 }
 
 export function MessageBody({ body }: { body: string }) {
@@ -120,6 +121,12 @@ export function MessageItem({
               </span>
             )}
           </div>
+        )}
+        {/* A follow-on message has no name line: its pin gets a line of its own, so it is never just a tint. */}
+        {compact && pinned && (
+          <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-muted-foreground">
+            <Pin className="size-3" /> Pinned
+          </span>
         )}
 
         {editing ? (
@@ -276,9 +283,11 @@ export function MessageItem({
                 {pinned ? <PinOff /> : <Pin />} {pinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={() => actions.onLinkTask(m)}>
-              <Link2 /> {m.linkedTaskId ? "Change linked task" : "Link to a task"}
-            </DropdownMenuItem>
+            {actions.onLinkTask && (
+              <DropdownMenuItem onSelect={() => actions.onLinkTask?.(m)}>
+                <Link2 /> {m.linkedTaskId ? "Change linked task" : "Link to a task"}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onSelect={() => {
                 navigator.clipboard?.writeText(m.body).catch(() => undefined);

@@ -23,6 +23,26 @@ export interface Conversation {
   unread: number;
   lastMessageAt: string;
   lastMessagePreview?: string;
+  /** Live (Module 14 API): the conversation's latest message number, and whether it is archived (read-only). */
+  lastSeq?: number;
+  archived?: boolean;
+  /** What the viewer may do here. Decided by the server (live) or the demo rules (mock); the server checks again. */
+  can?: ConversationCan;
+  /** How each member belongs: added by hand, or through the department (department members follow the employee records). */
+  memberSources?: Record<string, "added" | "department">;
+}
+
+export interface ConversationCan {
+  rename: boolean;
+  manageMembers: boolean;
+  /** The viewer can leave (only members added by hand; never a DM). */
+  leave: boolean;
+}
+
+/** One search hit: the message and the conversation it is in (only conversations the viewer can see). */
+export interface MessageSearchResult {
+  message: Message;
+  conversation: Pick<Conversation, "id" | "kind" | "name" | "memberEmpIds">;
 }
 
 export interface Reaction {
@@ -51,14 +71,21 @@ export interface Message {
   linkedTaskId?: string;
   linkedTaskNumber?: string;
   linkedTaskTitle?: string;
+  /** Live (Module 14 API): the message's number in its conversation (no gaps), pinned, and saved by me. */
+  seq?: number;
+  pinned?: boolean;
+  savedByMe?: boolean;
 }
 
-export type PresenceState = "online" | "away" | "offline";
+/**
+ * Online or offline only (decision D8): no "away", no "last seen", nothing kept. Shown only to people who share a DM or a
+ * group with the person, never in channels (D4), and never used as a score (plan section 19).
+ */
+export type PresenceState = "online" | "offline";
 
 export interface Presence {
   empId: string;
   state: PresenceState;
-  lastSeenAt: string;
 }
 
 export interface Announcement {
@@ -115,6 +142,8 @@ export interface NewConversationInput {
   topic?: string;
   departmentId?: string;
   projectId?: string;
+  /** The project's name, for a project channel (the server stores the name and the code). */
+  projectName?: string;
   moderatorEmpIds?: string[];
 }
 

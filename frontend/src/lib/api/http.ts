@@ -17,6 +17,11 @@ const LIVE_MODULES = (process.env.NEXT_PUBLIC_LIVE_MODULES ?? "")
   .map((m) => m.trim().toLowerCase())
   .filter(Boolean);
 
+/** The API server's origin (Module 14's WebSocket connects there, at /socket.io). */
+export function apiOrigin(): string {
+  return new URL(BASE, typeof window === "undefined" ? "http://localhost" : window.location.origin).origin;
+}
+
 /** Is this module talking to the real API (true) or the in-browser mock data (false)? */
 export const isLive = (module: string) => API_MODE === "live" || LIVE_MODULES.includes(module.toLowerCase());
 
@@ -69,8 +74,8 @@ function handleAuthFailure(status: number, path: string, body: { code?: string; 
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json"): Promise<T> {
-  const headers: Record<string, string> = {};
+async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json", extraHeaders: Record<string, string> = {}): Promise<T> {
+  const headers: Record<string, string> = { ...extraHeaders };
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   // A multipart body sets its own Content-Type (with the boundary).
   if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
@@ -100,8 +105,14 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
 }
 
 export const http = {
-  get: <T>(path: string, params?: Params) => request<T>("GET", path, undefined, params),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  get: <T>(path: string, params?: Params, headers?: Record<string, string>) => request<T>("GET", path, undefined, params, "json", headers),
+  /**
+   * Module 14: a read the screen makes on its own (live updates, catching up). The server checks the session exactly as
+   * usual but does not count it as the person's activity, so an open screen never keeps an idle session alive. (Real
+   * activity is reported by the "still here" heartbeat, only for minutes with mouse or keyboard use.)
+   */
+  getPassive: <T>(path: string, params?: Params) => request<T>("GET", path, undefined, params, "json", { "X-Aceva-Passive": "1" }),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>("POST", path, body, undefined, "json", headers),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   delete: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),

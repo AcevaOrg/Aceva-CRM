@@ -252,6 +252,28 @@ application log, and database errors on these routes are answered and logged as 
 | `GET /comms/saved?cursor&limit` | anyone | Your saved messages from conversations you can still see |
 | `GET /comms/admin/channels?cursor&limit` | `comms.admin` | Every channel with member count and moderators, never messages |
 
+## Module 14, part 2: live delivery (WebSocket)
+
+REST makes every change; the socket only delivers what is already saved. Contract: `packages/contracts/src/realtime.ts`.
+
+| What | Rule |
+|---|---|
+| Endpoint | Socket.IO 4.8 at `/socket.io` on the API server (outside `/api/v1`), **WebSocket transport only** (no long-polling, so no sticky sessions behind a load balancer). A reverse proxy must pass the upgrade headers for `/socket.io` |
+| Signing in | The HttpOnly `aceva_session` cookie on the handshake. Same rules as REST: session not ended, inside its idle and 12-hour limits, login finished (`auth_incomplete` otherwise), still employed, `comms.use`. The check is **read-only**: connecting and socket traffic never extend the session |
+| Idle limit of a socket | The limit of the screen the person was last active on: 10 minutes after a finance screen, 30 elsewhere (the session remembers it; the heartbeat sent from a finance screen carries `X-Aceva-Screen: finance`, which can only make the limit stricter). If Redis lost that memory, people with Finance duty get 10 minutes. The socket is re-checked exactly at that deadline (and at the 12-hour end) |
+| Origin | Must equal `CORS_ORIGIN`, checked before the upgrade (400 otherwise; a missing Origin is refused). CORS does not protect WebSockets |
+| Refusals (`connect_error`, `err.data.code`) | `unauthenticated`, `auth_incomplete`, `forbidden`, `origin_not_allowed`, `too_many_connections` (more than 5 sockets per person across every server), `too_many_attempts` (300 connection attempts a minute per client address, 30 per session), `realtime_unavailable` (Redis down: new sockets are refused) |
+| Limits | At most 20 events a second per socket (refused with `{ error: 'rate_limited' }`; more than 20 refusals in a second closes the socket); packets over 16 KB close the socket; any event other than `sync` closes the socket (`closing { reason: 'unknown_event' }`) |
+| Session ends | Logout, timeout, a forced logout, "log out other devices", a password change or leaving the company: `SessionService.end` signals every server through Redis and the socket gets `session.ended` and is closed at once. If the signal is lost, every server re-checks its sockets' sessions every minute and at each session's deadline |
+| Access changes | A department move, a new department head, a level or role change, or a duty given or ended signals every server (`access-changed`, Emp-IDs only) after the change is committed: that person's sockets are re-checked at once. Losing `comms.use` closes them (`closing { reason: 'forbidden' }`); conversations lost or gained are announced (`conversation.removed` / `conversation.changed`). Whatever made the change, every delivery also checks `comms.use` from the database, so a permission taken away another way stops the very next delivery and closes the socket |
+| Server to browser | `message.created` (acknowledge it: that records "delivered"), `message.updated` (edit, deletion, removal, reaction, pin; `revision` counts text changes), `receipt.updated` (DMs and groups: every member; channels: only that person), `conversation.changed`, `conversation.removed`, `presence`, `presence.snapshot`, `sync.required`, `session.ended`, `closing` |
+| Browser to server | `sync` (ack): `{ conversations: [{ id, lastSeq }] }` for every conversation the person can see now |
+| Who receives what | Decided again from PostgreSQL for **every** delivery: current member (member rows, or the department's current people and head) and `seq > fromSeq` (the history start of M14.1). Rooms are joined by the server only |
+| Catching up | Every message has a gap-free number. A jump in numbers: read `GET /comms/conversations/:id/messages?after=N`. After a reconnect or a `sync.required`, the screens reload everything they show from the database (open conversations, threads, saved messages), so missed edits, deletions, reactions and pins are recovered too. Duplicates (same number, same revision) are dropped |
+| Passive reads | A GET with `X-Aceva-Passive: 1` checks the session exactly as usual but does not count as activity (the screens use it for every read they make on their own). Ignored on changes |
+| Presence | Online / offline only, in Redis only (no history, no table, never a score), shown only to people who share a DM or a group with the person, never in channels |
+| Relay | Plain Redis Pub/Sub on the existing Redis, carrying pointers only (ids and numbers; never message text, cookies or tokens). Not durable: the database and catch-up are the truth; a new message, edit, deletion, removal, reaction or pin whose broadcast was lost is re-sent by the `comms-realtime` outbox reader (within about 10 seconds), rendered from the current database state; changes that went out are recognised by their outbox event id and skipped |
+
 
 ## Event contracts
 

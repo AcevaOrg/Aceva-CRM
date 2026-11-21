@@ -1,8 +1,12 @@
 /**
- * Module 14 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
+ * Module 14 service functions. Each JSDoc names the real endpoint (spec §7.3).
  * People only see conversations they belong to (plan §19).
+ * Live (NEXT_PUBLIC_LIVE_MODULES contains m14): conversations and messages come from the real API (live-api.ts) and
+ * arrive live over the WebSocket (realtime.ts); announcements and meetings stay on the demo data until their parts of
+ * Module 14 are built.
  */
 import { tasksTable } from "@/features/tasks/api";
+import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
 import { getViewer } from "@/lib/auth/viewer";
 import { employeesTable, findEmployee } from "@/lib/directory";
@@ -11,9 +15,10 @@ import { table } from "@/mocks/db";
 import {
   seedAnnouncements, seedConversations, seedMeetings, seedMessages, seedPresence, seedReads, type ConversationRecord, type MessageRecord,
 } from "@/mocks/seed/comms";
+import { liveCommsApi } from "./live-api";
 import { canCreateChannel, parseMentions, seesAllAnnouncements } from "./logic";
 import type {
-  Announcement, AnnouncementWithStats, Conversation, LinkedTaskRef, Meeting, MeetingDetail, Message, NewAnnouncementInput,
+  Announcement, AnnouncementWithStats, Conversation, ConversationCan, LinkedTaskRef, Meeting, MeetingDetail, Message, MessageSearchResult, NewAnnouncementInput,
   NewConversationInput, NewMeetingInput, Presence, Rsvp, SendMessageInput,
 } from "./types";
 
@@ -64,10 +69,21 @@ function toConversation(c: ConversationRecord, viewer: string): Conversation {
   const unread = msgs().filter((m) => m.conversationId === c.id && m.author !== viewer && m.at > seen && !m.deleted).length;
   return {
     ...c,
+    can: mockCan(c, viewer),
     unread,
     lastMessageAt: last?.at ?? c.createdAt,
     lastMessagePreview: last ? (last.deleted ? "Message deleted" : `${findEmployee(last.author)?.name.split(" ")[0] ?? ""}: ${last.body || (last.attachments.length ? "Shared a file" : "")}`) : undefined,
   };
+}
+
+/** The demo's rules for managing a conversation (the real server decides in live mode). */
+function mockCan(c: ConversationRecord, viewer: string): ConversationCan {
+  if (c.kind === "dm") return { rename: false, manageMembers: false, leave: false };
+  const moderator = c.moderatorEmpIds.includes(viewer) || c.createdBy === viewer;
+  if (c.kind === "group") return { rename: moderator, manageMembers: moderator, leave: true };
+  const v = getViewer();
+  const admin = canCreateChannel(v.employee, v.can("comms.admin"));
+  return { rename: moderator || admin, manageMembers: moderator || admin, leave: !c.scope?.departmentId };
 }
 
 /* Scripted replies so DMs feel alive in the demo (mock only). */
@@ -92,7 +108,7 @@ function canPin(c: ConversationRecord) {
   return c.kind !== "channel" || c.moderatorEmpIds.includes(v.employee.empId) || canCreateChannel(v.employee, v.can("comms.admin"));
 }
 
-export const commsApi = {
+const mockCommsApi = {
   /** GET /conversations */
   conversations: () =>
     mock(() => {
@@ -269,11 +285,55 @@ export const commsApi = {
       return c.id;
     }),
 
+  /** PATCH /conversations/:id { name } */
+  rename: (id: string, name: string) =>
+    mock(() => {
+      const c = memberConv(id);
+      if (!mockCan(c, me()).rename) throw new ApiError("forbidden", "You can't rename this conversation.", 403);
+      if (!name.trim()) throw new ApiError("validation", "Give it a name.");
+      c.name = name.trim();
+    }),
+
+  /** POST /conversations/:id/members { empIds } */
+  addMembers: (id: string, empIds: string[]) =>
+    mock(() => {
+      const c = memberConv(id);
+      if (!mockCan(c, me()).manageMembers) throw new ApiError("forbidden", "You can't add people here.", 403);
+      c.memberEmpIds = Array.from(new Set([...c.memberEmpIds, ...empIds.filter(isActive)]));
+    }),
+
+  /** DELETE /conversations/:id/members/:empId (or leave, with my own Emp-ID) */
+  removeMember: (id: string, empId: string) =>
+    mock(() => {
+      const c = memberConv(id);
+      const leaving = empId === me();
+      if (!(leaving ? mockCan(c, me()).leave : mockCan(c, me()).manageMembers)) throw new ApiError("forbidden", "You can't remove people here.", 403);
+      c.memberEmpIds = c.memberEmpIds.filter((p) => p !== empId);
+      c.moderatorEmpIds = c.moderatorEmpIds.filter((p) => p !== empId);
+    }),
+
+  /** GET /comms/search?q (only conversations I am in) */
+  search: (q: string) =>
+    mock<MessageSearchResult[]>(() => {
+      const viewer = me();
+      const needle = q.trim().toLowerCase();
+      if (!needle) return [];
+      return msgs()
+        .filter((m) => !m.deleted && m.body.toLowerCase().includes(needle))
+        .map((m): MessageSearchResult | null => {
+          const c = convs().find((x) => x.id === m.conversationId);
+          return c && c.memberEmpIds.includes(viewer) ? { message: toMessage(m, c), conversation: { id: c.id, kind: c.kind, name: c.name, memberEmpIds: c.memberEmpIds } } : null;
+        })
+        .filter((x): x is MessageSearchResult => !!x)
+        .sort((a, b) => b.message.at.localeCompare(a.message.at))
+        .slice(0, 50);
+    }),
+
   /** GET /presence (shown according to company policy; never used as a score) */
   presence: () =>
     mock(() => {
       const viewer = me();
-      return presenceTable().map((p) => (p.empId === viewer ? { ...p, state: "online" as const, lastSeenAt: new Date().toISOString() } : p));
+      return presenceTable().map((p) => (p.empId === viewer ? { ...p, state: "online" as const } : p));
     }, { delay: 60 }),
 
   /* ---------------- Announcements ---------------- */
@@ -394,3 +454,5 @@ export const commsApi = {
       m.cancelled = true;
     }),
 };
+
+export const commsApi: typeof mockCommsApi = isLive("m14") ? { ...mockCommsApi, ...liveCommsApi } : mockCommsApi;

@@ -153,6 +153,7 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
         topic: topic || undefined,
         departmentId: scope.startsWith("dep:") ? scope.slice(4) : undefined,
         projectId: scope.startsWith("prj:") ? scope.slice(4) : undefined,
+        projectName: scope.startsWith("prj:") ? projects.data?.find((p) => p.id === scope.slice(4))?.name : undefined,
         moderatorEmpIds: moderators,
       });
       toast.success(mode === "channel" ? `#${name.trim().toLowerCase().replace(/\s+/g, "-")} created` : "Conversation ready");

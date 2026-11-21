@@ -1,7 +1,12 @@
 "use client";
+import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isLive } from "@/lib/api/http";
+import { ApiError } from "@/lib/api/mock";
 import { useSession } from "@/lib/auth/session";
 import { commsApi } from "./api";
+import { presenceStore } from "./live-store";
+import { startCommsRealtime } from "./realtime";
 import { upcomingMeetings } from "./logic";
 import type { NewAnnouncementInput, NewConversationInput, NewMeetingInput, Rsvp, SendMessageInput } from "./types";
 
@@ -17,20 +22,24 @@ export const commsKeys = {
   meeting: (id: string) => ["comms", "meeting", id] as const,
 };
 
-/** Polling keeps the mock "live"; a websocket replaces it when the backend lands. */
-const LIVE = 4000;
+/** Live (m14): the WebSocket keeps every screen current, so nothing polls. The mock demo still polls to feel alive. */
+const LIVE_API = isLive("m14");
+const POLL = LIVE_API ? false : 4000;
 
 export function useConversations() {
   const empId = useSession((s) => s.empId);
-  return useQuery({ queryKey: commsKeys.conversations(empId), queryFn: commsApi.conversations, enabled: !!empId, refetchInterval: LIVE });
+  return useQuery({ queryKey: commsKeys.conversations(empId), queryFn: commsApi.conversations, enabled: !!empId, refetchInterval: POLL });
 }
 
+/** "Not found" and "no access" are answers, not failures: they are shown at once instead of being tried again. */
+const retryUnlessRefused = (count: number, error: unknown) => !(error instanceof ApiError && (error.status === 404 || error.status === 403)) && count < 1;
+
 export function useMessages(id: string | undefined) {
-  return useQuery({ queryKey: commsKeys.messages(id ?? ""), queryFn: () => commsApi.messages(id!), enabled: !!id, refetchInterval: LIVE });
+  return useQuery({ queryKey: commsKeys.messages(id ?? ""), queryFn: () => commsApi.messages(id!), enabled: !!id, refetchInterval: POLL, retry: retryUnlessRefused });
 }
 
 export function useThread(id: string | undefined) {
-  return useQuery({ queryKey: commsKeys.thread(id ?? ""), queryFn: () => commsApi.thread(id!), enabled: !!id, refetchInterval: LIVE });
+  return useQuery({ queryKey: commsKeys.thread(id ?? ""), queryFn: () => commsApi.thread(id!), enabled: !!id, refetchInterval: POLL, retry: retryUnlessRefused });
 }
 
 export function useSavedMessages(enabled = true) {
@@ -38,8 +47,23 @@ export function useSavedMessages(enabled = true) {
   return useQuery({ queryKey: commsKeys.saved(empId), queryFn: commsApi.saved, enabled: !!empId && enabled });
 }
 
+/** Online / offline (no "away", no "last seen"). Live: pushed by the WebSocket, never polled. */
 export function usePresence() {
-  return useQuery({ queryKey: commsKeys.presence, queryFn: commsApi.presence, refetchInterval: 30_000 });
+  const q = useQuery({ queryKey: commsKeys.presence, queryFn: commsApi.presence, refetchInterval: 30_000, enabled: !LIVE_API });
+  const online = React.useSyncExternalStore(presenceStore.subscribe, presenceStore.online, presenceStore.online);
+  const live = React.useMemo(() => online.map((empId) => ({ empId, state: "online" as const })), [online]);
+  return LIVE_API ? { data: live } : q;
+}
+
+/** Module 14 live: opens this tab's WebSocket while someone is signed in (mounted once, in the app shell). */
+export function useCommsRealtime() {
+  const qc = useQueryClient();
+  const empId = useSession((s) => s.empId);
+  const stage = useSession((s) => s.stage);
+  React.useEffect(() => {
+    if (!LIVE_API || !empId || stage !== "signed_in") return;
+    return startCommsRealtime(qc, empId);
+  }, [qc, empId, stage]);
 }
 
 function useInvalidate() {
@@ -85,6 +109,30 @@ export function useTogglePin() {
 export function useLinkTask() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ id, taskId }: { id: string; taskId: string | null }) => commsApi.linkTask(id, taskId), onSuccess: done });
+}
+
+/** Rename a group or channel (who may is decided by the server: group moderators; channel moderators and comms admins). */
+export function useRenameConversation() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, name }: { id: string; name: string }) => commsApi.rename(id, name), onSuccess: done });
+}
+
+export function useAddMembers() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, empIds }: { id: string; empIds: string[] }) => commsApi.addMembers(id, empIds), onSuccess: done });
+}
+
+/** Remove a member, or leave (with my own Emp-ID). */
+export function useRemoveMember() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, empId }: { id: string; empId: string }) => commsApi.removeMember(id, empId), onSuccess: done });
+}
+
+/** Message search: only conversations I can see now, and only from where my history starts (the server decides). */
+export function useMessageSearch(q: string) {
+  const empId = useSession((s) => s.empId);
+  const term = q.trim();
+  return useQuery({ queryKey: ["comms", "search", empId, term], queryFn: () => commsApi.search(term), enabled: !!empId && term.length >= 2, staleTime: 10_000 });
 }
 
 export function useCreateConversation() {
