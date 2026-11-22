@@ -13,8 +13,10 @@ import {
   updatePayRequestSchema,
   updatePersonalRequestSchema,
 } from '@aceva/contracts';
+import type { Request } from 'express';
 import type { Actor } from '../access/access.types';
 import { Authenticated, ClientInfo, CurrentActor, CurrentSessionId, RequestInfo, RequirePermission } from '../access/decorators';
+import { SensitiveView } from '../activity/activity.decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { z } from 'zod';
 import { JoiningService } from './joining.service';
@@ -33,6 +35,19 @@ class ApproveHireDto extends createZodDto(approveHireRequestSchema) {}
 class RejectHireDto extends createZodDto(rejectHireRequestSchema) {}
 class CreateEmployeeDto extends createZodDto(createEmployeeRequestSchema) {}
 
+/** Module 4: what a successful reveal showed (the body was validated before the recorder reads this one field). */
+type RevealField = 'cnic' | 'account' | 'salary';
+const revealField = (request: Request): RevealField => {
+  const field = (request.body as { field?: unknown } | undefined)?.field;
+  return field === 'account' || field === 'salary' ? field : 'cnic';
+};
+const REVEAL_CATEGORY = { cnic: 'personal', account: 'bank', salary: 'salary' } as const;
+const REVEAL_WORDS: Record<RevealField, string> = {
+  cnic: 'Viewed the CNIC of :empId',
+  account: 'Viewed the bank account number of :empId',
+  salary: 'Viewed the salary of :empId',
+};
+
 @ApiTags('hire-requests')
 @Controller('hire-requests')
 export class HireRequestsController {
@@ -40,7 +55,7 @@ export class HireRequestsController {
 
   @Get()
   @Authenticated()
-  @ApiOperation({ summary: 'Hire requests (Owner, CEO, Director, HR). ?status=pending|approved|rejected' })
+  @ApiOperation({ summary: 'Hire requests (the Director, HR, and the CEO / Founder / Owner to view). ?status=pending|approved|rejected' })
   list(@CurrentActor() actor: Actor, @Query('status') status?: string) {
     return this.joining.list(actor, status);
   }
@@ -48,7 +63,7 @@ export class HireRequestsController {
   @Post(':id/approve')
   @RequirePermission('people.approve_hire')
   @HttpCode(200)
-  @ApiOperation({ summary: 'The Director authorizes the level and reporting line (and may correct them); the CEO only a request the Director made, the Owner any (D25). The employee is created now' })
+  @ApiOperation({ summary: 'The Director authorizes the level and reporting line (and may correct them); the Owner decides only a request the Director made. The employee is created now' })
   approve(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: ApproveHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.approve(actor, id, body, client);
   }
@@ -56,7 +71,7 @@ export class HireRequestsController {
   @Post(':id/reject')
   @RequirePermission('people.approve_hire')
   @HttpCode(200)
-  @ApiOperation({ summary: 'Reject a hire request (the same people who may approve it, D25)' })
+  @ApiOperation({ summary: 'Reject a hire request (the same people who may approve it)' })
   reject(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: RejectHireDto, @ClientInfo() client: RequestInfo) {
     return this.joining.reject(actor, id, body.reason, client);
   }
@@ -80,14 +95,14 @@ export class PeopleController {
 
   @Get('unresolved-reports')
   @Authenticated()
-  @ApiOperation({ summary: 'People who still report to someone who left (the Owner or CEO assign a new manager)' })
+  @ApiOperation({ summary: 'People who still report to someone who left (the Director assigns a new manager)' })
   unresolvedReports(@CurrentActor() actor: Actor) {
     return this.people.unresolvedReports(actor);
   }
 
   @Post()
   @Authenticated()
-  @ApiOperation({ summary: 'Joining workflow. Director/HR start a hire (Level 4-5) that waits for the Owner or CEO; Owner/CEO create at once. On creation the Emp-ID is generated and a welcome email with a temporary password is sent.' })
+  @ApiOperation({ summary: 'Joining workflow. HR starts a hire (Level 4-5) that waits for the Director; the Director creates at once (Levels 3-5). On creation the Emp-ID is generated and a welcome email with a temporary password is sent.' })
   create(@CurrentActor() actor: Actor, @Body() body: CreateEmployeeDto, @ClientInfo() client: RequestInfo) {
     return this.joining.create(actor, body, client);
   }
@@ -131,7 +146,7 @@ export class PeopleController {
 
   @Patch(':empId/job')
   @Authenticated()
-  @ApiOperation({ summary: 'Change joining date, type or capacity (Director or HR). Levels and reporting lines: Owner or CEO only.' })
+  @ApiOperation({ summary: 'Change joining date, type or capacity (Director or HR). Levels and reporting lines: the Director only.' })
   updateJob(@CurrentActor() actor: Actor, @Param('empId') empId: string, @Body() body: UpdateJobDto, @ClientInfo() client: RequestInfo) {
     return this.people.updateJob(actor, empId, body, client);
   }
@@ -152,8 +167,9 @@ export class PeopleController {
 
   @Post(':empId/reveal')
   @Authenticated()
+  @SensitiveView({ category: (request) => REVEAL_CATEGORY[revealField(request)], describe: (request) => REVEAL_WORDS[revealField(request)] })
   @HttpCode(200)
-  @ApiOperation({ summary: 'Show a masked CNIC or bank account number. Every reveal is logged.' })
+  @ApiOperation({ summary: 'Show a masked CNIC or bank account number. Every reveal is logged (audit log and Module 4 sensitive view).' })
   reveal(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('empId') empId: string, @Body() body: RevealDto, @ClientInfo() client: RequestInfo) {
     return this.people.reveal(actor, empId, body.field, client, sessionId);
   }

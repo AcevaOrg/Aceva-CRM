@@ -16,7 +16,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatRelative } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useAccountLocks, useCheckAlert, useSecurityAlerts, useUnlockAccount } from "../hooks";
-import { alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert } from "../logic";
+import { alertCheckerLabel, canActOn, canActOnAlerts, canCheckAlert, canLockAccounts, CHECKED_ALERTS_LIMIT, checkedAlertsCut } from "../logic";
 import type { AlertSeverity, SecurityAlert } from "../types";
 
 const SEVERITY: Record<AlertSeverity, { label: string; tone: BadgeTone; bar: string }> = {
@@ -30,6 +30,7 @@ export function AlertsPanel() {
   const [filter, setFilter] = React.useState<"open" | "checked" | "all">("open");
   const query = useSecurityAlerts(filter);
   const open = useSecurityAlerts("open").data?.length ?? 0;
+  const checkedCut = checkedAlertsCut(useSecurityAlerts("checked").data?.length ?? 0);
 
   return (
     <div className="grid gap-4">
@@ -46,6 +47,11 @@ export function AlertsPanel() {
         />
         <p className="text-[12.5px] text-muted-foreground">Rules: account locked, new device or city, outside working hours, large exports, many salary records, repeated finance attempts.</p>
       </div>
+      {filter !== "open" && checkedCut && (
+        <p role="status" className="text-[12.5px] text-muted-foreground">
+          Showing the newest {CHECKED_ALERTS_LIMIT} checked alerts. Older checked alerts are kept, but not listed here. Every open alert is always shown.
+        </p>
+      )}
       {query.isError ? (
         <ErrorState error={query.error} onRetry={() => query.refetch()} />
       ) : query.isPending ? (
@@ -82,7 +88,7 @@ function AlertCard({ a }: { a: SecurityAlert }) {
   const canCheck = !!viewer && canCheckAlert(viewer, a.empId, below, lookup.employees);
   const viewOnly = !canActOnAlerts(viewer);
   const checker = alertCheckerLabel(a.empId, lookup.employees);
-  const canUnlock = !!me && !!viewer?.can("auth.unlock_account") && canActOn(me.empId, a.empId, below);
+  const canUnlock = !!me && canLockAccounts(viewer) && canActOn(me.empId, a.empId, below);
 
   return (
     <Card className={cn("relative overflow-hidden p-4 pl-5 sm:p-5 sm:pl-6", a.status === "checked" && "opacity-80")}>

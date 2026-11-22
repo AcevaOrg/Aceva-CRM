@@ -8,12 +8,13 @@ import {
   resetTwoFactorRequestSchema,
   forgotPasswordRequestSchema,
   loginRequestSchema,
+  logoutRequestSchema,
   resetPasswordRequestSchema,
   stepUpRequestSchema,
   verifyTwoFactorRequestSchema,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
-import { AllowIncomplete, Authenticated, ClientInfo, CurrentActor, CurrentSessionId, Public, RequestInfo, RequirePermission } from '../access/decorators';
+import { AllowIncomplete, Authenticated, ClientInfo, CountsAsActivityWhen, CurrentActor, CurrentSessionId, Public, RequestInfo, RequirePermission } from '../access/decorators';
 import { Clock } from '../common/clock';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { ENV } from '../config/config.module';
@@ -23,6 +24,7 @@ import { SessionIdentityProvider } from './session/session-identity.provider';
 import { clearCookieOptions, SESSION_COOKIE, sessionCookieOptions } from './session/session-cookie';
 
 class LoginDto extends createZodDto(loginRequestSchema) {}
+class LogoutDto extends createZodDto(logoutRequestSchema) {}
 class StepUpDto extends createZodDto(stepUpRequestSchema) {}
 class VerifyDto extends createZodDto(verifyTwoFactorRequestSchema) {}
 class DisableDto extends createZodDto(disableTwoFactorRequestSchema) {}
@@ -31,6 +33,13 @@ class ForgotDto extends createZodDto(forgotPasswordRequestSchema) {}
 class ResetDto extends createZodDto(resetPasswordRequestSchema) {}
 class AdminActionDto extends createZodDto(adminActionRequestSchema) {}
 class ResetTwoFactorDto extends createZodDto(resetTwoFactorRequestSchema) {}
+
+/**
+ * A logout the browser sends because its idle timer ran out must not count as activity: it would move "last active" to
+ * the logout time (and the minute would be counted as used). The body is not validated yet when the guard asks, so it is
+ * read strictly. A claim that turns out to be false still ends the session, as a clicked logout.
+ */
+const claimsIdleTimeout = (request: Request) => (request.body as { reason?: unknown } | undefined)?.reason === 'idle_timeout';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -61,10 +70,11 @@ export class AuthController {
   @Post('logout')
   @Authenticated()
   @AllowIncomplete()
+  @CountsAsActivityWhen((request) => !claimsIdleTimeout(request))
   @HttpCode(200)
-  @ApiOperation({ summary: 'Log out this device now' })
-  async logout(@CurrentSessionId() sessionId: string | null, @Res({ passthrough: true }) res: Response) {
-    await this.auth.logout(sessionId);
+  @ApiOperation({ summary: 'Log out this device now. The browser may add { reason: "idle_timeout" } when its idle timer ran out; the server records "timed out" only if the session really was idle that long.' })
+  async logout(@CurrentSessionId() sessionId: string | null, @Body() body: LogoutDto, @Res({ passthrough: true }) res: Response) {
+    await this.auth.logoutFromBrowser(sessionId, body);
     res.clearCookie(SESSION_COOKIE, clearCookieOptions(this.env));
     return { ok: true };
   }
@@ -77,7 +87,7 @@ export class AuthController {
     const token = (req.cookies as Record<string, string> | undefined)?.[SESSION_COOKIE] ?? null;
     // The guard has already checked (and counted) this request: here only the login stage is needed, so the second look is
     // passive (it must not undo what the guard recorded, such as the request coming from a finance screen).
-    const identity = await this.identity.resolve(req, { financeScreen: false, passive: true });
+    const identity = await this.identity.resolve(req, { financeScreen: false, touch: false });
     return this.auth.me(actor, token, identity?.stage ?? 'ok');
   }
 

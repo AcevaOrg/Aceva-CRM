@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { ChecklistItemView, EntryView, PeriodView, RevaluationPreviewView } from '@aceva/contracts';
+import type { CloseChecklistItemView, EntryView, PeriodView, RevaluationPreviewView } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
@@ -18,7 +18,7 @@ import { JournalService, type LineDraft } from './journal.service';
 import { LedgerQueryService } from './ledger-query.service';
 import { ReconciliationService } from './reconciliation.service';
 
-const LABELS: Record<ChecklistItemView['key'], string> = {
+const LABELS: Record<CloseChecklistItemView['key'], string> = {
   entries_posted: 'All entries posted',
   bank_reconciled: 'Bank reconciled',
   payroll_posted: 'Payroll posted',
@@ -48,7 +48,7 @@ export class PeriodsService {
 
   // ------------------------------------------------------------------------------------------------ checklist
 
-  async checklist(month: string): Promise<ChecklistItemView[]> {
+  async checklist(month: string): Promise<CloseChecklistItemView[]> {
     const from = dbDate(firstDayOfMonth(month));
     const to = dbDate(lastDayOfMonth(month));
     const inMonth = { entryDate: { gte: from, lte: to } };
@@ -56,7 +56,8 @@ export class PeriodsService {
       this.prisma.journalEntry.count({ where: { ...inMonth, status: { in: ['draft', 'pending_approval'] } } }),
       this.recon.unmatchedInMonth(month),
       this.prisma.journalEntry.count({ where: { ...inMonth, source: 'payroll', status: 'posted' } }),
-      this.prisma.journalEntry.count({ where: { source: 'revaluation', sourceRef: month, status: 'posted' } }),
+      // A reversed revaluation does not count: the month still needs a revaluation.
+      this.prisma.journalEntry.count({ where: { source: 'revaluation', sourceRef: month, status: 'posted', reversedBy: { none: { status: { not: 'rejected' } } } } }),
       this.ledger.postedTotals(lastDayOfMonth(month)),
       this.usdBalances(month),
     ]);
@@ -219,7 +220,8 @@ export class PeriodsService {
 
   private async existingRevaluation(month: string) {
     return this.prisma.journalEntry.findFirst({
-      where: { source: 'revaluation', sourceRef: month, status: { not: 'rejected' } },
+      // A reversed revaluation is ignored, so the month can be revalued again.
+      where: { source: 'revaluation', sourceRef: month, status: { not: 'rejected' }, reversedBy: { none: { status: { not: 'rejected' } } } },
       select: { id: true, number: true, status: true, reversedBy: { where: { status: { not: 'rejected' } }, take: 1, select: { status: true } } },
       orderBy: { createdAt: 'desc' },
     });

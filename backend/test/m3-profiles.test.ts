@@ -5,8 +5,7 @@ import { createTestApp, type TestApp } from './helpers/app';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
-const OWNER = 'ACV-0001';
-let CEO = ''; // test-only CEO (not in the demo seed), see helpers/people.ts
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner: sees every section, edits nothing
 const DIRECTOR = 'ACV-0003';
 const CTO = 'ACV-0004';
 let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
@@ -22,7 +21,7 @@ let crypto: CryptoService;
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO; HR = t.fixtures.HR;
+  HR = t.fixtures.HR;
   prisma = createTestPrisma();
   crypto = t.app.get(CryptoService);
 });
@@ -38,7 +37,7 @@ const denied = (reason: string) => prisma.auditLog.count({ where: { action: 'acc
 describe('M3 staff directory (Basic information: everyone)', () => {
   it('shows basic information of everyone to every employee, and nothing else', async () => {
     const list = (await t.as(DEV2).get('/api/v1/employees').expect(200)).body as Array<Record<string, unknown>>;
-    expect(list).toHaveLength(14);
+    expect(list).toHaveLength(13); // the 12 demo people and the test-only HR officer
     expect(Object.keys(list[0]).sort()).toEqual(['departmentId', 'designation', 'empId', 'hasPhoto', 'name', 'officeId', 'officialEmail']);
     expect(JSON.stringify(list)).not.toMatch(/salary|cnic|joiningDate|level/i);
   });
@@ -47,7 +46,7 @@ describe('M3 staff directory (Basic information: everyone)', () => {
     expect(((await t.as(DEV2).get('/api/v1/employees?q=mariam').expect(200)).body as unknown[]).length).toBe(1);
     expect(((await t.as(DEV2).get('/api/v1/employees?q=ACV-0004').expect(200)).body as Array<{ empId: string }>)[0].empId).toBe(CTO);
     await prisma.employee.update({ where: { empId: 'ACV-0013' }, data: { status: 'left' } });
-    expect(((await t.as(DEV2).get('/api/v1/employees').expect(200)).body as unknown[]).length).toBe(13);
+    expect(((await t.as(DEV2).get('/api/v1/employees').expect(200)).body as unknown[]).length).toBe(12);
     await prisma.employee.update({ where: { empId: 'ACV-0013' }, data: { status: 'active' } });
   });
 
@@ -98,8 +97,9 @@ describe('M3 who sees which section (plan section 7)', () => {
     expect(await sees(HR)).toMatchObject({ job: true, personal: true, pay: false });
   });
 
-  it('the Director, the CEO and the Owner see everything', async () => {
-    for (const viewer of [DIRECTOR, CEO, OWNER]) expect(await sees(viewer), viewer).toMatchObject({ job: true, personal: true, pay: true });
+  it('the Director and the CEO / Founder / Owner see everything', async () => {
+    for (const viewer of [DIRECTOR, OWNER]) expect(await sees(viewer), viewer).toMatchObject({ job: true, personal: true, pay: true });
+    expect((await profile(OWNER)).access.edit).toEqual({ basic: false, job: false, personal: 'none', pay: false, documents: false }); // view only
   });
 
   it('nobody sees the pay of someone else unless allowed: employees, the CTO and HR never do', async () => {
@@ -157,7 +157,7 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
     await t.stepUp(DIRECTOR);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 320000, reason: 'Annual review' }).expect(200);
     await t.as(HR).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'HR may not change pay' }).expect(403);
-    await t.as(CEO).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'CEO may not change pay' }).expect(403);
+    await t.as(OWNER).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'The owner may not change pay' }).expect(403);
     await t.as(FINANCE).patch(`/api/v1/employees/${DEV1}/pay`).send({ baseSalary: 1, reason: 'Finance may not change pay' }).expect(403);
     await t.as(DIRECTOR).patch(`/api/v1/employees/${DIRECTOR}/pay`).send({ baseSalary: 999999, reason: 'Raise for myself' }).expect(403);
     await t.stepUp(DIRECTOR);
@@ -169,16 +169,18 @@ describe('M3 who may change what (enforced on the server, not only in forms)', (
     await t.as(HR).patch(`/api/v1/employees/${DIRECTOR}/basic`).send({ designation: 'Hacked' }).expect(403); // upward
     await t.as(HR).patch(`/api/v1/employees/${SALES1}/basic`).send({ designation: 'Hacked' }).expect(403); // same level, beside
     await t.as(HR).patch(`/api/v1/employees/${HR}/basic`).send({ designation: 'Self promotion' }).expect(403); // themselves
-    await t.as(DIRECTOR).patch(`/api/v1/employees/${CEO}/basic`).send({ designation: 'Hacked' }).expect(403); // upward
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${OWNER}/basic`).send({ designation: 'Hacked' }).expect(403); // upward
+    await t.as(OWNER).patch(`/api/v1/employees/${DEV1}/basic`).send({ designation: 'Hacked' }).expect(403); // the owner edits nothing
   });
 
-  it('levels and reporting lines change only through the Owner/CEO rules, even from the job form', async () => {
-    await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/job`).send({ level: 4, reason: 'Director may not change levels' }).expect(403);
+  it('levels and reporting lines change only through the Director\'s rules, even from the job form', async () => {
+    await t.as(OWNER).patch(`/api/v1/employees/${DEV1}/job`).send({ level: 4, reason: 'The owner may not change levels' }).expect(403);
     await t.as(HR).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: FINANCE, reason: 'HR may not move people' }).expect(403);
-    await t.as(CEO).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: FINANCE, reason: 'Joins the finance team' }).expect(200);
-    expect((await profile(CEO)).job.reportsTo).toBe(FINANCE);
-    await t.as(CEO).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: CTO, reason: 'Back to development' }).expect(200);
-    await t.as(CEO).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: DEV2, reason: 'Invalid on purpose' }).expect(400); // M1 validation applies
+    expect(await denied('only_director_changes_levels_and_lines')).toBeGreaterThanOrEqual(2);
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: FINANCE, reason: 'Joins the finance team' }).expect(200);
+    expect((await profile(DIRECTOR)).job.reportsTo).toBe(FINANCE);
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: CTO, reason: 'Back to development' }).expect(200);
+    await t.as(DIRECTOR).patch(`/api/v1/employees/${DEV1}/job`).send({ reportsToEmpId: DEV2, reason: 'Invalid on purpose' }).expect(400); // M1 validation applies
   });
 
   it('validates the input (bad CNIC, wrong email domain, unknown fields, negative pay)', async () => {
@@ -242,7 +244,7 @@ describe('M3 every change keeps the old value (who, when, old, new)', () => {
   });
 
   it('keeps level and reporting-line changes in the same history', async () => {
-    const history = (await profile(CEO)).history as Array<{ field: string; changedBy: string }>;
+    const history = (await profile(OWNER)).history as Array<{ field: string; changedBy: string }>;
     expect(history.some((h) => h.field === 'reportsTo' || h.field === 'Reports to')).toBe(true);
   });
 });
@@ -250,11 +252,12 @@ describe('M3 every change keeps the old value (who, when, old, new)', () => {
 describe('M3 who is offered the Job form', () => {
   const canEditJob = async (viewer: string, target: string) => (await profile(viewer, target)).access.edit.job as boolean;
 
-  it('Director, HR, Owner and CEO get it for people below them; nobody gets it for themselves, upward or sideways', async () => {
-    for (const who of [DIRECTOR, HR, CEO, OWNER]) expect(await canEditJob(who, DEV1), who).toBe(true);
-    for (const who of [DIRECTOR, HR, CEO, OWNER]) expect(await canEditJob(who, who), who).toBe(false); // never their own
+  it('the Director and HR get it for people below them; the CEO / Founder / Owner never (view only); nobody for themselves, upward or sideways', async () => {
+    for (const who of [DIRECTOR, HR]) expect(await canEditJob(who, DEV1), who).toBe(true);
+    for (const target of [DIRECTOR, CTO, DEV1]) expect(await canEditJob(OWNER, target), target).toBe(false);
+    for (const who of [DIRECTOR, HR, OWNER]) expect(await canEditJob(who, who), who).toBe(false); // never their own
     expect(await canEditJob(HR, DIRECTOR)).toBe(false); // upward
-    expect(await canEditJob(DIRECTOR, CEO)).toBe(false); // upward
+    expect(await canEditJob(DIRECTOR, OWNER)).toBe(false); // upward
     for (const who of [DEV2, SALES1, CTO, FINANCE, DEV1]) expect(await canEditJob(who, DEV1), who).toBe(false); // peers, the manager, the person themself
   });
 });

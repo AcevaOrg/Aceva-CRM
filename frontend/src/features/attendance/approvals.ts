@@ -34,12 +34,18 @@ function clashCount(empId: string, from: string, to: string) {
  */
 const liveCache: { empId: string | null; at: number; items: ApprovalItem[]; loading: boolean } = { empId: null, at: 0, items: [], loading: false };
 
-async function loadLive(empId: string) {
+/**
+ * @param seesTeamCorrections the viewer may list team corrections (the server's rule: attendance.approve_correction or
+ *   attendance.view_team). Without either the server refuses the list, so it is not asked (a refusal is a blocked attempt).
+ */
+async function loadLive(empId: string, seesTeamCorrections: boolean) {
   liveCache.loading = true;
   try {
     const [leave, corrections, types] = await Promise.all([
       http.get<Page<LeaveRequestView>>("/leave/requests", { scope: "team", status: "pending", pageSize: 200 }),
-      http.get<Page<CorrectionView>>("/attendance/corrections", { scope: "team", status: "pending", pageSize: 200 }).catch(() => ({ items: [] as CorrectionView[] })),
+      seesTeamCorrections
+        ? http.get<Page<CorrectionView>>("/attendance/corrections", { scope: "team", status: "pending", pageSize: 200 }).catch(() => ({ items: [] as CorrectionView[] }))
+        : Promise.resolve({ items: [] as CorrectionView[] }),
       http.get<Array<{ id: string; name: string }>>("/leave/types", { includeArchived: "true" }),
     ]);
     const typeName = new Map(types.map((t) => [t.id, t.name]));
@@ -82,9 +88,9 @@ async function loadLive(empId: string) {
   }
 }
 
-function liveList(empId: string): ApprovalItem[] {
+function liveList(empId: string, seesTeamCorrections: boolean): ApprovalItem[] {
   const stale = liveCache.empId !== empId || Date.now() - liveCache.at > 30_000;
-  if (stale && !liveCache.loading) void loadLive(empId);
+  if (stale && !liveCache.loading) void loadLive(empId, seesTeamCorrections);
   return liveCache.empId === empId ? liveCache.items : [];
 }
 
@@ -103,7 +109,7 @@ function liveDecide(item: ApprovalItem, approve: boolean, reason?: string) {
 export const attendanceApprovals: ApprovalProvider = {
   key: "attendance",
   list: (viewer) => {
-    if (isLive("m7")) return liveList(viewer.employee.empId);
+    if (isLive("m7")) return liveList(viewer.employee.empId, viewer.can("attendance.approve_correction") || viewer.can("attendance.view_team"));
     const me = viewer.employee.empId;
     const leave: ApprovalItem[] = (viewer.can("leave.approve") ? leaveRequestsTable() : [])
       .filter((r) => r.empId !== me && currentLeaveApprover(r) === me)

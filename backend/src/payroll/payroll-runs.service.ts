@@ -208,6 +208,7 @@ export class PayrollRunsService {
     if (run.preparedBy === actor.id) forbidden('maker_checker', 'You prepared this payroll, so you cannot approve it');
     // Runs reviewed before D25: the reviewer and the approver stay two different people (security review, finding 4; database rule).
     if (run.reviewedBy === actor.id) forbidden('maker_checker', 'You reviewed this payroll, so a different person approves it');
+    await this.assertOwnerOnlyForDirectorRuns(actor, run);
     await this.stepUp.require(actor, sessionId, 'approve_payroll', { type: 'payroll_run', id: run.number }, client);
     const now = this.clock.now();
     const first = firstDayOfMonth(run.month);
@@ -217,6 +218,9 @@ export class PayrollRunsService {
       this.prisma.$transaction(async (tx) => {
         const stage = await this.lockRun(tx, run.id);
         if (stage !== run.stage) conflict('state_changed', 'This run was changed by someone else. Reload it');
+        // Plan section 12: attendance and leave for the month are locked when the payroll is approved, not when it is
+        // calculated (a mid-month calculation must not freeze check-ins and leave). Idempotent, in this transaction.
+        await this.attendance.lockMonth(run.month, actor.id, tx);
         const lines = await tx.payrollLine.findMany({ where: { runId: run.id }, include: { employee: { select: { empId: true } } }, orderBy: { employee: { empId: 'asc' } } });
         if (!lines.length) conflict('empty_run', 'This run has no salary lines');
 
@@ -249,23 +253,7 @@ export class PayrollRunsService {
         });
 
         // The salary entry in Module 9 (Dr salary expense / Cr tax, advances, deductions, salary payable).
-        const entryLines = salaryEntryLines(runTotals(lines));
-        let entry: SystemEntryResult | null = null;
-        if (entryLines.length >= 2) {
-          entry = await this.ledger.createSystemEntry(tx, {
-            source: 'payroll',
-            sourceRef: run.id,
-            purpose: 'salary',
-            entryDate: last,
-            description: `Salaries for ${run.month} (${run.number})`,
-            makerId: run.preparedBy!,
-            lines: entryLines.map((l) => ({
-              accountRole: ROLE_FOR[l.role],
-              ...(l.side === 'debit' ? { debit: l.amount } : { credit: l.amount }),
-              description: `Payroll ${run.number}`,
-            })),
-          });
-        }
+        const entry = await this.createSalaryEntryTx(tx, run, lines, last);
 
         const changed = await tx.payrollRun.updateMany({
           where: { id: run.id, stage: run.stage, preparedBy: { not: actor.id }, ...(run.stage === 'reviewed' ? { reviewedBy: { not: actor.id } } : {}) },
@@ -284,12 +272,79 @@ export class PayrollRunsService {
     return this.get(run.id);
   }
 
+  /**
+   * The ledger rejected this run's salary entry (bug 2): Finance creates a new one with the same lines. The approved run
+   * points at the new entry (allowed by the database only because the old one is rejected).
+   */
+  async repostSalaryEntry(actor: Actor, idOrNumber: string, client: RequestInfo): Promise<PayrollRunView> {
+    const run = await this.findRun(idOrNumber);
+    if (run.stage !== 'approved') conflict('invalid_transition', 'Only an approved run can get a new salary entry');
+    if (!run.journalEntryId) conflict('invalid_transition', 'This run has no salary entry to replace');
+    const old = (await this.ledger.entryStatuses([run.journalEntryId])).get(run.journalEntryId);
+    if (old?.status !== 'rejected') conflict('invalid_transition', 'The salary entry can only be replaced after the ledger rejected it');
+    const last = lastDayOfMonth(run.month);
+    await withDbRules(() =>
+      this.prisma.$transaction(async (tx) => {
+        await this.lockRun(tx, run.id);
+        const fresh = await tx.payrollRun.findUniqueOrThrow({ where: { id: run.id }, select: { journalEntryId: true } });
+        if (fresh.journalEntryId !== run.journalEntryId) conflict('state_changed', 'The salary entry was already replaced. Reload it');
+        const lines = await tx.payrollLine.findMany({ where: { runId: run.id } });
+        const entry = await this.createSalaryEntryTx(tx, run, lines, last);
+        if (!entry) conflict('nothing_to_pay', 'This run has no salary to post');
+        const changed = await tx.payrollRun.updateMany({
+          where: { id: run.id, stage: 'approved', journalEntryId: run.journalEntryId },
+          data: { journalEntryId: entry.id, updatedBy: actor.id },
+        });
+        if (!changed.count) conflict('state_changed', 'The salary entry was already replaced. Reload it');
+        await this.audit.record(
+          { actorId: actor.id, action: 'payroll.salary_entry.reposted', targetType: 'payroll_run', targetId: run.number, details: { runNumber: run.number, newEntry: entry.number, rejectedEntry: old.number }, ...client },
+          tx,
+        );
+      }, TX_OPTIONS),
+    );
+    return this.get(run.id);
+  }
+
+  /**
+   * The salary entry (Module 9): Dr salary expense / Cr tax, advances, deductions, salary payable. The first one has the
+   * purpose "salary"; after a rejection the next one is "salary-2", "salary-3" and so on (the same rule as revaluation).
+   */
+  private async createSalaryEntryTx(tx: Tx, run: { id: string; number: string; month: string; preparedBy: string | null }, lines: Parameters<typeof runTotals>[0], last: string): Promise<SystemEntryResult | null> {
+    const entryLines = salaryEntryLines(runTotals(lines));
+    if (entryLines.length < 2) return null;
+    const earlier = await tx.journalEntry.count({ where: { source: 'payroll', sourceRef: run.id } });
+    return this.ledger.createSystemEntry(tx, {
+      source: 'payroll',
+      sourceRef: run.id,
+      purpose: earlier === 0 ? 'salary' : `salary-${earlier + 1}`,
+      entryDate: last,
+      description: `Salaries for ${run.month} (${run.number})`,
+      makerId: run.preparedBy!,
+      lines: entryLines.map((l) => ({
+        accountRole: ROLE_FOR[l.role],
+        ...(l.side === 'debit' ? { debit: l.amount } : { credit: l.amount }),
+        description: `Payroll ${run.number}`,
+      })),
+    });
+  }
+
+  /**
+   * Decision D26: the Owner decides a payroll run (approve or send back) only when the Director prepared it, because the Director
+   * cannot decide their own; the Director decides every other run.
+   */
+  private async assertOwnerOnlyForDirectorRuns(actor: Actor, run: { preparedBy: string | null }): Promise<void> {
+    if (actor.levelNumber !== 1) return;
+    const preparer = run.preparedBy ? await this.prisma.employee.findUnique({ where: { id: run.preparedBy }, select: { level: { select: { number: true } } } }) : null;
+    if (preparer?.level.number !== 2) forbidden('owner_approves_director_only', 'The Owner decides only a payroll that the Director prepared');
+  }
+
   /** Sent back to Finance (to `calculated`) with a reason, by the Director (D25). */
   async returnRun(actor: Actor, idOrNumber: string, reason: string, client: RequestInfo): Promise<PayrollRunView> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
     if (!access.permissions.has('payroll.review') && !access.permissions.has('payroll.approve')) forbidden('forbidden', 'Only the reviewer or the approver can send a run back');
     const run = await this.findRun(idOrNumber);
     if (run.stage !== 'prepared' && run.stage !== 'reviewed') conflict('invalid_transition', 'Only a prepared or reviewed run can be sent back');
+    await this.assertOwnerOnlyForDirectorRuns(actor, run);
     await this.prisma.$transaction(async (tx) => {
       const changed = await tx.payrollRun.updateMany({
         where: { id: run.id, stage: run.stage },
@@ -305,7 +360,13 @@ export class PayrollRunsService {
   async markPaid(actor: Actor, idOrNumber: string, dto: MarkPayrollPaidRequest, client: RequestInfo): Promise<PayrollRunView> {
     const run = await this.findRun(idOrNumber);
     if (run.stage !== 'approved') conflict('invalid_transition', 'Only an approved run can be marked as paid');
-    if (run.paymentEntryId) conflict('already_paid', 'The bank transfer for this run is already recorded');
+    // A payment entry that is posted or still waiting means the transfer is recorded. A rejected one can be recorded again (bug 3).
+    if (run.paymentEntryId) {
+      const status = (await this.ledger.entryStatuses([run.paymentEntryId])).get(run.paymentEntryId)?.status;
+      if (status !== 'rejected') {
+        conflict('already_paid', status === 'posted' ? 'The bank transfer for this run is already recorded' : 'The bank transfer for this run is waiting for approval in the ledger');
+      }
+    }
     if (dto.paidOn < firstDayOfMonth(run.month)) badRequest('invalid_date', 'The transfer cannot be dated before the payroll month');
     if (dto.paidOn > pkDate(this.clock.now())) badRequest('invalid_date', 'The transfer cannot be dated in the future');
     const bank = await this.ledger.findBankAccount(dto.bankAccountId);
@@ -321,11 +382,12 @@ export class PayrollRunsService {
       this.prisma.$transaction(async (tx) => {
         await this.lockRun(tx, run.id);
         const fresh = await tx.payrollRun.findUniqueOrThrow({ where: { id: run.id }, select: { paymentEntryId: true } });
-        if (fresh.paymentEntryId) conflict('already_paid', 'The bank transfer for this run is already recorded');
+        if (fresh.paymentEntryId !== run.paymentEntryId) conflict('already_paid', 'The bank transfer for this run is already recorded');
+        const earlier = await tx.journalEntry.count({ where: { source: 'payroll_payment', sourceRef: run.id } });
         const entry = await this.ledger.createSystemEntry(tx, {
           source: 'payroll_payment',
           sourceRef: run.id,
-          purpose: 'payment',
+          purpose: earlier === 0 ? 'payment' : `payment-${earlier + 1}`,
           entryDate: dto.paidOn,
           description: `Salary transfer for ${run.month} (${run.number})`,
           makerId: actor.id,
@@ -334,7 +396,7 @@ export class PayrollRunsService {
             { accountId: bank.id, credit: net, description: `Payroll ${run.number}` },
           ],
         });
-        const changed = await tx.payrollRun.updateMany({ where: { id: run.id, stage: 'approved', paymentEntryId: null }, data: { paymentEntryId: entry.id, paymentRecordedAt: this.clock.now(), updatedBy: actor.id } });
+        const changed = await tx.payrollRun.updateMany({ where: { id: run.id, stage: 'approved', paymentEntryId: run.paymentEntryId }, data: { paymentEntryId: entry.id, paymentRecordedAt: this.clock.now(), updatedBy: actor.id } });
         if (!changed.count) conflict('already_paid', 'The bank transfer for this run is already recorded');
         await this.audit.record({ actorId: actor.id, action: 'payroll.run.paid', targetType: 'payroll_run', targetId: run.number, details: { runNumber: run.number, paymentEntry: entry.number, paidOn: dto.paidOn }, ...client }, tx);
       }, TX_OPTIONS),
@@ -432,9 +494,6 @@ export class PayrollRunsService {
 
     const slabSet = await this.taxSlabs.inForce(month, tx);
     if (!slabSet) conflict('tax_slabs_missing', `No income tax slabs are in force for ${month}. Enter them in Settings first`);
-
-    // Plan section 12: "attendance and leave for the month are locked" (Module 7, idempotent, in this transaction).
-    await this.attendance.lockMonth(month, actor.id, tx);
 
     const employees = await tx.employee.findMany({
       where: { ...employedInMonthWhere(month), pay: { isNot: null } },
@@ -544,7 +603,7 @@ export class PayrollRunsService {
         number: r.number,
         month: r.month,
         stage: r.stage,
-        paid: !!r.paymentEntryId,
+        paid: !!r.paymentEntryId && statuses.get(r.paymentEntryId)?.status === 'posted',
         workingDays: r.workingDays,
         headcount: sumOf.get(r.id)?._count._all ?? 0,
         totals: { gross: money(gross), tax: money(tax), advanceDeductions: money(advance), otherDeductions: money(other), deductions: money(tax.plus(advance).plus(other)), net: money(s?.net) },
@@ -563,7 +622,7 @@ export class PayrollRunsService {
         createdAt: r.createdAt.toISOString(),
         missingPay: missing,
         pendingAdjustments,
-        next: nextStep(r),
+        next: nextStep(r, (id) => (id ? statuses.get(id)?.status : undefined)),
       });
     }
     return out;
@@ -616,7 +675,8 @@ export class PayrollRunsService {
   }
 }
 
-function nextStep(r: PayrollRun): PayrollRunView['next'] {
+/** Next step for a run. "Paid" means the payment entry is posted; a rejected entry sends Finance back to record it. */
+function nextStep(r: PayrollRun, entryStatus: (id: string | null) => string | undefined): PayrollRunView['next'] {
   switch (r.stage) {
     case 'draft':
       return { action: 'calculate', label: 'Finance locks attendance and calculates the salaries' };
@@ -626,7 +686,10 @@ function nextStep(r: PayrollRun): PayrollRunView['next'] {
     case 'reviewed':
       return { action: 'approve', label: 'The Director approves it (confirming their password again)' };
     default:
-      return r.paymentEntryId ? { action: null, label: 'Approved and paid' } : { action: 'mark_paid', label: 'Finance records the bank transfer' };
+      if (entryStatus(r.journalEntryId) === 'rejected') return { action: null, label: 'The salary entry was rejected in the ledger: Finance creates it again' };
+      if (entryStatus(r.paymentEntryId) === 'posted') return { action: null, label: 'Approved and paid' };
+      if (entryStatus(r.paymentEntryId) === 'pending_approval') return { action: null, label: 'Bank transfer waiting for approval in the ledger' };
+      return { action: 'mark_paid', label: entryStatus(r.paymentEntryId) === 'rejected' ? 'The bank transfer was rejected: Finance records it again' : 'Finance records the bank transfer' };
   }
 }
 

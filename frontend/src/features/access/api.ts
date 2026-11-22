@@ -16,7 +16,7 @@ import { uid } from "@/lib/utils";
 import { table } from "@/mocks/db";
 import { DEPARTMENTS } from "@/mocks/seed/people";
 import { seedOrgChanges, seedRoles, seedStandIns } from "@/mocks/seed/access";
-import { LEVEL_ROLE, roleFor, type Duty, type RoleKey } from "@/types";
+import { roleFor, type Duty, type RoleKey } from "@/types";
 import { canReportTo, isManager, REPORTS_TO_HINT, roleEditBlock, validateStandIn, wouldCreateCycle } from "./logic";
 import type {
   ChangeLevelInput,
@@ -51,7 +51,8 @@ const notInLive = (what: string): never => {
 };
 
 const KNOWN_PERMISSIONS = new Set<string>(PERMISSIONS);
-const ROLE_KEY_FROM_API: Record<string, RoleKey> = { owner: "owner", ceo: "ceo", director: "director", cto: "cto", sales: "sales", level4_default: "level4_default", employee: "developer" };
+/** The server's role keys, as screen roles (the same keys, except the server's Level 5 "employee" is "developer"). */
+const ROLE_KEY_FROM_API: Record<string, RoleKey> = { owner: "owner", director: "director", cto: "cto", sales: "sales", finance: "finance", employee: "developer" };
 
 export const accessApi = {
   /** GET /org/tree */
@@ -69,11 +70,11 @@ export const accessApi = {
   /** GET /access/me: who am I and what may I do (role permissions plus duty permissions). Live only. */
   me: () => http.get<AccessMe>("/access/me"),
 
-  /** PATCH /org/employees/:empId/reporting-line { reportsToEmpId, reason }: Owner or CEO only; never their own line */
+  /** PATCH /org/employees/:empId/reporting-line { reportsToEmpId, reason }: the Director only; never their own line */
   move: async ({ empId, reportsTo, reason }: MoveInput) => {
     if (live()) return http.patch(`/org/employees/${empId}/reporting-line`, { reportsToEmpId: reportsTo, reason });
     return mock(() => {
-      requirePermission("org.manage", "Only the Owner or the CEO can change reporting lines.");
+      requirePermission("org.manage", "Only the Director can change reporting lines.");
       const list = employeesTable();
       const emp = list.find((e) => e.empId === empId);
       if (!emp) notFound("Employee");
@@ -87,18 +88,18 @@ export const accessApi = {
     });
   },
 
-  /** PATCH /org/employees/:empId/level { level, reason }: Owner or CEO only, never at or above their own level */
+  /** PATCH /org/employees/:empId/level { level, reason }: the Director only, never at or above their own level (so Levels 3 to 5) */
   changeLevel: async ({ empId, level, reason }: ChangeLevelInput) => {
     if (live()) return http.patch(`/org/employees/${empId}/level`, { level, reason });
     return mock(() => {
       const v = getViewer();
-      requirePermission("org.manage", "Only the Owner or the CEO can change levels.");
+      requirePermission("org.manage", "Only the Director can change levels.");
       const emp = employeesTable().find((e) => e.empId === empId);
       if (!emp) notFound("Employee");
       if (level <= v.employee.level) throw new ApiError("forbidden", `You can't assign Level ${level}.`, 403);
       if (!reason.trim()) throw new ApiError("validation", "A reason is required.");
       emp.level = level;
-      emp.role = emp.duties.includes("finance") ? "finance" : level === 4 ? roleFor(4, emp.departmentId) : LEVEL_ROLE[level];
+      emp.role = level === 4 && emp.duties.includes("finance") ? "finance" : roleFor(level, emp.departmentId);
       logChange("level", `${emp.name} moved to Level ${level}`, reason);
     });
   },
@@ -107,7 +108,7 @@ export const accessApi = {
   assignDuty: async ({ empId, duty, reason }: DutyInput) => {
     if (live()) return http.post(`/org/employees/${empId}/duties`, { dutyKey: duty, reason });
     return mock(() => {
-      requirePermission("roles.manage", "Only the Director gives extra duties.");
+      requirePermission("duty.assign", "Only the Director gives extra duties.");
       const emp = employeesTable().find((e) => e.empId === empId);
       if (!emp) notFound("Employee");
       if (emp.empId === getViewer().employee.empId) throw new ApiError("forbidden", "Nobody gives themselves a duty.", 403);
@@ -121,7 +122,7 @@ export const accessApi = {
   endDuty: async ({ empId, duty, reason }: DutyInput) => {
     if (live()) return http.delete(`/org/employees/${empId}/duties/${duty}`, { reason });
     return mock(() => {
-      requirePermission("roles.manage", "Only the Director ends extra duties.");
+      requirePermission("duty.assign", "Only the Director ends extra duties.");
       const emp = employeesTable().find((e) => e.empId === empId);
       if (!emp) notFound("Employee");
       emp.duties = emp.duties.filter((d: Duty) => d !== duty);
@@ -159,11 +160,11 @@ export const accessApi = {
     });
   },
 
-  /** POST /org/departments { name, headEmpId, reason }: Owner or CEO */
+  /** POST /org/departments { name, headEmpId, reason }: the Director */
   createDepartment: async (input: DepartmentInput) => {
     if (live()) return http.post("/org/departments", { name: input.name, headEmpId: input.headEmpId || undefined, reason: input.reason });
     return mock(() => {
-      requirePermission("org.manage", "Only the Owner or the CEO can add departments.");
+      requirePermission("org.manage", "Only the Director can add departments.");
       const head = employeesTable().find((e) => e.empId === input.headEmpId);
       if (!head || !isManager(head)) throw new ApiError("validation", "A department head must be a manager.");
       const hues = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -172,11 +173,11 @@ export const accessApi = {
     });
   },
 
-  /** PATCH /org/departments/:code { headEmpId, reason }: Owner or CEO (an explicit head, audited) */
+  /** PATCH /org/departments/:code { headEmpId, reason }: the Director (an explicit head, audited) */
   changeDepartmentHead: async ({ departmentId, headEmpId, reason }: { departmentId: string; headEmpId: string; reason: string }) => {
     if (live()) return http.patch(`/org/departments/${departmentId}`, { headEmpId, reason });
     return mock(() => {
-      requirePermission("org.manage", "Only the Owner or the CEO can change a department head.");
+      requirePermission("org.manage", "Only the Director can change a department head.");
       const dep = departmentsTable().find((d) => d.id === departmentId);
       if (!dep) notFound("Department");
       dep.headEmpId = headEmpId;
@@ -184,11 +185,11 @@ export const accessApi = {
     });
   },
 
-  /** POST /org/offices { name, city, reason }: Owner or CEO */
+  /** POST /org/offices { name, city, reason }: the Director */
   addOffice: async (input: OfficeInput) => {
     if (live()) return http.post("/org/offices", { name: input.name, city: input.city || undefined, reason: input.reason ?? "New office" });
     return mock(() => {
-      requirePermission("org.manage", "Only the Owner or the CEO can add offices.");
+      requirePermission("org.manage", "Only the Director can add offices.");
       officesTable().push({ id: uid("off"), name: input.name, city: input.city });
       logChange("office", `Office added: ${input.name}`, "New office");
     });
@@ -270,7 +271,7 @@ export const accessApi = {
       const v = getViewer();
       if (!v.can("standin.manage") || !isManager(v.employee)) throw new ApiError("forbidden", "Only managers set stand-ins.", 403);
       const forOther = input.managerEmpId !== v.employee.empId;
-      if (forOther && !(v.can("roles.manage") && descendantsOf(v.employee.empId).includes(input.managerEmpId)))
+      if (forOther && !(v.can("org.manage") && descendantsOf(v.employee.empId).includes(input.managerEmpId)))
         throw new ApiError("forbidden", "You can set a stand-in for yourself, or for a manager below you.", 403);
       const err = validateStandIn(input, employeesTable());
       if (err) throw new ApiError("validation", err);
@@ -287,7 +288,7 @@ export const accessApi = {
       if (!s) notFound("Stand-in");
       const v = getViewer();
       if (!v.can("standin.manage")) throw new ApiError("forbidden", "View only. Managers end their own stand-ins.", 403);
-      if (s.managerEmpId !== v.employee.empId && !(v.can("roles.manage") && descendantsOf(v.employee.empId).includes(s.managerEmpId)))
+      if (s.managerEmpId !== v.employee.empId && !(v.can("org.manage") && descendantsOf(v.employee.empId).includes(s.managerEmpId)))
         throw new ApiError("forbidden", "Only the manager, or someone above them, can end this stand-in.", 403);
       s.endedAt = new Date().toISOString();
       s.endReason = reason;
@@ -295,7 +296,7 @@ export const accessApi = {
     });
   },
 
-  /** GET /org/changes (from the audit log; the Owner, CEO and Director) */
+  /** GET /org/changes (from the audit log; the CEO / Founder / Owner and the Director) */
   changes: async (): Promise<OrgChange[]> => {
     if (live()) {
       try {

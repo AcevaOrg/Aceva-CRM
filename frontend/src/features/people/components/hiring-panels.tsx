@@ -14,15 +14,15 @@ import { useLookup } from "@/hooks/use-directory";
 import { formatDate } from "@/lib/dates";
 
 /**
- * Hire requests: Director or HR start a hire. Decision D25: the Director authorizes the level and reporting line; a
- * request the Director made is decided by the CEO, and the Owner may decide any. Nobody decides their own request.
- * Shown to people who can start or authorize hires (live mode only). The server checks all of this again.
+ * Hire requests: HR starts a hire; only the Director authorizes the level and reporting line (the Director can also
+ * hire directly). Shown to people who can start or authorize hires, and to the CEO / Founder / Owner (view only, as the
+ * server allows: people.view_personal). Live mode only.
  */
 export function HireRequestsPanel() {
   const authorize = useCan("people.approve_hire");
   const viewer = useViewer();
   const lookup = useLookup();
-  const manage = useCan("people.manage");
+  const manage = useCan(["people.manage", "people.view_personal"]);
   const qc = useQueryClient();
   const askReason = useReason();
   const query = useQuery({
@@ -37,10 +37,11 @@ export function HireRequestsPanel() {
   });
 
   const rows = query.data ?? [];
+  // The Director decides every request except the Director's own, which the Owner decides (the server checks this again).
   const mayDecide = (r: HireRequestView) => {
     if (!authorize || !viewer || r.requestedBy === viewer.employee.empId) return false;
-    if (viewer.employee.role === "ceo") return lookup.employee(r.requestedBy)?.role === "director";
-    return true;
+    const fromDirector = lookup.employee(r.requestedBy)?.role === "director";
+    return viewer.employee.role === "owner" ? fromDirector : !fromDirector;
   };
   if (!isLive("m3") || !(authorize || manage) || rows.length === 0) return null;
 
@@ -50,9 +51,7 @@ export function HireRequestsPanel() {
         <UserCheck className="size-4" /> Hires waiting for approval ({rows.length})
       </p>
       <p className="mb-3 text-[12.5px] text-muted-foreground">
-        {rows.some(mayDecide)
-          ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve."
-          : "The Director authorizes the level and reporting line (the CEO, for a request the Director made). The Emp-ID and welcome email follow after that."}
+        {rows.some(mayDecide) ? "You authorize the level and reporting line. The Emp-ID and welcome email are created when you approve." : "The Director authorizes the level and reporting line (the Owner, for a request the Director made). The Emp-ID and welcome email follow after that."}
       </p>
       <ul className="grid gap-2">
         {rows.map((r) => (
@@ -104,10 +103,10 @@ export function HireRequestsPanel() {
   );
 }
 
-/** People who still report to someone who has left. Nothing moves them automatically; the Owner or CEO assign a new manager. */
+/** People who still report to someone who has left. Nothing moves them automatically; the Director assigns a new manager. */
 export function UnresolvedReportsPanel() {
   const authorize = useCan("org.manage");
-  const manage = useCan("people.manage");
+  const manage = useCan(["people.manage", "people.view_personal"]);
   const query = useQuery({
     queryKey: ["people", "unresolved-reports"],
     queryFn: () => http.get<UnresolvedReport[]>("/employees/unresolved-reports"),
@@ -122,7 +121,7 @@ export function UnresolvedReportsPanel() {
         <UserX className="size-4" /> Need a new manager ({rows.length})
       </p>
       <p className="mb-3 text-[12.5px] text-muted-foreground">
-        These people still report to someone who has left. Nothing is moved automatically. {authorize ? "Open each profile, then Job, to choose the new manager." : "The Owner or CEO assign the new manager."}
+        These people still report to someone who has left. Nothing is moved automatically. {authorize ? "Open each profile, then Job, to choose the new manager." : "The Director assigns the new manager."}
       </p>
       <ul className="grid gap-1.5 text-[13px]">
         {rows.map((r) => (

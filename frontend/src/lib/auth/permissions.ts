@@ -1,6 +1,7 @@
 /**
  * Permission strings and the default role → permission map (Module 1, plan §5).
  * Spec §8. The server is the real lock; the UI only hides what a person can't use.
+ * These lists are the same as the server's (backend/prisma/permission-catalogue.ts): keep the two in step.
  */
 import type { Duty, RoleKey } from "@/types";
 
@@ -13,30 +14,31 @@ export const PERMISSIONS = [
   "performance.view_own", "performance.view_team", "performance.view_all", "performance.weights",
   "attendance.self", "attendance.view_team", "attendance.approve_correction", "leave.request", "leave.approve",
   "payroll.view_own", "payroll.view", "payroll.prepare", "payroll.review", "payroll.approve", "payroll.export",
-  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.close_approve", "finance.reopen", "finance.export", "finance.authority_manage",
+  "finance.view", "finance.entry_create", "finance.entry_approve", "finance.close", "finance.close_approve", "finance.reopen", "finance.authority_manage", "finance.export",
   "statements.view", "statements.export", "sheet.view", "sheet.import", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "billing.manage", "subscriptions.view", "subscriptions.manage",
   "comms.use", "comms.admin", "announcements.publish",
   "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.export",
   "integrations.view", "integrations.manage",
+  "approval.approve", "duty.assign", "auth.set_temporary_password", "auth.reset_two_factor",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
 /*
- * Aceva structure (development plan §5, five levels):
- *   L1 Owner      — oversight: sees everything (all activity, all data) but approves nothing. Changes levels and reporting lines.
- *   L2 CEO        — oversight; signs off only what the Director asked for (decision D25): the Director's own leave and
- *                   corrections, entries the Director made, hire requests the Director made. Changes levels and reporting lines.
- *   L3 Director   — the single approver for the whole company, plus HR duty. Gives extra duties.
- *   L3 CTO        — runs development (assigns and reviews development work, first step of developers' leave).
- *   L4 Heads/Leads — Sales, Finance (finance duty) and HR (HR duty) people: prepare, never approve company items.
- *   L5 Employees  — own work.
- * Maker-checker: the finance person (or anyone) prepares, the Director approves. The Director never
- * prepares finance items, so there is always a second person. The only thing that goes above the
- * Director is what the Director asked for themselves (leave, corrections, entries, hire requests), which the CEO signs off.
- * Decision D25 (17 Nov 2026) made this the rule for payroll, the month close and hiring too.
+ * Aceva structure (final, decided by the owner of the company):
+ *   L1 CEO / Founder / Owner — one person. Sees everything (every view and export, all activity, audit, finance, payroll,
+ *                              sales, settings) but approves, prepares, assigns and manages nothing. The one exception:
+ *                              nobody approves their own request, so the Director's own leave and attendance corrections
+ *                              come to him (he approves only for his direct report).
+ *   L2 Director   — reports to L1. The single approver for the whole company and the org administrator: levels, reporting
+ *                   lines, departments and offices, hiring, roles and duties. Holds HR duty and sales-manager duty.
+ *   L3 CTO        — reports to the Director: runs development (assigns and reviews work, first step of developers' leave).
+ *   L4 Sales and the finance person (Finance duty) — report to the Director: prepare, never approve.
+ *   L5 Developer / SQA — report to the CTO: own work.
+ * Maker-checker: the finance person (or anyone) prepares, the Director approves. The Director never prepares finance
+ * items, so there is always a second person.
  */
 
 /** Everyone: their own work, their own data, the directory and messages. */
@@ -50,11 +52,15 @@ const MANAGER: Permission[] = [
   ...BASE,
   "people.view_job", "standin.manage", "activity.view_team", "activity.view_all", "task.assign", "task.review", "task.view_team",
   "performance.view_team", "performance.view_all", "attendance.view_team", "attendance.approve_correction", "leave.approve",
-  "auth.unlock_account", "session.force_logout", "comms.admin", "announcements.publish",
+  "auth.unlock_account", "session.force_logout", "comms.admin", "announcements.publish", "approval.approve",
 ];
 
-/** L1 Owner and L2 CEO: oversight. Every "view" and export; they change levels and reporting lines, nothing else. */
-const OVERSIGHT: Permission[] = [
+/**
+ * L1 CEO / Founder / Owner: oversight. Every "view" and export; nothing to manage or approve. leave.approve,
+ * attendance.approve_correction and approval.approve exist only for the Director's own items; unlocking and resetting the
+ * authenticator only for the Director (the server enforces both limits).
+ */
+const OWNER: Permission[] = [
   ...BASE,
   "people.view_job", "people.view_personal", "people.view_pay",
   "activity.view_team", "activity.view_all", "activity.security",
@@ -65,37 +71,20 @@ const OVERSIGHT: Permission[] = [
   "billing.view", "subscriptions.view",
   "sales.own", "sales.team", "sales.all", "sales.commission_view", "sales.export",
   "integrations.view", "announcements.publish",
-  "org.manage",
+  // Decision D25: only for the Director's own items (leave, corrections, journal entries, hire requests)
+  "leave.approve", "attendance.approve_correction", "approval.approve", "finance.entry_approve", "people.approve_hire", "payroll.approve",
+  "auth.unlock_account", "auth.reset_two_factor",
 ];
 
-/**
- * L1 Owner: oversight, plus what the plan sends to the top: the Director's own leave and corrections (approvals move up),
- * finance entries above the CEO's limit and all capital and loan entries (section 13), and reopening a closed month.
- * Mirrors backend/prisma/permission-catalogue.ts (the server is the real lock).
- */
-/** Decision D22: only the Owner changes approval limits, finance-wide security settings and the "Owner approves" rule. */
-const OWNER: Permission[] = [...OVERSIGHT, "leave.approve", "attendance.approve_correction", "finance.entry_approve", "finance.reopen", "finance.authority_manage", "people.approve_hire"];
-
-/**
- * L2 CEO (decision D25): oversight. The approvals kept are only for what the Director asked for: the Director's leave and
- * corrections (routed by the server), entries the Director made (level 2) and hire requests the Director made. Payroll, the
- * month close and reopening a month are the Director's.
- */
-const CEO: Permission[] = [
-  ...OVERSIGHT, "standin.manage", "auth.unlock_account", "session.force_logout", "leave.approve", "attendance.approve_correction",
-  "finance.entry_approve", "people.approve_hire",
-];
-
-/** L2 Director: the approver for everything, plus HR duty, sales-manager duty and company administration. Prepares no finance items. */
+/** L2 Director: the approver for everything and the org administrator, plus HR duty and sales-manager duty. Prepares no finance items. */
 const DIRECTOR: Permission[] = [
   ...MANAGER,
-  "roles.manage", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
+  "org.manage", "roles.manage", "duty.assign", "people.view_personal", "people.view_pay", "people.manage", "people.manage_pay",
+  "auth.set_temporary_password", "auth.reset_two_factor",
   "activity.security", "performance.weights",
-  // Decision D25: the Director approves payroll in one step (Finance prepares), approves the month close the finance duty
-  // person runs, reopens a closed month, and decides hire requests.
+  // Decision D25: the Director approves everything below the Owner in one step (payroll, month close, reopening, entries, hires)
   "payroll.view", "payroll.approve", "payroll.export",
-  "finance.view", "finance.entry_approve", "finance.close_approve", "finance.reopen", "finance.export",
-  "people.approve_hire",
+  "finance.view", "finance.entry_approve", "finance.close_approve", "finance.reopen", "finance.authority_manage", "finance.export", "people.approve_hire",
   "statements.view", "statements.export", "sheet.view", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "subscriptions.view", "subscriptions.manage",
@@ -109,31 +98,17 @@ const CTO: Permission[] = [
   "activity.security", "settings.view", "backup.view", "integrations.view", "integrations.manage",
 ];
 
-/** L4 Department Head / Team Lead (default Level 4 role): own work plus a team lead's basics. Extra duties add more. */
-const LEVEL4_DEFAULT: Permission[] = [
-  ...BASE, "standin.manage", "task.assign", "task.review", "task.view_team",
-  // Plan section 11: leave goes to the team lead first, corrections to the manager; team attendance down the line.
-  "leave.approve", "attendance.approve_correction", "attendance.view_team",
-];
-
-/** L4 Sales: own leads, deals, follow-ups and daily report. */
+/** L4 Sales: own leads, deals, follow-ups and daily report. Manages nobody. */
 const SALES: Permission[] = [...BASE, "sales.own"];
 
-/** L4 Finance person (finance duty): prepares; never approves. */
-const FINANCE: Permission[] = [
-  ...BASE,
-  "finance.view", "finance.entry_create", "finance.close", "payroll.view", "payroll.prepare",
-  "statements.view", "sheet.view", "sheet.import", "insights.view",
-  "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view",
-];
+/** L4 Finance person: the role adds nothing; the finance permissions come from the Finance duty (prepares, never approves). */
+const FINANCE: Permission[] = [...BASE];
 
-/** L5 Software Development employees. */
+/** L5 Developer / SQA. */
 const DEVELOPER: Permission[] = [...BASE];
 
 export const ROLE_PERMISSIONS: Record<RoleKey, Permission[]> = {
   owner: OWNER,
-  ceo: CEO,
-  level4_default: LEVEL4_DEFAULT,
   director: DIRECTOR,
   cto: CTO,
   sales: SALES,
@@ -147,15 +122,14 @@ export const DUTY_PERMISSIONS: Record<Duty, Permission[]> = {
     "finance.view", "finance.entry_create", "finance.close", "payroll.view", "payroll.prepare",
     "statements.view", "sheet.view", "sheet.import", "insights.view",
     "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view",
+    "people.view_pay",
   ],
-  hr: ["people.view_job", "people.view_personal", "people.manage", "auth.unlock_account"],
+  hr: ["people.view_job", "people.view_personal", "people.manage", "auth.unlock_account", "auth.set_temporary_password", "auth.reset_two_factor"],
   sales_manager: ["sales.own", "sales.team", "sales.targets", "sales.export"],
 };
 
 export const ROLE_LABEL: Record<RoleKey, string> = {
-  owner: "Owner",
-  ceo: "CEO",
-  level4_default: "Department Head / Team Lead",
+  owner: "CEO / Founder / Owner",
   director: "Director",
   cto: "CTO",
   sales: "Sales",
@@ -169,12 +143,13 @@ export const DUTY_LABEL: Record<Duty, string> = {
   sales_manager: "Sales manager",
 };
 
+/** The same names as the server's levels table. */
 export const LEVEL_LABEL: Record<number, string> = {
-  1: "Owner",
-  2: "CEO",
-  3: "Director / CTO",
-  4: "Department Head / Team Lead",
-  5: "Employee",
+  1: "CEO / Founder / Owner",
+  2: "Director",
+  3: "CTO",
+  4: "Sales and Finance",
+  5: "Developer / SQA",
 };
 
 export function permissionsFor(role: RoleKey, duties: Duty[] = []): Set<Permission> {

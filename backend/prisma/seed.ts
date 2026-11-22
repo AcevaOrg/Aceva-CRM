@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
+import { utcPoolConfig } from '../src/prisma/connection';
 import { seedDatabase } from './seed-data';
 
 /** Run with:  npm run db:seed   (uses DATABASE_URL from backend/.env) */
@@ -11,7 +12,7 @@ async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set');
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(utcPoolConfig(url)) });
   try {
     await seedDatabase(prisma);
     const count = await prisma.employee.count();

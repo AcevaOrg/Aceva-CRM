@@ -1,5 +1,11 @@
 # Module 1 acceptance checklist (plan section 5)
 
+> **Updated for the final company structure** (branch `cycle1-structure-fix`). Level 1 CEO / Founder / Owner (one person,
+> view only), Level 2 Director (the only approver and the org administrator), Level 3 CTO, Level 4 Sales and Finance,
+> Level 5 Developer / SQA. Everything this checklist used to give "Owner/CEO" now belongs to the Director; the separate
+> CEO role is removed. The rows below describe the new rules. The tests named in them (`m1-access`, `m1-changes`, `m1-structure`, `database.test`, `rules.test`, `e2e/m1-live.spec.ts`) were updated to the new
+> rules, but the database and browser tests have not been run again yet: GitHub CI runs them.
+
 **M1 is NOT fully complete.** Requirement G2 / item M1-11 (the hierarchy kept in Redis) is not implemented: Redis is used for sessions only and the hierarchy cache is PostgreSQL. All other rows below are done and tested. GitHub Actions has never run (pending).
 
 Statuses: **Done and tested** (a test that I ran passes), **Partial**, **Open** (needs a decision), **Blocked** (needs a later module).
@@ -7,15 +13,15 @@ Backend tests are in `backend/test` and `backend/src/**.test.ts`; browser tests 
 
 | # | Requirement | Status | Verified by |
 |---|---|---|---|
-| A1 | Five levels exactly (Owner, CEO, Director/CTO, Heads/Leads, Employees) | Done and tested | `database.test` (levels, CHECK 1..5), `m1-access` |
+| A1 | Five levels exactly (CEO / Founder / Owner, Director, CTO, Sales and Finance, Developer / SQA) | Done and tested | `database.test` (levels, CHECK 1..5), `m1-access` |
 | A2 | Departments and offices | Done and tested (read, headcount, head, offices) | `m1-access` (departments), tree test |
-| A3 | A "reports to" person for every employee (only the Owner has none) | Done and tested | `database.test`, `rules.test` |
+| A3 | A "reports to" person for every employee (only the CEO / Founder / Owner has none) | Done and tested | `database.test`, `rules.test` |
 | B1 | A default role for every level | Done and tested | `m1-access` |
 | B2 | Individual permissions, role-permission links, Director adds duties (Finance, HR) | Done and tested | `m1-access`, `m1-changes` (duties) |
 | B3 | Extensible for future modules without rewriting authorization | Done and tested | `m1-access` (new permission by data only) |
 | C | Own data + below, never above or beside; at the database-query level; list and single record | Done and tested | `m1-access` (scope), e2e |
 | D1 | Org chart as a tree with reporting relationships | Done and tested | `m1-access`, e2e |
-| D2 | Only Owner/CEO change levels and lines; changes validated before saving (no loop, no self, no lower level, same level only where configured, no level escalation) | Done and tested | `rules.test`, `m1-changes`, e2e |
+| D2 | Only the Director changes levels and lines (the CEO / Founder / Owner is view only); changes validated before saving (no loop, no self, no same or lower level, no level escalation) | Done and tested | `rules.test`, `m1-changes`, e2e |
 | E | Stand-in with named person and dates; routing to the stand-in; next level up without one; stand-in must be authorized | Done and tested. Interpretation: "away with no stand-in" is an away period with the stand-in left empty, because leave (M7) does not exist yet | `rules.test`, `m1-changes`, e2e |
 | F1 | NestJS guard: identify employee, check permission, check scope, reject, log blocked attempts; fail closed | Done and tested | `m1-access` |
 | F2 | "Identify the authenticated employee" | **Partial**: M1 uses a development-only identity header (off by default, refuses production). Real Emp-ID login arrives with M2 | `env.test`, `m1-access` |
@@ -30,9 +36,9 @@ Backend tests are in `backend/test` and `backend/src/**.test.ts`; browser tests 
 
 ## Open decisions for the owner
 
-1. **Departments and offices: creating or editing them.** The plan lists them as stored data but does not say who creates them. The screen buttons exist in mock mode; in live mode they are switched off. Who should be allowed (suggest Owner/CEO), and should a department store its head, or keep deriving the head from the most senior person?
+1. **Departments and offices: creating or editing them.** The plan lists them as stored data but does not say who creates them. The screen buttons exist in mock mode; in live mode they are switched off. Who should be allowed, and should a department store its head, or keep deriving the head from the most senior person? **Decided:** the Director (`org.manage`); the head is stored explicitly.
 2. **Editing role permissions** (the Director's roles matrix in the mock). The plan does not require it. In live mode the matrix is read only; roles change through duties. Keep it that way?
-3. **Same-level reporting** is a data table (`same_level_reporting_rules`), seeded with Director to CTO only. Confirm.
+3. **Same-level reporting** is a data table (`same_level_reporting_rules`). **Decided:** no pair is configured any more; the CTO (Level 3) reports to the Director (Level 2). The table stays for later use.
 4. **Stand-in authorization rule I chose:** active, allowed to approve, at the manager's level or higher, not the manager. Confirm.
 
 ## Known limitations
@@ -48,8 +54,8 @@ Backend tests are in `backend/test` and `backend/src/**.test.ts`; browser tests 
 
 | Decision | Status |
 |---|---|
-| Owner and CEO create, edit and deactivate departments and offices | Done and tested (`backend/test/m1-structure.test.ts`, browser test) |
-| Explicit `head_employee_id` for a department head, never derived; only Owner/CEO change it; audited | Done and tested. Reporting lines stay the source of truth for hierarchy and approvals (tested) |
+| The Director creates, edits and deactivates departments and offices (the CEO / Founder / Owner views them) | Done and tested (`backend/test/m1-structure.test.ts`, browser test) |
+| Explicit `head_employee_id` for a department head, never derived; only the Director changes it; audited | Done and tested. Reporting lines stay the source of truth for hierarchy and approvals (tested) |
 | Role-permission editing stays read only; catalogue maintained centrally in the backend | Done (`backend/prisma/permission-catalogue.ts`) |
 | Empty stand-in means no delegated approver; next eligible person upward approves; stand-in active, can approve, same or higher level, not the manager or the requester; valid dates; no overlaps or conflicts | Done and tested (conflicts: a stand-in cannot be away on the same dates, a manager cannot be away while covering for someone; people who have left are passed over) |
 | Development-only identity removed once real authentication exists | Done: the header and its setting are deleted |

@@ -79,7 +79,7 @@ function OpenPeriod({ period }: { period: FinancePeriod }) {
   const done = period.checklist.filter((c) => c.done).length;
 
   const financePerson = lookup.employees.find((e) => e.duties.includes("finance") && e.status !== "left")?.empId;
-  const director = lookup.employees.find((e) => e.role === "ceo" && e.status !== "left")?.empId;
+  const director = lookup.employees.find((e) => e.role === "director" && e.status !== "left")?.empId;
   const closing = period.status === "closing";
   const steps = [
     { label: "Run by (Finance)", empId: closing ? period.closedBy : financePerson, state: closing ? ("done" as const) : ("waiting" as const), at: closing ? period.closedAt : undefined },

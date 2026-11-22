@@ -40,7 +40,7 @@ async function leaveRequested(requestNumber: string, from = DEV1, approver = DIR
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = OWNER; // final company structure (main): the CEO, Founder and Owner are one person, ACV-0001
   prisma = createTestPrisma();
   runner = t.app.get(OutboxConsumerRunner);
   outbox = t.app.get(OutboxService);
@@ -110,7 +110,7 @@ describe('Cycle 3 foundation: notifications from existing events', () => {
     await delivery.drain();
   });
 
-  it('payroll ready goes to the payroll approver (the Director), never to the preparer; a payslip to its employee', async () => {
+  it('payroll ready (prepared by Finance) goes to the Director only, never to the preparer or the Owner; a payslip to its employee', async () => {
     await outbox.emit({ type: 'payroll.run.ready', actor: FINANCE, payload: { runNumber: 'PR-2030-01', month: '2030-01', stage: 'prepared' } });
     await outbox.emit({ type: 'payslip.issued', actor: DIRECTOR, payload: { empId: DIRECTOR, month: '2030-01' } });
     await process();
@@ -118,7 +118,21 @@ describe('Cycle 3 foundation: notifications from existing events', () => {
     expect(director.find((n) => n.type === 'payroll_ready')).toMatchObject({ title: 'PR-2030-01 payroll is ready for your approval', link: '/payroll/runs/PR-2030-01', essential: true });
     expect(director.find((n) => n.type === 'payslip_available')).toBeTruthy(); // their own payslip, although they caused the event
     expect((await mine(FINANCE)).filter((n) => n.type === 'payroll_ready')).toHaveLength(0);
-    expect((await mine(CEO)).filter((n) => n.type === 'payroll_ready')).toHaveLength(0); // D25: the CEO does not approve payroll
+    // D26: the Owner decides only a run the Director prepared, so is not asked about this one
+    expect((await mine(OWNER)).filter((n) => n.type === 'payroll_ready')).toHaveLength(0);
+    await delivery.drain();
+  });
+
+  it('payroll ready (prepared by the Director) goes to the Owner only (D26), never back to the Director', async () => {
+    await outbox.emit({ type: 'payroll.run.ready', actor: DIRECTOR, payload: { runNumber: 'PR-2030-02', month: '2030-02', stage: 'prepared' } });
+    await process();
+    expect((await mine(OWNER)).find((n) => n.type === 'payroll_ready' && n.title.startsWith('PR-2030-02'))).toMatchObject({
+      title: 'PR-2030-02 payroll is ready for your approval',
+      link: '/payroll/runs/PR-2030-02',
+      essential: true,
+    });
+    expect((await mine(DIRECTOR)).filter((n) => n.type === 'payroll_ready' && n.title.startsWith('PR-2030-02'))).toHaveLength(0);
+    expect((await mine(FINANCE)).filter((n) => n.type === 'payroll_ready' && n.title.startsWith('PR-2030-02'))).toHaveLength(0);
     await delivery.drain();
   });
 

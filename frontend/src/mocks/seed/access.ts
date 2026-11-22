@@ -4,21 +4,19 @@ import { DUTY_LABEL, DUTY_PERMISSIONS, ROLE_LABEL, ROLE_PERMISSIONS } from "@/li
 import { ROLE_LEVEL, type Duty, type RoleKey } from "@/types";
 import { daysFromNow, minutesAgo } from "../time";
 
-/** Roles of the five levels (plan §5): Owner, CEO, Director and CTO, Heads and Leads, Employees. */
+/** Roles of the five levels (the final structure): CEO / Founder / Owner, Director, CTO, Sales and Finance, Developer / SQA. */
 const ROLE_DESCRIPTION: Record<RoleKey, string> = {
-  owner: "Level 1. Sees everything (all activity, data, reports and exports) but approves, prepares and assigns nothing. Changes employee levels and reporting lines, with a reason, and every change is logged.",
-  ceo: "Level 2. Oversight like the Owner, plus signs off the Director's own leave and attendance corrections. Changes levels and reporting lines below the CEO, with a reason.",
-  level4_default: "Level 4 default role: Department Heads and Team Leads. Own work plus assigning tasks to, and approving for, the people below. HR and Finance people hold their extra duty on top.",
-  director: "The approver for the whole company: payroll, journal entries, month close and reopen, Won deals, commission, targets, the last step of leave, settings. Also holds HR duty and sales-manager duty, and gives extra duties such as Finance. Prepares no finance items. Level 3, reports to the CEO.",
-  cto: "Runs development: assigns and reviews tasks, first step of developers' leave and corrections, security alerts, backups and integrations. No finance, payroll or sales data. Level 3, reports to the Director (the one configured same-level reporting line).",
-  sales: "Own leads, deals, follow-ups, targets and daily report. Reports to the Director. Manages nobody.",
-  finance: "The finance person. Prepares journal entries, payroll runs, bills, invoices, payments, bank reconciliation, salary advances and the month close. Approves nothing: the Director approves. Reports to the Director.",
-  developer: "Software Development. Own tasks, attendance, leave, scorecard and payslips. Reports to the CTO.",
+  owner: "Level 1, one person. Sees everything (all activity, data, reports, settings and exports) but approves, prepares, assigns and manages nothing. The one exception: he signs off the Director's own leave and attendance corrections, because nobody approves their own request.",
+  director: "Level 2, reports to the CEO / Founder / Owner. The only approver for the whole company: payroll, journal entries, month close and reopen, Won deals, commission, targets, the last step of leave, settings. Also the org administrator: levels, reporting lines, departments, offices, hiring and extra duties. Holds HR duty and sales-manager duty. Prepares no finance items.",
+  cto: "Level 3, reports to the Director. Runs development: assigns and reviews tasks, first step of developers' leave and corrections, security alerts, backups and integrations. No finance, payroll or sales data.",
+  sales: "Level 4 (the default role of the level). Own leads, deals, follow-ups, targets and daily report. Reports to the Director. Manages nobody.",
+  finance: "Level 4. The finance person: the role itself adds nothing; the Finance duty lets them prepare journal entries, payroll runs, bills, invoices, payments, bank reconciliation, salary advances and the month close. Approves nothing: the Director approves. Reports to the Director.",
+  developer: "Level 5, Developer / SQA. Own tasks, attendance, leave, scorecard and payslips. Reports to the CTO.",
 };
 
 const DUTY_DESCRIPTION: Record<Duty, string> = {
   finance: "Held by the finance person. Prepares entries, payroll, bills and the month close; the Director approves. Reviewed every 3 months.",
-  hr: "Held by the Director. Profiles, onboarding, offboarding, pay edits and account unlocks.",
+  hr: "Held by the Director. Profiles, onboarding, offboarding, account unlocks, temporary passwords and lost-authenticator resets.",
   sales_manager: "Held by the Director. Sets sales targets, moves leads, confirms Won deals and approves commission.",
 };
 
@@ -45,7 +43,8 @@ export function seedRoles(): Role[] {
 
 /**
  * Only managers (Director, CTO) have stand-ins; a stand-in is another manager at the same level or higher.
- * The CEO / Founder / Owner approves nothing, so the Director has no stand-in: their approvals wait.
+ * The CEO / Founder / Owner is never a stand-in (he approves only the Director's own items), so the Director has no
+ * stand-in: their approvals wait.
  */
 export function seedStandIns(): StandIn[] {
   return [

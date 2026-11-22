@@ -18,7 +18,6 @@ export type HomeVariant = "executive" | "director" | "cto" | "sales" | "finance"
 export function homeVariant(v: Viewer): HomeVariant {
   switch (v.employee.role) {
     case "owner":
-    case "ceo":
       return "executive";
     case "director":
       return "director";

@@ -25,14 +25,20 @@ export function OffboardDialog({ employee, onClose }: { employee: Employee; onCl
   const manager = lookup.employee(employee.reportsTo);
   const p = preview.data;
   const when = date ? formatDate(`${date}T09:00`) : "that day";
+  // Live, the server moves only what can stay in line; the rest is closed or kept (see the Module 5 acceptance notes, decision 13).
+  const handOverText = (count: number, to: string) =>
+    isLive("m5")
+      ? `${count} open task${count === 1 ? "" : "s"} move to ${to} where they can: tasks assigned by ${to}, or that would not stay below the person who assigned them, are closed instead, and handed-in tasks stay for review. ${to} gets one mail listing them.`
+      : `${count} open task${count === 1 ? "" : "s"} move to ${to}.`;
 
   const steps = p
     ? [
         { icon: KeyRound, text: "Login is disabled." },
         { icon: LogOut, text: `All sessions end${p.activeSessions ? ` (${p.activeSessions} active now)` : ""}.` },
-        isLive("m3")
+        // With Module 5 live the open tasks really move (the count comes from the server); before that only a request is queued.
+        isLive("m3") && !isLive("m5")
           ? { icon: ListTodo, text: `A request to move their open tasks to ${manager?.name ?? "the manager"} is queued. The Tasks module acts on it once it is connected.` }
-          : { icon: ListTodo, text: p.openTasks ? `${p.openTasks} open task${p.openTasks === 1 ? "" : "s"} move to ${manager?.name ?? "the manager"}.` : "No open tasks to move." },
+          : { icon: ListTodo, text: p.openTasks ? handOverText(p.openTasks, manager?.name ?? "the manager") : "No open tasks to move." },
         ...(p.directReports ? [{ icon: ListTodo, text: `${p.directReports} direct report${p.directReports === 1 ? "" : "s"} need a new manager (the Director changes it in Org and access).` }] : []),
         ...(p.isSales ? [{ icon: Contact, text: "Their leads and deals move to the Director (sales manager)." }] : []),
         { icon: Wallet, text: isLive("m3") ? "A final-salary request is queued for Payroll, which is not connected yet." : "Finance adds the final salary to the next payroll run; the Director approves it." },

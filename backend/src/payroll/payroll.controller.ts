@@ -125,7 +125,7 @@ export class PayrollController {
   @FinanceScreen()
   @RequirePermission('payroll.approve')
   @HttpCode(200)
-  @ApiOperation({ summary: 'The CEO approves a reviewed run (confirm again; never the preparer). Issues payslips and creates the salary entry' })
+  @ApiOperation({ summary: 'The Director approves a prepared run (confirm again; never the preparer), the Owner only a run the Director prepared. Issues payslips and creates the salary entry' })
   approve(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('id') id: string, @ClientInfo() client: RequestInfo) {
     return this.runs.approve(actor, sessionId, id, client);
   }
@@ -146,6 +146,15 @@ export class PayrollController {
   @ApiOperation({ summary: 'Record the bank transfer: a payment entry clears salary payable (once per approved run)' })
   markPaid(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: MarkPaidDto, @ClientInfo() client: RequestInfo) {
     return this.runs.markPaid(actor, id, body, client);
+  }
+
+  @Post('runs/:id/repost-salary-entry')
+  @FinanceScreen()
+  @RequirePermission('payroll.prepare')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'The ledger rejected the salary entry: create it again (only after a rejection)' })
+  repostSalaryEntry(@CurrentActor() actor: Actor, @Param('id') id: string, @ClientInfo() client: RequestInfo) {
+    return this.runs.repostSalaryEntry(actor, id, client);
   }
 
   @Get('runs/:id/bank-sheet')

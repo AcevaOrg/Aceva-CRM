@@ -37,7 +37,7 @@ async function calculate(month: string): Promise<{ id: string; lines: Array<Reco
 
 async function approve(id: string): Promise<void> {
   await as(FINANCE).post(`${API}/payroll/runs/${id}/prepare`).expect(200);
-  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(404); // D25: the CEO only views payroll
+  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(403); // D26: the Owner approves only a run the Director prepared
   await t.stepUp(DIRECTOR);
   await as(DIRECTOR).post(`${API}/payroll/runs/${id}/approve`).expect(200); // one Director step (D25)
 }
@@ -47,7 +47,7 @@ beforeAll(async () => {
   ledger = new FakeLedger();
   t = await createTestApp({ overrides: [{ provide: AttendancePayrollPort, useValue: new FakeAttendance(prisma) }, { provide: LedgerPostingPort, useValue: ledger }] });
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
   await setPay(t, prisma, DEV1, { base: '100000' });
   await setPay(t, prisma, DEV2, { base: '60000' });
   await as(DIRECTOR).post(`${API}/settings/tax-slabs`).send(TEST_SLABS).expect(201);

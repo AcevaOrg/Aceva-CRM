@@ -39,7 +39,7 @@ beforeAll(async () => {
   ledger = new FakeLedger();
   t = await createTestApp({ overrides: [{ provide: AttendancePayrollPort, useValue: attendance }, { provide: LedgerPostingPort, useValue: ledger }] });
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
 
   await setPay(t, prisma, DEV1, { base: '100000', allowances: '10000', bank: 'HBL', account: DEV1_ACCOUNT });
   await setPay(t, prisma, DEV2, { base: '60000', account: 'PK22MEZN0000000000005678' });
@@ -113,13 +113,13 @@ describe('M8 calculating a run', () => {
     await as(FINANCE).post(`${API}/payroll/runs/${october}/items`).send({ empId: DEV1, kind: 'bonus', label: 'Float', amount: 12.5 }).expect(400);
   });
 
-  it('locks the month through Module 7, takes the final settlement event once, and calculates exact salaries', async () => {
+  it('calculates exact salaries without locking the month, and takes the final settlement event once', async () => {
     const res = await act(FINANCE, october, 'calculate').expect(200);
     expect(res.body).toMatchObject({ stage: 'calculated', workingDays: 22, headcount: 5 });
     expect(res.body.totals).toEqual({ gross: '343181.82', tax: '1850.00', advanceDeductions: '0.00', otherDeductions: '1000.00', deductions: '2850.00', net: '340331.82' });
     expect(res.body.taxSlabSet.label).toBe(TEST_SLABS.label);
     expect(res.body.missingPay.map((p: { empId: string }) => p.empId)).toContain('ACV-0008');
-    expect(attendance.lockCalls.filter((c) => c.month === '2026-10')).toHaveLength(1);
+    expect(attendance.lockCalls.filter((c) => c.month === '2026-10')).toHaveLength(0); // the month locks when the payroll is approved
 
     const settlements = await prisma.finalSettlement.findMany({ where: { employee: { empId: LEAVER } } });
     expect(settlements).toHaveLength(1); // two events, one settlement
@@ -157,7 +157,7 @@ describe('M8 calculating a run', () => {
 });
 
 describe('M8 prepare and approve (maker-checker and confirm-again; one Director step, decision D25)', () => {
-  it('only Finance prepares; nobody reviews any more; the CEO only views (404 for people without the permission)', async () => {
+  it('only Finance prepares; nobody reviews any more; the Owner approves only a run the Director prepared (404 for people without the permission)', async () => {
     await act(DIRECTOR, october, 'prepare').expect(404); // no payroll.prepare
     await act(DEV1, october, 'prepare').expect(404);
     const prepared = (await act(FINANCE, october, 'prepare').expect(200)).body;
@@ -169,7 +169,8 @@ describe('M8 prepare and approve (maker-checker and confirm-again; one Director 
     await act(DIRECTOR, october, 'review').expect(404);
     await act(CEO, october, 'review').expect(404);
     await act(FINANCE, october, 'approve').expect(404);
-    await act(CEO, october, 'approve').expect(404); // D25: the CEO only views payroll
+    await act(CEO, october, 'approve').expect(403); // D26: the Owner approves only a run the Director prepared
+    await act(CEO, october, 'return', { reason: 'Not for the Owner to send back' }).expect(403); // ... and sends back only those
   });
 
   it('the database refuses line changes once prepared', async () => {
@@ -185,6 +186,7 @@ describe('M8 prepare and approve (maker-checker and confirm-again; one Director 
     expect(approved).toMatchObject({ stage: 'approved', approvedBy: { empId: DIRECTOR }, reviewedBy: null, salaryEntry: { status: 'pending_approval' }, next: { action: 'mark_paid' } });
     expect((await act(DIRECTOR, october, 'approve').expect(409)).body.code).toBe('invalid_transition'); // no double approval
     expect(await prisma.outboxEvent.count({ where: { type: 'payroll.run.ready' } })).toBe(1); // prepared; there is no review step
+    expect(attendance.lockCalls.filter((c) => c.month === '2026-10')).toHaveLength(1); // approval locks the month in attendance, once
   });
 
   it('approval creates the salary entry exactly once, balanced, made by the preparer, waiting for ledger approval', async () => {
@@ -250,10 +252,10 @@ describe('M8 sending back, and maker-checker when one person holds two duties', 
     expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: september } })).stage).toBe('prepared');
   });
 
-  it('a run can be sent back with a reason (validated) by the Director, never by Finance or the CEO, then recalculated', async () => {
+  it('a run can be sent back with a reason (validated) by the Director (or the Owner for a run the Director prepared), never by Finance, then recalculated', async () => {
     await act(DIRECTOR, september, 'return', { reason: 'no' }).expect(400);
     await act(FINANCE, september, 'return', { reason: 'Wrong month' }).expect(403); // Finance does not approve
-    await act(CEO, september, 'return', { reason: 'Wrong month' }).expect(403); // D25: the CEO only views (even on finance duty)
+    // (this run was prepared by the Director, so the Owner could also send it back; the Owner cannot for a Finance-prepared run: see the test above)
     const back = (await act(DIRECTOR, september, 'return', { reason: 'Please check the bonus lines' }).expect(200)).body;
     expect(back).toMatchObject({ stage: 'calculated', returnedNote: 'Please check the bonus lines', preparedBy: null });
     expect((await act(DIRECTOR, september, 'return', { reason: 'Again please' }).expect(409)).body.code).toBe('invalid_transition');
@@ -267,7 +269,7 @@ describe('M8 sending back, and maker-checker when one person holds two duties', 
     await t.stepUp(DIRECTOR);
     expect((await act(DIRECTOR, september, 'approve').expect(403)).body.code).toBe('maker_checker');
     await t.stepUp(CEO);
-    await act(CEO, september, 'approve').expect(404); // and the CEO has no payroll.approve
+    await act(CEO, september, 'approve').expect(403); // the Owner prepared it, so cannot approve it (maker-checker)
     expect((await prisma.payrollRun.findUniqueOrThrow({ where: { id: september } })).stage).toBe('reviewed');
   });
 });
@@ -307,7 +309,7 @@ describe('M8 after approval: adjustments, payment, bank sheet', () => {
     await act(FINANCE, october, 'mark-paid', { bankAccountId: ledger.bank.id, paidOn: '05-11-2026' }).expect(400);
     await act(DIRECTOR, october, 'mark-paid', { bankAccountId: ledger.bank.id, paidOn: '2026-11-05' }).expect(404);
     const paid = (await act(FINANCE, october, 'mark-paid', { bankAccountId: ledger.bank.id, paidOn: '2026-11-05' }).expect(200)).body;
-    expect(paid).toMatchObject({ paid: true, stage: 'approved', paymentEntry: { status: 'pending_approval' }, next: { action: null } });
+    expect(paid).toMatchObject({ paid: false, stage: 'approved', paymentEntry: { status: 'pending_approval' }, next: { action: null } }); // paid once the ledger posts the payment
     const payment = ledger.bySource('payroll_payment', october);
     expect(payment).toHaveLength(1);
     expect(payment[0].input).toMatchObject({ purpose: 'payment', entryDate: '2026-11-05' });

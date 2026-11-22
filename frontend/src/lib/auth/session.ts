@@ -3,9 +3,10 @@
  * Client session (mock mode). In live mode the server owns the session through an
  * HTTP-only cookie and this store only caches who is signed in (spec §9.2).
  */
+import type { LogoutRequest } from "@aceva/contracts";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { getCsrf, setCsrf } from "@/lib/api/csrf";
+import { setCsrf } from "@/lib/api/csrf";
 import { isoDay } from "@/lib/dates";
 
 export type SessionStage = "signed_out" | "needs_2fa" | "needs_2fa_setup" | "needs_first_login" | "signed_in";
@@ -54,9 +55,28 @@ interface SessionState {
   signOutLocal: () => void;
   /** Ends the session on the server too (live mode), then forgets the login here. */
   signOut: () => void;
+  /**
+   * The idle timer ran out with the tab open: signs out like signOut, and tells the server why, so the record says
+   * "timed out" and not "clicked". `financeScreen`: the limit was the 10 minutes of a finance screen, not 30.
+   */
+  signOutIdle: (financeScreen: boolean) => void;
   checkIn: () => void;
   checkOut: () => void;
   todayCheck: () => DayCheck | undefined;
+}
+
+/**
+ * Live mode: ends the session on the server (every logout is recorded there). The CSRF token is cleared only after the
+ * request is built (the http client reads it then); clearing it first would send the logout without it and the server
+ * would refuse it.
+ */
+function endServerSession(body: LogoutRequest) {
+  void import("@/lib/api/http")
+    .then(({ http, isLive }) => {
+      if (isLive("m2")) void http.post("/auth/logout", body).catch(() => undefined);
+    })
+    .catch(() => undefined)
+    .finally(() => setCsrf(null));
 }
 
 /** Module 7 live? (read from the build-time switch without importing the HTTP client here). */
@@ -112,14 +132,11 @@ export const useSession = create<SessionState>()(
         set({ empId: null, liveMe: null, stage: "signed_out", signedInAt: null });
       },
       signOut: () => {
-        // Live mode: end the session on the server (every logout is recorded there, and every other open tab and device
-        // of this session is closed at once). The request needs this tab's CSRF token, which is forgotten just below, so
-        // it is taken now and sent explicitly (the HTTP client is loaded asynchronously).
-        const csrf = getCsrf();
-        void import("@/lib/api/http").then(({ http, isLive }) => {
-          if (isLive("m2")) void http.post("/auth/logout", {}, csrf ? { "X-CSRF-Token": csrf } : undefined).catch(() => undefined);
-        });
-        setCsrf(null);
+        endServerSession({});
+        set({ empId: null, stage: "signed_out", signedInAt: null });
+      },
+      signOutIdle: (financeScreen) => {
+        endServerSession({ reason: "idle_timeout", financeScreen });
         set({ empId: null, stage: "signed_out", signedInAt: null });
       },
       checkIn: () => {

@@ -7,7 +7,7 @@ The full specification is in [`../spec.md`](../spec.md). Read §3 (design), §6 
 
 ```bash
 cd frontend
-npm install          # the npm cache is set to D:\npm-cache in .npmrc (C: is nearly full)
+npm install          # installs the whole workspace (see ../docs/SETUP.md)
 cp .env.example .env.local
 npm run dev          # http://localhost:3000
 ```

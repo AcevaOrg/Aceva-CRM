@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
-  EntitlementView, HolidayView, LeaveTypeView, OfficeNetworkView, WorkScheduleRequest, WorkScheduleResponse,
+  EntitlementView, AttendanceHolidayView, LeaveTypeView, OfficeNetworkView, WorkScheduleRequest, WorkScheduleResponse,
   entitlementRequestSchema, leaveTypeRequestSchema, leaveTypeUpdateSchema, officeNetworkRequestSchema,
 } from '@aceva/contracts';
 import type { z } from 'zod';
@@ -19,7 +19,7 @@ import { badRequest, conflict, forbidden, notFound, periodLocked } from './error
 import { leaveTypeView } from './leave.service';
 import { scheduleView, WorkCalendarService } from './work-calendar.service';
 
-const holidayView = (h: Holiday): HolidayView => ({ id: h.id, date: dayOf(h.date), name: h.name, archived: h.archivedAt !== null });
+const holidayView = (h: Holiday): AttendanceHolidayView => ({ id: h.id, date: dayOf(h.date), name: h.name, archived: h.archivedAt !== null });
 
 /**
  * Module 7 settings (plan section 11 and the settings list in section 17): working days and hours, grace period, office-only
@@ -87,7 +87,7 @@ export class AttendanceSettingsService {
 
   // ------------------------------------------------------------------ holidays
 
-  async holidays(year: number | undefined, includeArchived: boolean): Promise<HolidayView[]> {
+  async holidays(year: number | undefined, includeArchived: boolean): Promise<AttendanceHolidayView[]> {
     const y = year ?? Number(this.today().slice(0, 4));
     const rows = await this.prisma.holiday.findMany({
       where: { date: { gte: dbDate(`${y}-01-01`), lte: dbDate(`${y}-12-31`) }, ...(includeArchived ? {} : { archivedAt: null }) },
@@ -100,7 +100,7 @@ export class AttendanceSettingsService {
     if (await this.calendar.isMonthLocked(monthOf(day))) throw periodLocked(monthOf(day));
   }
 
-  async createHoliday(actor: Actor, dto: { date: string; name: string; reason: string }, client: RequestInfo): Promise<HolidayView> {
+  async createHoliday(actor: Actor, dto: { date: string; name: string; reason: string }, client: RequestInfo): Promise<AttendanceHolidayView> {
     await this.assertOpen(dto.date);
     const exists = await this.prisma.holiday.count({ where: { date: dbDate(dto.date), archivedAt: null } });
     if (exists) throw conflict('holiday_exists', 'There is already a holiday on that day');
@@ -116,7 +116,7 @@ export class AttendanceSettingsService {
     }
   }
 
-  async renameHoliday(actor: Actor, id: string, dto: { name: string; reason: string }, client: RequestInfo): Promise<HolidayView> {
+  async renameHoliday(actor: Actor, id: string, dto: { name: string; reason: string }, client: RequestInfo): Promise<AttendanceHolidayView> {
     const row = await this.prisma.holiday.findUnique({ where: { id } });
     if (!row || row.archivedAt) throw notFound('Holiday not found');
     return this.prisma.$transaction(async (tx) => {
@@ -126,7 +126,7 @@ export class AttendanceSettingsService {
     });
   }
 
-  async archiveHoliday(actor: Actor, id: string, reason: string, client: RequestInfo): Promise<HolidayView> {
+  async archiveHoliday(actor: Actor, id: string, reason: string, client: RequestInfo): Promise<AttendanceHolidayView> {
     const row = await this.prisma.holiday.findUnique({ where: { id } });
     if (!row) throw notFound('Holiday not found');
     if (row.archivedAt) throw conflict('invalid_transition', 'This holiday is already archived');

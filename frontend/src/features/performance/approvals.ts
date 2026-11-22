@@ -1,19 +1,25 @@
 /**
  * Approvals provider for Module 6:
- *  - draft scorecards: the person's manager reviews and releases them; they can add a remark, never change numbers
+ *  - draft scorecards: the reviewer (the person's manager, or the next level up who reviews work) releases them; they
+ *    can add a remark, never change numbers
  *    (Development → CTO; CTO, Sales and Finance → Director). The Director's own scorecard has no reviewer: it is
  *    released automatically and the CEO / Founder / Owner views it (the CEO releases nothing).
  *  - rating disputes: decided by the level above the task's reviewer (plan §10); the CEO / Founder / Owner decides none.
+ * Live (Module 6 switched on) the server's inbox holds these items (GET /approvals, POST /approvals/:id/approve|reject:
+ * see features/approvals/api.ts: "scorecard:<id>" release or remark, "dispute:<id>" change or keep the rating), so this
+ * mock provider gives none and decides nothing: the same item must never appear twice.
  */
 import type { ApprovalItem, ApprovalProvider } from "@/features/approvals/types";
+import { isLive } from "@/lib/api/http";
 import { employeeName } from "@/lib/directory";
 import { formatMonthKey } from "@/lib/dates";
 import { applyDisputeDecision, applyRelease, disputesTable, scorecardsTable } from "./api";
-import { BAND_LABEL } from "./logic";
+import { scoreText } from "./logic";
 
 export const performanceApprovals: ApprovalProvider = {
   key: "performance",
   list: (viewer) => {
+    if (isLive("m6")) return [];
     const me = viewer.employee.empId;
     // Only people who review work (the Director and the CTO) release scorecards and decide disputes.
     if (!viewer.can("task.review")) return [];
@@ -23,7 +29,7 @@ export const performanceApprovals: ApprovalProvider = {
         id: `scorecard:${s.id}`,
         type: "scorecard",
         refId: s.id,
-        title: `${formatMonthKey(s.month)} scorecard · ${Math.round(s.score)} (${BAND_LABEL[s.band]})`,
+        title: `${formatMonthKey(s.month)} scorecard · ${scoreText(s.score, s.band)}`,
         subtitle: `${employeeName(s.empId)} · ${s.kind === "sales" ? "sales weights" : `${s.taskCount} tasks`}${s.smallSample ? " · small sample" : ""}. Review and release; you can add a remark but not change the numbers.`,
         requester: s.empId,
         createdAt: s.createdAt,
@@ -50,6 +56,7 @@ export const performanceApprovals: ApprovalProvider = {
     return [...drafts, ...disputes];
   },
   decide: (item, decision, viewer, opts) => {
+    if (isLive("m6")) return;
     const me = viewer.employee.empId;
     if (!viewer.can("task.review")) return;
     if (item.type === "scorecard") {

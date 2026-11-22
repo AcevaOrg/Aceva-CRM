@@ -61,17 +61,9 @@ export async function seedCycle3Defaults(tx: Tx): Promise<void> {
     await tx.leaveType.upsert({ where: { key: t.key }, update: {}, create: t });
   }
 
-  const limits = [
-    // Decision D25: the Director approves every entry up to this limit (the Owner sets the real one); there is no CEO tier,
-    // the CEO approves only entries the Director made (level 2).
-    { approverLevel: 3, maxAmount: '5000000', label: 'Director (default limit, D25)' },
-    { approverLevel: 1, maxAmount: null, label: 'Owner (above the Director limit; all capital and loan entries)' },
-  ];
-  for (const l of limits) {
-    await tx.approvalLimit.upsert({ where: { approverLevel: l.approverLevel }, update: {}, create: l });
-  }
-
-  await tx.financeSetting.upsert({ where: { id: 1 }, update: {}, create: { id: 1, stepUpAbove: '50000', financeYearStartMonth: 7 } });
+  // Decision D26: the Director approves every entry of any amount (no approval tiers). Above 50,000 the approver confirms again;
+  // above 500,000 and for capital and loan entries the Owner is told (view only).
+  await tx.financeSetting.upsert({ where: { id: 1 }, update: {}, create: { id: 1, stepUpAbove: '50000', ownerNotifyAbove: '500000', financeYearStartMonth: 7 } });
 
   for (const a of DEV_CHART) {
     await tx.ledgerAccount.upsert({

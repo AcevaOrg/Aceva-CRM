@@ -63,7 +63,7 @@ export function TwoFactorForm() {
       >
         <OtpInput value={code} onChange={(v) => { setCode(v); setBad(false); }} autoFocus invalid={bad} onComplete={verify} />
         {bad && <p role="alert" className="text-[13px] text-danger">{message ?? "That code didn't work."} Codes change every 30 seconds.</p>}
-        <p className="text-[12.5px] text-muted-foreground">Required for the Owner, CEO, Director and CTO, and for Finance.{isLive("m2") ? "" : " Demo: any 6 digits work."}</p>
+        <p className="text-[12.5px] text-muted-foreground">Required for the CEO / Founder / Owner, the Director and the CTO, and for Finance.{isLive("m2") ? "" : " Demo: any 6 digits work."}</p>
         <Button type="submit" size="lg" loading={busy} disabled={code.replace(/\s/g, "").length !== 6}>
           Verify and continue
         </Button>

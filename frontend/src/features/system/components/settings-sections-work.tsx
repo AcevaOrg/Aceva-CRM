@@ -12,12 +12,12 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/misc";
 import { useReason } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
+import { isLive } from "@/lib/api/http";
 import { formatDate } from "@/lib/dates";
 import { useCan } from "@/lib/auth/viewer";
 import { cn } from "@/lib/utils";
 import { useSaveWeights, useWeightVersions } from "../hooks";
 import type { WeightsVersion } from "../types";
-import { isLive } from "@/lib/api/http";
 import { ChipsEditor, NumberInput, RecentChanges, SettingsSection } from "./settings-kit";
 import { LiveHolidaysSection, LiveLeaveTypesSection, LiveScheduleSection } from "./settings-attendance-live";
 
@@ -342,6 +342,8 @@ function WeightsEditor({ kind, title, usedFor, fields, current, canEdit }: { kin
   const askReason = useReason();
   const total = fields.reduce((s, f) => s + (draft[f.key] ?? 0), 0);
   const dirty = JSON.stringify(draft) !== JSON.stringify(current?.weights ?? {});
+  // Live, the server keeps whole percents only (so the sum of exactly 100 is exact); the demo data accepts any number.
+  const whole = !isLive("m6") || fields.every((f) => Number.isInteger(draft[f.key] ?? 0));
   const symbol = (label: string) => {
     const s = label.match(/\(([^)]+)\)/)?.[1] ?? "";
     return s.includes(" ") ? `(${s})` : s;
@@ -381,9 +383,9 @@ function WeightsEditor({ kind, title, usedFor, fields, current, canEdit }: { kin
       </CardContent>
       {canEdit && (
         <CardFooter className="justify-between">
-          <span className="text-[12px] text-muted-foreground">{total !== 100 ? "Weights must add up to 100%." : "Saving creates a new version."}</span>
+          <span className="text-[12px] text-muted-foreground">{!whole ? "Use whole numbers." : total !== 100 ? "Weights must add up to 100%." : "Saving creates a new version."}</span>
           <Button
-            disabled={!dirty || total !== 100}
+            disabled={!dirty || total !== 100 || !whole}
             loading={save.isPending}
             onClick={async () => {
               const reason = await askReason({ title: `New ${kind} score weights`, description: "Old scorecards keep the weights they were made with. Your reason is logged.", confirmLabel: "Save version" });
@@ -403,7 +405,11 @@ export function ScoreWeightsSection() {
   const q = useWeightVersions();
   const canEdit = useCan("performance.weights");
   if (!q.data) return <Skeleton className="h-96 rounded-xl" />;
-  const latest = (k: WeightsVersion["kind"]) => q.data.find((v) => v.kind === k);
+  // The editors work on the company-wide set (a department's own set has a departmentId and is listed in the history).
+  const companyWide = (v: WeightsVersion) => !v.departmentId;
+  const latest = (k: WeightsVersion["kind"]) => q.data.find((v) => v.kind === k && companyWide(v));
+  // Whole percents in the order of the metrics (the server's JSON does not keep the order of the keys).
+  const shown = (v: WeightsVersion) => (v.kind === "sales" ? SALES : STANDARD).map((f) => v.weights[f.key] ?? 0).join(" / ");
   return (
     <div className="grid gap-5">
       <div className="grid gap-5 2xl:grid-cols-2">
@@ -416,23 +422,25 @@ export function ScoreWeightsSection() {
       <section>
         <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Version history</h3>
         <ul className="grid gap-2">
-          {q.data.map((v, i) => (
+          {q.data.map((v) => (
             <li key={v.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-[12.5px]">
-              <span className="flex items-center gap-2">
-                <Badge tone={v.kind === "sales" ? "sales" : "work"}>{v.kind === "sales" ? "Sales" : "Standard"}</Badge>
-                {i === q.data.findIndex((x) => x.kind === v.kind) && <Badge tone="success">Current</Badge>}
-                <span className="font-mono text-muted-foreground">{Object.values(v.weights).join(" / ")}</span>
+              <span className="flex flex-wrap items-center gap-2">
+                <Badge tone={v.kind === "sales" ? "sales" : "work"}>{v.label ?? (v.kind === "sales" ? "Sales" : "Standard")}</Badge>
+                {v.departmentName && <Badge tone="outline">{v.departmentName}</Badge>}
+                {v.id === latest(v.kind)?.id && <Badge tone="success">Current</Badge>}
+                <span className="font-mono text-muted-foreground">{shown(v)}</span>
               </span>
               <span className="flex items-center gap-3 text-muted-foreground">
                 {v.note && <span>“{v.note}”</span>}
                 <span>{formatDate(v.effectiveFrom)}</span>
-                <EmpChip empId={v.createdBy} size="sm" showId={false} />
+                {v.createdBy ? <EmpChip empId={v.createdBy} size="sm" showId={false} /> : <span>System</span>}
               </span>
             </li>
           ))}
         </ul>
       </section>
-      <RecentChanges section="score-weights" />
+      {/* Live, the version history above is the record (who, when, why); the demo change log is mock data. */}
+      {!isLive("m6") && <RecentChanges section="score-weights" />}
     </div>
   );
 }

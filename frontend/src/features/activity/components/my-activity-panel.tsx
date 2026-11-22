@@ -8,6 +8,7 @@ import { StatCard } from "@/components/shared/metrics";
 import { CardsSkeleton, EmptyState, QueryState } from "@/components/shared/states";
 import { Timeline } from "@/components/shared/timeline";
 import { useLoginHistory } from "@/features/auth/hooks";
+import { isLive } from "@/lib/api/http";
 import { formatDateTime, formatTime, isoDay } from "@/lib/dates";
 import { minutesToHours } from "@/lib/format";
 import { useMyActivity } from "../hooks";
@@ -22,7 +23,9 @@ export function MyActivityPanel() {
       {(d) => {
         const today = isoDay(new Date());
         const todayEvents = d.events.filter((e) => isoDay(e.at) === today);
-        const beats = d.heartbeats;
+        // Mock: `today` is the seeded summary, so this tab's own heartbeats are added on top. Live (Module 4): the
+        // server works `today` out from every heartbeat already, so adding them again would count them twice.
+        const beats = isLive("m4") ? [] : d.heartbeats;
         const activeBeats = beats.filter((b) => b.active).length;
         return (
           <div className="grid gap-6">

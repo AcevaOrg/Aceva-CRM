@@ -33,7 +33,7 @@ async function approvedRun(month: string): Promise<string> {
   const id = (await as(FINANCE).post(`${API}/payroll/runs`).send({ month }).expect(201)).body.id;
   await as(FINANCE).post(`${API}/payroll/runs/${id}/calculate`).expect(200);
   await as(FINANCE).post(`${API}/payroll/runs/${id}/prepare`).expect(200);
-  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(404); // D25: the CEO only views payroll
+  await as(CEO).post(`${API}/payroll/runs/${id}/approve`).expect(403); // D26: the Owner approves only a run the Director prepared
   await t.stepUp(DIRECTOR);
   await as(DIRECTOR).post(`${API}/payroll/runs/${id}/approve`).expect(200); // one Director step (D25)
   return id;
@@ -43,7 +43,7 @@ beforeAll(async () => {
   prisma = createTestPrisma();
   t = await createTestApp({ overrides: [{ provide: AttendancePayrollPort, useValue: new FakeAttendance(prisma) }, { provide: LedgerPostingPort, useValue: new FakeLedger() }] });
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
   HR = t.fixtures.HR;
   await setPay(t, prisma, DEV1, { base: '100000', allowances: '10000', bank: 'Meezan', account: DEV1_ACCOUNT });
   await setPay(t, prisma, DEV2, { base: '60000' });
@@ -88,7 +88,7 @@ describe('M8 management screens are not found for people without payroll access'
   it('the Owner views every run and may export, but never prepares or approves', async () => {
     expect((await as(OWNER).get(`${API}/payroll/runs`).expect(200)).body.map((r: { number: string }) => r.number)).toEqual(['PR-2026-10', 'PR-2026-09']);
     await as(OWNER).post(`${API}/payroll/runs`).send({ month: '2026-11' }).expect(404);
-    await as(OWNER).post(`${API}/payroll/runs/${october}/approve`).expect(404);
+    await as(OWNER).post(`${API}/payroll/runs/${october}/approve`).expect(409); // already approved (the Owner may approve only a run the Director prepared)
     await t.stepUp(OWNER);
     const sheet = await as(OWNER).get(`${API}/payroll/runs/${october}/bank-sheet`).expect(200);
     expect(sheet.text).toContain(DEV1_ACCOUNT);

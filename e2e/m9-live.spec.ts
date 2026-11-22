@@ -41,19 +41,33 @@ test('a journal entry made through the API opens on its detail screen', async ({
   await context.close();
 });
 
-test('approval limits: the settings come from the server, and only the Owner may change them (D22)', async ({ playwright }) => {
-  const next = { reason: 'Browser test: same limits again', limits: [{ approverLevel: 3, maxAmount: '5000000', label: 'Director' }, { approverLevel: 1, maxAmount: null, label: 'Owner' }] }; // D25 defaults: no CEO tier
-  // the Director cannot change approval limits, even after confirming again (they would be raising their own limit)
+test('finance settings: only the Director changes them, after confirming again; the Owner cannot, and the old approval limits are gone (D26)', async ({ playwright }) => {
+  const fin = await apiAs(playwright, FINANCE);
   const director = await apiAs(playwright, DIRECTOR);
-  await stepUpApi(director, DIRECTOR);
-  expect((await director.put('/settings/approval-limits', next)).status()).toBe(404);
-  // the Owner can, after confirming again (the same values, so nothing else changes)
   const owner = await apiAs(playwright, OWNER);
-  expect((await owner.put('/settings/approval-limits', next)).status()).toBe(403); // not confirmed yet
+  // D26 removed the approval tiers: the old route is gone for everyone, the Director and the Owner included
+  const oldLimits = { reason: 'Browser test: the old tiers', limits: [{ approverLevel: 2, maxAmount: null, label: 'Director' }] };
+  for (const [who, api] of [[FINANCE, fin], [DIRECTOR, director], [OWNER, owner]] as const) {
+    expect((await api.get('/settings/approval-limits')).status(), `GET as ${who}`).toBe(404);
+    expect((await api.put('/settings/approval-limits', oldLimits)).status(), `PUT as ${who}`).toBe(404);
+  }
+
+  // the settings come from the server; the change below writes the same values again, so nothing else changes
+  const current = (await (await fin.get('/settings/finance')).json()) as { stepUpAbove: string; ownerNotifyAbove: string; financeYearStartMonth: number };
+  const next = { ...current, reason: 'Browser test: the same finance settings again' };
+  // Finance and the Owner (view only) never reach the change, even after confirming again
+  expect((await fin.put('/settings/finance', next)).status()).toBe(404);
   await stepUpApi(owner, OWNER);
-  expect((await owner.put('/settings/approval-limits', next)).status()).toBe(200);
-  const limits: Array<{ approverLevel: number; maxAmount: string | null }> = await (await owner.get('/settings/approval-limits')).json();
-  expect(limits.find((l) => l.approverLevel === 1)?.maxAmount).toBeNull();
+  expect((await owner.put('/settings/finance', next)).status()).toBe(404);
+  // the Director may, but only after confirming again
+  const unconfirmed = await director.put('/settings/finance', next);
+  expect(unconfirmed.status()).toBe(403);
+  expect((await unconfirmed.json()).code).toBe('step_up_required');
+  await stepUpApi(director, DIRECTOR);
+  const changed = await director.put('/settings/finance', next);
+  expect(changed.status(), await changed.text()).toBe(200);
+  expect(await changed.json()).toMatchObject(current);
+  expect(await (await fin.get('/settings/finance')).json()).toEqual(current);
 });
 
 test('finance is not reachable for a developer: the server answers 404', async ({ playwright }) => {

@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Que
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   approveSchema, archiveSchema, attendanceDayQuerySchema, attendanceMonthQuerySchema, correctionListQuerySchema, correctionRequestSchema,
-  entitlementQuerySchema, entitlementRequestSchema, holidayRenameSchema, holidayRequestSchema, holidaysQuerySchema, officeNetworkRequestSchema,
+  entitlementQuerySchema, entitlementRequestSchema, holidayRenameSchema, holidayRequestSchema, attendanceHolidaysQuerySchema, officeNetworkRequestSchema,
   rejectSchema, workScheduleRequestSchema,
 } from '@aceva/contracts';
 import type { Actor, ScopeTarget } from '../access/access.types';
@@ -19,7 +19,7 @@ class CorrectionDto extends createZodDto(correctionRequestSchema) {}
 class ApproveDto extends createZodDto(approveSchema) {}
 class RejectDto extends createZodDto(rejectSchema) {}
 class ScheduleDto extends createZodDto(workScheduleRequestSchema) {}
-class HolidaysQueryDto extends createZodDto(holidaysQuerySchema) {}
+class HolidaysQueryDto extends createZodDto(attendanceHolidaysQuerySchema) {}
 class HolidayDto extends createZodDto(holidayRequestSchema) {}
 class HolidayRenameDto extends createZodDto(holidayRenameSchema) {}
 class ArchiveDto extends createZodDto(archiveSchema) {}

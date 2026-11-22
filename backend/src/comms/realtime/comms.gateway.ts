@@ -152,7 +152,7 @@ export class CommsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
 
     const token = readCookie(request.headers.cookie, SESSION_COOKIE);
     if (!token) throw refusal('unauthenticated');
-    const check = await this.sessions.authenticate(token, { financeScreen: false, passive: true });
+    const check = await this.sessions.authenticate(token, { financeScreen: false, touch: false });
     if (!check.ok) throw refusal('unauthenticated');
     const session = check.session;
 

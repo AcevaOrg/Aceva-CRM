@@ -46,9 +46,6 @@ export const createAccountSchema = z
   })
   .refine((v) => v.code.startsWith(GROUP_FIRST_DIGIT[v.group]), { message: 'The code must start with the digit of its group (1 assets ... 5 expenses)', path: ['code'] });
 
-/** PUT /accounts/:id/owner-approval (Owner only, decision D22). */
-export const ownerApprovalSchema = z.object({ required: z.boolean(), reason: decisionReasonSchema });
-
 export const updateAccountSchema = z.object({
   name: text(120).optional(),
   archived: z.boolean().optional(),
@@ -143,7 +140,7 @@ export interface PartyView {
 
 export const createProjectSchema = z.object({ code: z.string().trim().regex(/^[A-Za-z0-9_-]{2,20}$/, 'A short code, e.g. ACME-WEB'), name: text(160) });
 export const updateProjectSchema = z.object({ name: text(160).optional(), archived: z.boolean().optional() });
-export interface ProjectView {
+export interface FinanceProjectView {
   id: string;
   code: string;
   name: string;
@@ -486,7 +483,7 @@ export const revaluationSchema = z.object({ rate: rateSchema.optional() });
 export const reopenSchema = z.object({ reason: decisionReasonSchema });
 
 export type ChecklistKey = 'entries_posted' | 'bank_reconciled' | 'payroll_posted' | 'usd_revalued' | 'trial_balance';
-export interface ChecklistItemView {
+export interface CloseChecklistItemView {
   key: ChecklistKey;
   label: string;
   done: boolean;
@@ -497,7 +494,7 @@ export interface PeriodView {
   month: string;
   /** "reopened" = open again after having been closed (shown, from the period history). */
   status: 'open' | 'closing' | 'closed' | 'reopened';
-  checklist: ChecklistItemView[];
+  checklist: CloseChecklistItemView[];
   closeRequestedByEmpId: string | null;
   closeRequestedAt: string | null;
   closedByEmpId: string | null;
@@ -521,27 +518,16 @@ export interface RevaluationPreviewView {
 
 // ----------------------------------------------------------------------------------------------------------- settings
 
-export const approvalLimitsSchema = z.object({
-  limits: z
-    .array(z.object({ approverLevel: z.number().int().min(1).max(5), maxAmount: positiveMoneySchema.nullable(), label: text(120) }))
-    .min(1)
-    .max(5),
-  reason: decisionReasonSchema,
-});
-export interface ApprovalLimitView {
-  approverLevel: number;
-  /** Null = no upper limit. */
-  maxAmount: string | null;
-  label: string;
-}
-
+/** PUT /settings/finance (the Director, decision D26): the "confirm again" amount, the amount above which the Owner is told, the finance year. */
 export const financeSettingsSchema = z.object({
   stepUpAbove: moneySchema,
+  ownerNotifyAbove: moneySchema,
   financeYearStartMonth: z.number().int().min(1).max(12),
   reason: decisionReasonSchema,
 });
 export interface FinanceSettingsView {
   stepUpAbove: string;
+  ownerNotifyAbove: string;
   financeYearStartMonth: number;
 }
 

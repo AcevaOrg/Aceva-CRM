@@ -3,10 +3,10 @@
  *
  * Level and reporting line are separate ideas:
  *  - Normally a person reports to someone at a STRICTLY HIGHER level (smaller number).
- *  - Same-level reporting is allowed only for pairs listed in `sameLevelRules`
- *    (today: the CTO reports to the Director, both Level 3).
+ *  - Same-level reporting is allowed only for pairs listed in `sameLevelRules`. In the final company structure none
+ *    are listed: the CTO (Level 3) reports to the Director (Level 2), strictly higher like everybody else.
  *  - Nobody reports to someone below them, to themselves, or in a loop.
- *  - Level 1 (Owner) has nobody above them.
+ *  - Level 1 (the CEO / Founder / Owner) has nobody above them.
  *
  * These functions are pure (no database) so they are easy to test.
  */

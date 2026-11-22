@@ -15,7 +15,8 @@ export const performanceKeys = {
 
 /**
  * This month's live figures (defaults to the viewer).
- * Returns LivePerformance: { empId, month, kind: "standard"|"sales", metrics, score (0–100), band, taskCount, smallSample, weights, trend: { month, score }[], tasks }
+ * Returns LivePerformance: { empId, month, kind: "standard"|"sales", metrics, unmeasured?, score (0–100, or null when nothing can be measured yet), band (or null), taskCount, smallSample, weights (fractions), trend: { month, score }[], tasks }
+ * Live, a metric nobody can measure (attendance until Module 7, sales figures until Module 15) is null and named in `unmeasured`.
  */
 export function useLivePerformance(empId?: string) {
   const me = useSession((s) => s.empId);
@@ -24,7 +25,7 @@ export function useLivePerformance(empId?: string) {
 
 /**
  * The newest scorecard the viewer may see (defaults to the viewer; their own drafts are hidden).
- * Returns Scorecard | null: { id, month, kind, metrics, score, band, status: "draft"|"released"|"acknowledged", reviewerRemark?, … }
+ * Returns Scorecard | null: { id, month, kind, metrics, score (or null), band (or null), status: "draft"|"released"|"acknowledged", reviewerRemark?, … }
  */
 export function useLatestScorecard(empId?: string) {
   const me = useSession((s) => s.empId);

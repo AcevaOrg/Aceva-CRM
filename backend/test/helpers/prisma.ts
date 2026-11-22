@@ -1,9 +1,10 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../src/generated/prisma/client';
+import { utcPoolConfig } from '../../src/prisma/connection';
 import { testDatabaseUrl } from './env';
 
 export function createTestPrisma(): PrismaClient {
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString: testDatabaseUrl() }) });
+  return new PrismaClient({ adapter: new PrismaPg(utcPoolConfig(testDatabaseUrl())) });
 }
 
 /** Runs `fn` inside a transaction and always rolls it back, so tests leave no data behind. */

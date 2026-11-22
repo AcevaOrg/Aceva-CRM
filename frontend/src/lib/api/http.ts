@@ -7,7 +7,7 @@
  */
 import type { ApiErrorBody } from "@/types";
 import { useSession } from "@/lib/auth/session";
-import { getCsrf } from "./csrf";
+import { getCsrf, setCsrf } from "./csrf";
 import { ApiError } from "./mock";
 
 export const API_MODE = (process.env.NEXT_PUBLIC_API_MODE ?? "mock") as "mock" | "live";
@@ -43,6 +43,7 @@ export function toApiError(status: number, body: unknown, fallback: string): Api
     details?: Record<string, string[]>;
     issues?: Array<{ path: string; message: string }>;
     violations?: Array<{ code: string; message: string }>;
+    warnings?: Array<{ code: string; message: string }>;
   };
   let message = Array.isArray(b.message) ? b.message.join(" ") : (b.message ?? fallback);
   let details = b.details;
@@ -50,6 +51,11 @@ export function toApiError(status: number, body: unknown, fallback: string): Api
   if (b.issues?.length) {
     message = b.issues.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message)).join(" ");
     details = b.issues.reduce<Record<string, string[]>>((acc, i) => ((acc[i.path || "form"] ||= []).push(i.message), acc), {});
+  }
+  // Soft warnings of a 409 "confirmation_required" answer: each sentence is kept so the screen can ask the person about them.
+  if (b.warnings?.length) {
+    details = { ...(details ?? {}), warnings: b.warnings.map((w) => w.message) };
+    message = b.warnings.map((w) => w.message).join(" ");
   }
   return new ApiError(b.code ?? CODE_BY_STATUS[status] ?? "http_error", message, status, details);
 }
@@ -74,14 +80,40 @@ function handleAuthFailure(status: number, path: string, body: { code?: string; 
   }
 }
 
+/** The change requests that need no session (and so no CSRF token): signing in and the forgotten-password pages. */
+const NO_SESSION_PATHS = ["/auth/login", "/auth/password/forgot", "/auth/password/reset"];
+
+let csrfLookup: Promise<string | null> | null = null;
+
+/**
+ * This tab's CSRF token, fetched with GET /auth/me when the tab has none yet. The token is kept per tab (sessionStorage),
+ * so a newly opened tab only has it once its first /auth/me call has returned. Without this, a change made before that
+ * (an early click) was sent without the token and refused. The read is passive (it does not count as activity), one
+ * lookup at a time is shared by every request waiting for it, and a failure simply leaves the request without a token.
+ */
+function loadCsrf(): Promise<string | null> {
+  csrfLookup ??= fetch(url("/auth/me"), { credentials: "include", headers: { "X-Aceva-Passive": "1" } })
+    .then((res) => (res.ok ? (res.json() as Promise<{ csrfToken?: string }>) : null))
+    .then((me) => {
+      if (me?.csrfToken && !getCsrf()) setCsrf(me.csrfToken);
+      return getCsrf();
+    })
+    .catch(() => null)
+    .finally(() => {
+      csrfLookup = null;
+    });
+  return csrfLookup;
+}
+
 async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json", extraHeaders: Record<string, string> = {}): Promise<T> {
   const headers: Record<string, string> = { ...extraHeaders };
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   // A multipart body sets its own Content-Type (with the boundary).
   if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   // Module 2: the session is an HttpOnly cookie; a change request also carries this tab's CSRF token.
-  if (method !== "GET") {
-    const csrf = getCsrf();
+  if (method !== "GET" && !headers["X-CSRF-Token"]) {
+    // Read at once (sign-out clears the token right after starting its request); fetched only when this tab has none.
+    const csrf = getCsrf() ?? (isLive("m2") && !NO_SESSION_PATHS.includes(path) ? await loadCsrf() : null);
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
   let res: Response;

@@ -3,23 +3,25 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { createTestPrisma } from '../backend/test/helpers/prisma';
 import { API, PASSWORD, apiAs, nextCode, openAs } from './auth-helpers';
-import { E2E_FILES, FIXTURE_CEO, FIXTURE_HR } from './paths';
+import { E2E_FILES, FIXTURE_HR } from './paths';
 
 /**
  * Module 3 (employee profiles, joining, leaving) driven through the real screens in Chromium, with the real backend,
- * PostgreSQL, Redis and Mailpit. Scenario: the Director fills the joining wizard, the CEO approves it, the new person
- * signs in, edits their profile, uploads a document and a photo; the Director edits and resets the authenticator; HR
- * sets the last working day; the CEO sees and resolves the unresolved reports.
+ * PostgreSQL, Redis and Mailpit. Scenario: the Director hires directly in the joining wizard; HR starts a second hire
+ * that only the Director can approve (the CEO / Founder / Owner sees it, view only); the new person signs in, edits
+ * their profile, uploads a document and a photo; the Director edits and resets the authenticator; HR sets the last
+ * working day; the Director sees and resolves the unresolved reports.
  */
 const MAILPIT = 'http://127.0.0.1:8025/api/v1';
-const DIRECTOR = 'ACV-0003';
-const CEO = FIXTURE_CEO; // test-only CEO, added by reset-test-db.ts
-const OWNER = 'ACV-0001';
+const DIRECTOR = 'ACV-0003'; // hires directly, approves hire requests, changes levels and reporting lines
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner: sees everything, changes nothing
 const HR = FIXTURE_HR; // test-only HR officer
 const FINANCE = 'ACV-0010';
 const PEER = 'ACV-0006';
 const HIRE_EMAIL = 'e2e.joiner@acevatech.com';
 const HIRE_NAME = 'E2E Joiner';
+const REQUEST_EMAIL = 'e2e.requested@acevatech.com';
+const REQUEST_NAME = 'E2E Requested';
 const NEW_PASSWORD = 'Joiner-Own-Pass-2026x';
 
 test.describe.configure({ mode: 'serial' });
@@ -32,8 +34,17 @@ const toastText = (page: Page, text: RegExp | string) => page.locator('[data-son
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
-/** A real authenticator code (each code works once; nextCode waits for the next 30-second window when two were just used). */
-const freshCode = (empId: string): Promise<string> => nextCode(empId);
+/** A real authenticator code (each code works once; wait for the next 30-second window when two were just used). */
+async function freshCode(empId: string): Promise<string> {
+  for (let i = 0; i < 40; i++) {
+    try {
+      return nextCode(empId);
+    } catch {
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+  throw new Error('No authenticator code available');
+}
 
 /** The "confirm it's you" dialog: the SERVER checks the password and the code. */
 async function stepUp(page: Page, empId: string) {
@@ -56,7 +67,23 @@ async function giveReason(page: Page, reason: string) {
   await dialog.locator('button[type="submit"]').click(); // not .last(): the close (X) button comes after the footer
 }
 
-test('the Director fills the joining wizard: it creates a request, not an employee', async ({ browser, request }) => {
+/** The temporary password from the welcome email sent to this address (polls Mailpit). */
+async function temporaryPasswordFor(request: import('@playwright/test').APIRequestContext, email: string, empId: string): Promise<string> {
+  let found = '';
+  await expect
+    .poll(async () => {
+      const search = await (await request.get(`${MAILPIT}/search?query=${encodeURIComponent('to:' + email)}`)).json();
+      if (!search.messages?.length) return '';
+      const msg = await (await request.get(`${MAILPIT}/message/${search.messages[0].ID}`)).json();
+      expect(msg.Text).toContain(empId);
+      found = (msg.Text as string).match(/Temporary password: (\S+)/)?.[1] ?? '';
+      return found;
+    })
+    .not.toBe('');
+  return found;
+}
+
+test('the Director hires directly in the joining wizard: the Emp-ID and the welcome email come at once', async ({ browser, request }) => {
   await request.delete(`${MAILPIT}/messages`);
   const { page, context } = await openAs(browser, DIRECTOR, '/people/new');
   await page.locator('#o-name').fill(HIRE_NAME);
@@ -72,47 +99,58 @@ test('the Director fills the joining wizard: it creates a request, not an employ
   await page.locator('#o-bank').fill('Meezan');
   await page.locator('#o-acc').fill('PK12MEZN0001234567890');
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: 'Send for approval' }).click();
-  await expect(page.getByText('Hire sent for approval').first()).toBeVisible();
-  await expect(page.getByText(/must authorize the level and reporting line/)).toBeVisible();
+  await page.getByRole('button', { name: 'Create employee' }).click(); // the Director authorizes, so no request is needed
+  const created = toastText(page, /ACV-\d{4} created/);
+  await expect(created).toBeVisible();
+  hireId = (await created.innerText()).match(/ACV-\d{4}/)![0];
   await context.close();
-
-  // nothing exists yet: no employee, no email
-  const search = await (await request.get(`${MAILPIT}/search?query=${encodeURIComponent('to:' + HIRE_EMAIL)}`)).json();
-  expect(search.messages?.length ?? 0).toBe(0);
+  temporary = await temporaryPasswordFor(request, HIRE_EMAIL, hireId);
 });
 
-test('Director and HR cannot approve; the CEO approves in the screen and the Emp-ID is created', async ({ browser, playwright, request }) => {
+test('HR starts a hire (a request, not an employee); HR and the CEO / Founder / Owner cannot approve; the Director approves in the screen', async ({ browser, playwright, request }) => {
+  const hr = await openAs(browser, HR, '/people/new');
+  await hr.page.locator('#o-name').fill(REQUEST_NAME);
+  await hr.page.locator('#o-des').fill('SQA Engineer');
+  await hr.page.locator('#o-dep').selectOption('dep-eng');
+  await hr.page.locator('#o-off').selectOption('off-khi');
+  await hr.page.locator('#o-mail').fill(REQUEST_EMAIL);
+  await hr.page.getByRole('button', { name: 'Continue' }).click();
+  await hr.page.locator('#o-boss').selectOption('ACV-0004');
+  await hr.page.locator('#o-join').fill('2026-11-01');
+  await hr.page.getByRole('button', { name: 'Continue' }).click();
+  await expect(hr.page.getByText('Pay details are added by the Director.')).toBeVisible(); // HR enters no pay
+  await hr.page.getByRole('button', { name: 'Continue' }).click();
+  await hr.page.getByRole('button', { name: 'Send for approval' }).click();
+  await expect(hr.page.getByText('Hire sent for approval').first()).toBeVisible();
+  await expect(hr.page.getByText(/The Director must authorize the level and reporting line/)).toBeVisible();
+  await hr.context.close();
+
+  // nothing exists yet: no employee, no email
+  const search = await (await request.get(`${MAILPIT}/search?query=${encodeURIComponent('to:' + REQUEST_EMAIL)}`)).json();
+  expect(search.messages?.length ?? 0).toBe(0);
+
+  // HR and the CEO / Founder / Owner see the request but have no approve button, and the server refuses them
+  for (const who of [HR, OWNER]) {
+    const viewer = await openAs(browser, who, '/people');
+    await expect(viewer.page.getByTestId('hire-requests')).toContainText(REQUEST_NAME);
+    await expect(viewer.page.getByTestId('hire-requests').getByRole('button', { name: 'Approve' })).toHaveCount(0);
+    await viewer.context.close();
+  }
+  const pending = (await (await (await apiAs(playwright, HR)).get('hire-requests?status=pending')).json()) as Array<{ id: string; name: string }>;
+  const id = pending.find((r) => r.name === REQUEST_NAME)!.id;
+  for (const who of [HR, OWNER]) expect((await (await apiAs(playwright, who)).post(`hire-requests/${id}/approve`, {})).status(), who).toBe(403);
+
+  // the Director approves in the screen: the Emp-ID is created and the welcome email is sent
   const director = await openAs(browser, DIRECTOR, '/people');
-  await expect(director.page.getByTestId('hire-requests')).toContainText(HIRE_NAME);
-  await expect(director.page.getByTestId('hire-requests').getByRole('button', { name: 'Approve' })).toHaveCount(0); // no approve button for the Director
-  await director.context.close();
-
-  const api = await apiAs(playwright, DIRECTOR);
-  const pending = (await (await api.get('hire-requests?status=pending')).json()) as Array<{ id: string; name: string }>;
-  const id = pending.find((r) => r.name === HIRE_NAME)!.id;
-  expect((await api.post(`hire-requests/${id}/approve`, {})).status()).toBe(403); // D25: the Director made this request, so the CEO decides it
-
-  const ceo = await openAs(browser, CEO, '/people');
-  const panel = ceo.page.getByTestId('hire-requests');
-  await expect(panel).toContainText(HIRE_NAME);
+  const panel = director.page.getByTestId('hire-requests');
+  await expect(panel).toContainText(REQUEST_NAME);
   await expect(panel).toContainText('Level 5');
   await panel.getByRole('button', { name: 'Approve' }).first().click();
-  const t = toastText(ceo.page, /ACV-\d{4} created/);
+  const t = toastText(director.page, /ACV-\d{4} created/);
   await expect(t).toBeVisible();
-  hireId = (await t.innerText()).match(/ACV-\d{4}/)![0];
-  await ceo.context.close();
-
-  await expect
-    .poll(async () => {
-      const search = await (await request.get(`${MAILPIT}/search?query=${encodeURIComponent('to:' + HIRE_EMAIL)}`)).json();
-      if (!search.messages?.length) return '';
-      const msg = await (await request.get(`${MAILPIT}/message/${search.messages[0].ID}`)).json();
-      expect(msg.Text).toContain(hireId);
-      temporary = (msg.Text as string).match(/Temporary password: (\S+)/)?.[1] ?? '';
-      return temporary;
-    })
-    .not.toBe('');
+  const requestedId = (await t.innerText()).match(/ACV-\d{4}/)![0];
+  await director.context.close();
+  expect(await temporaryPasswordFor(request, REQUEST_EMAIL, requestedId)).not.toBe('');
 });
 
 test('the new employee signs in with the temporary password and must choose their own', async ({ page, playwright }) => {
@@ -301,30 +339,30 @@ test('pay edit form: the Director edits through confirm-again and a reason; hist
   expect((await (await api.post(`employees/${hireId}/reveal`, { field: 'salary' })).json()).value).toBe('195000.00');
 
   // others never edit pay, with or without confirming again
-  const attempts: Array<[string, string]> = [[HR, 'HR'], [CEO, 'CEO'], [OWNER, 'Owner'], [PEER, 'peer'], [FINANCE, 'finance']];
+  const attempts: Array<[string, string]> = [[HR, 'HR'], [OWNER, 'CEO / Founder / Owner'], [PEER, 'peer'], [FINANCE, 'finance']];
   for (const [who, label] of attempts) {
     const client = await apiAs(playwright, who);
-    if ([OWNER, CEO, FINANCE].includes(who)) await apiStepUp(client, who); // prove it is the permission, not the missing confirmation
+    if ([OWNER, FINANCE].includes(who)) await apiStepUp(client, who); // prove it is the permission, not the missing confirmation
     const res = await client.patch(`employees/${hireId}/pay`, { baseSalary: 1, reason: `${label} must not change pay` });
     expect(res.status(), label).toBe(403);
   }
   const hr = await openAs(browser, HR, `/people/${hireId}`);
   await expect(tabs(hr.page).filter({ hasText: 'Pay' })).toHaveCount(0);
   await hr.context.close();
-  const ceo = await openAs(browser, CEO, `/people/${hireId}?tab=pay`);
-  await expect(ceo.page.getByRole('button', { name: /Edit pay|Add pay/ })).toHaveCount(0); // the CEO may view, not edit
-  await expect(ceo.page.getByText(/View only/)).toBeVisible();
-  await ceo.context.close();
+  const owner = await openAs(browser, OWNER, `/people/${hireId}?tab=pay`);
+  await expect(owner.page.getByRole('button', { name: /Edit pay|Add pay/ })).toHaveCount(0); // the CEO / Founder / Owner may view, not edit
+  await expect(owner.page.getByText(/View only/)).toBeVisible();
+  await owner.context.close();
   expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).pay.salaryOnFile).toBe(true);
 });
 
-test('job edit form: HR edits job fields in the screen; only the Owner or CEO change the manager, and everyone else is refused', async ({ browser, playwright }) => {
+test('job edit form: HR edits job fields in the screen; only the Director changes the manager, and everyone else is refused', async ({ browser, playwright }) => {
   // HR: type and weekly capacity (the level and manager are shown but cannot be changed)
   const hr = await openAs(browser, HR, `/people/${hireId}?tab=job`);
   await hr.page.getByRole('button', { name: 'Edit' }).first().click();
   await expect(hr.page.locator('#j-level')).toHaveCount(0); // no level control for HR
   await expect(hr.page.locator('#j-boss')).toHaveCount(0); // no manager control for HR
-  await expect(hr.page.getByText('Only the Owner or CEO change levels.')).toBeVisible();
+  await expect(hr.page.getByText('Only the Director changes levels.')).toBeVisible();
   await hr.page.locator('#j-type').selectOption('part_time');
   await hr.page.locator('#j-cap').fill('20');
   await hr.page.getByRole('button', { name: 'Save changes' }).click();
@@ -336,15 +374,21 @@ test('job edit form: HR edits job fields in the screen; only the Owner or CEO ch
   const job = (await (await api.get(`employees/${hireId}`)).json()).job;
   expect([job.type, job.weeklyCapacityHours, job.reportsTo]).toEqual(['part_time', 20, 'ACV-0004']);
 
-  // the CEO reassigns the manager in the form (CTO -> Director)
-  const ceo = await openAs(browser, CEO, `/people/${hireId}?tab=job`);
-  await ceo.page.getByRole('button', { name: 'Edit' }).first().click();
-  await expect(ceo.page.locator('#j-boss')).toBeVisible();
-  await ceo.page.locator('#j-boss').selectOption('ACV-0003');
-  await ceo.page.getByRole('button', { name: 'Save changes' }).click();
-  await giveReason(ceo.page, 'Moves to the management team');
-  await expect(toastText(ceo.page, 'Job details saved')).toBeVisible();
-  await ceo.context.close();
+  // the CEO / Founder / Owner sees the job, view only
+  const owner = await openAs(browser, OWNER, `/people/${hireId}?tab=job`);
+  await expect(owner.page.getByText('Reports to').first()).toBeVisible();
+  await expect(owner.page.getByRole('button', { name: 'Edit' })).toHaveCount(0);
+  await owner.context.close();
+
+  // the Director reassigns the manager in the form (CTO -> Director, a strictly higher level)
+  const director = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=job`);
+  await director.page.getByRole('button', { name: 'Edit' }).first().click();
+  await expect(director.page.locator('#j-boss')).toBeVisible();
+  await director.page.locator('#j-boss').selectOption('ACV-0003');
+  await director.page.getByRole('button', { name: 'Save changes' }).click();
+  await giveReason(director.page, 'Moves to the management team');
+  await expect(toastText(director.page, 'Job details saved')).toBeVisible();
+  await director.context.close();
   expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).job.reportsTo).toBe('ACV-0003');
 
   // history shows both changes with who and why
@@ -358,8 +402,8 @@ test('job edit form: HR edits job fields in the screen; only the Owner or CEO ch
   const attempts: Array<[string, Record<string, unknown>]> = [
     [HR, { level: 4, reason: 'HR must not change levels' }],
     [HR, { reportsToEmpId: 'ACV-0004', reason: 'HR must not move people' }],
-    [DIRECTOR, { reportsToEmpId: 'ACV-0004', reason: 'Director must not move people' }],
-    [DIRECTOR, { level: 4, reason: 'Director must not change levels' }],
+    [OWNER, { reportsToEmpId: 'ACV-0004', reason: 'The owner must not move people' }],
+    [OWNER, { level: 4, reason: 'The owner must not change levels' }],
     [PEER, { type: 'full_time', reason: 'A colleague must not edit jobs' }],
     [FINANCE, { reportsToEmpId: 'ACV-0004', reason: 'Finance must not move people' }],
   ];
@@ -367,8 +411,8 @@ test('job edit form: HR edits job fields in the screen; only the Owner or CEO ch
     const res = await (await apiAs(playwright, who)).patch(`employees/${hireId}/job`, body);
     expect(res.status(), JSON.stringify(body) + ' by ' + who).toBe(403);
   }
-  // an invalid line is refused even for the CEO (the reporting rules still apply)
-  const bad = await (await apiAs(playwright, CEO)).patch(`employees/${hireId}/job`, { reportsToEmpId: PEER, reason: 'A colleague of equal level cannot be the manager' });
+  // an invalid line is refused even for the Director (the reporting rules still apply)
+  const bad = await (await apiAs(playwright, DIRECTOR)).patch(`employees/${hireId}/job`, { reportsToEmpId: PEER, reason: 'A colleague of equal level cannot be the manager' });
   expect(bad.status()).toBe(400);
   expect((await (await (await apiAs(playwright, DIRECTOR)).get(`employees/${hireId}`)).json()).job.reportsTo).toBe('ACV-0003');
   // the employee cannot edit their own job
@@ -462,18 +506,13 @@ test('the Director resets the authenticator in the dialog: the person is signed 
   expect((await peer.post(`auth/employees/${hireId}/reset-2fa`, { reason: 'I am not allowed to' })).status()).toBe(403);
 });
 
-test('HR sets the last working day in the dialog; access ends the next day, and the CEO sees who needs a new manager', async ({ browser, playwright }) => {
-  // A dedicated manager who will leave, with two people reporting to them. Test-only people, so no shared demo
-  // account (such as Finance, used by the M7 to M9 specs) is ever disabled by this test.
-  const owner = await apiAs(playwright, OWNER);
-  const hire = async (body: Record<string, unknown>) => {
-    const res = (await (await owner.post('employees', { departmentId: 'dep-fin', officeId: 'off-khi', joiningDate: '2026-11-01', type: 'full_time', ...body })).json()) as { status: string; empId: string };
-    expect(res.status, `create ${String(body.name)}`).toBe('created');
-    return res;
-  };
-  const leaver = await hire({ name: 'E2E Leaving Manager', designation: 'Finance Lead', officialEmail: 'e2e.leaving.manager@acevatech.com', level: 4, reportsToEmpId: DIRECTOR });
-  const orphan = await hire({ name: 'E2E Orphan', designation: 'Analyst', officialEmail: 'e2e.orphan@acevatech.com', level: 5, reportsToEmpId: leaver.empId });
-  await hire({ name: 'E2E Second Report', designation: 'Analyst', officialEmail: 'e2e.second.report@acevatech.com', level: 5, reportsToEmpId: leaver.empId });
+test('HR sets the last working day in the dialog; access ends the next day, and the Director sees who needs a new manager', async ({ browser, playwright }) => {
+  // an employee reporting to Finance, who is about to leave (the Director hires directly)
+  const hirer = await apiAs(playwright, DIRECTOR);
+  const orphan = await (
+    await hirer.post('employees', { name: 'E2E Orphan', designation: 'Analyst', departmentId: 'dep-fin', officeId: 'off-khi', officialEmail: 'e2e.orphan@acevatech.com', level: 5, reportsToEmpId: FINANCE, joiningDate: '2026-11-01', type: 'full_time' })
+  ).json();
+  expect(orphan.status).toBe('created');
 
   // 1) today as the last working day: still working, scheduled for the next day
   const hr = await openAs(browser, HR, `/people/${hireId}`);
@@ -483,7 +522,8 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   await hr.page.locator('#ob-date').fill(iso(today));
   await hr.page.locator('#ob-reason').fill('Resigned, notice period ends today');
-  await expect(hr.page.getByText('request to move their open tasks')).toBeVisible();
+  // The line says a request is queued while Module 5 is off, and how many open tasks move once it is on.
+  await expect(hr.page.getByText(/request to move their open tasks|open tasks? (to move|move to)/)).toBeVisible();
   await hr.page.getByRole('button', { name: 'Set last working day' }).last().click();
   await expect(toastText(hr.page, /Last working day set/)).toBeVisible();
   const dir = await apiAs(playwright, DIRECTOR);
@@ -493,33 +533,37 @@ test('HR sets the last working day in the dialog; access ends the next day, and 
   expect((await (await ctx.post('auth/login', { data: { empId: hireId, password: NEW_PASSWORD } })).json()).status).not.toBe('invalid'); // can still sign in
   await hr.context.close();
 
-  // 2) the Director sets yesterday for the leaving manager: processed now; their reports are listed, not moved
-  const leaving = await openAs(browser, DIRECTOR, `/people/${leaver.empId}`);
-  await leaving.page.getByRole('button', { name: 'More actions' }).click();
-  await leaving.page.getByRole('menuitem', { name: 'Set last working day' }).click();
+  // 2) the Director sets yesterday for Finance: processed now; the report is listed, not moved
+  const finance = await openAs(browser, DIRECTOR, `/people/${FINANCE}`);
+  await finance.page.getByRole('button', { name: 'More actions' }).click();
+  await finance.page.getByRole('menuitem', { name: 'Set last working day' }).click();
   const yesterday = new Date(today.getTime() - 86_400_000);
-  await leaving.page.locator('#ob-date').fill(iso(yesterday));
-  await leaving.page.locator('#ob-reason').fill('Resigned and served notice');
-  await leaving.page.getByRole('button', { name: 'Set last working day' }).last().click();
-  await expect(toastText(leaving.page, /Last working day set/)).toBeVisible();
-  await leaving.context.close();
+  await finance.page.locator('#ob-date').fill(iso(yesterday));
+  await finance.page.locator('#ob-reason').fill('Resigned and served notice');
+  await finance.page.getByRole('button', { name: 'Set last working day' }).last().click();
+  await expect(toastText(finance.page, /Last working day set/)).toBeVisible();
+  await finance.context.close();
 
-  const ceo = await openAs(browser, CEO, '/people');
-  const panel = ceo.page.getByTestId('unresolved-reports');
+  // the CEO / Founder / Owner sees the list too, view only (no "Assign manager")
+  const ownerView = await openAs(browser, OWNER, '/people');
+  await expect(ownerView.page.getByTestId('unresolved-reports')).toContainText('E2E Orphan');
+  await expect(ownerView.page.getByTestId('unresolved-reports').getByRole('link', { name: 'Assign manager' })).toHaveCount(0);
+  await ownerView.context.close();
+
+  const directorView = await openAs(browser, DIRECTOR, '/people');
+  const panel = directorView.page.getByTestId('unresolved-reports');
   await expect(panel).toContainText('E2E Orphan');
   await expect(panel.getByRole('link', { name: 'Assign manager' }).first()).toBeVisible();
-  const cApi = await apiAs(playwright, CEO);
-  const orphanRow = (await (await cApi.get('employees/unresolved-reports')).json()) as Array<{ empId: string; name: string }>;
-  expect((await (await cApi.get(`employees/${orphan.empId}`)).json()).job.reportsTo).toBe(leaver.empId); // not moved automatically
-  // only the Owner or CEO reassign (the Director may not)
-  expect((await dir.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Director cannot reassign' })).status()).toBe(403);
-  expect((await cApi.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Finance lead left' })).status()).toBe(200);
-  await ceo.page.reload();
-  // the reassigned person leaves the list; the leaver's other report is still waiting
-  await expect(ceo.page.getByTestId('unresolved-reports')).not.toContainText('E2E Orphan');
-  await expect(ceo.page.getByTestId('unresolved-reports')).toContainText('E2E Second Report');
-  void orphanRow;
-  await ceo.context.close();
+  expect((await (await dir.get(`employees/${orphan.empId}`)).json()).job.reportsTo).toBe(FINANCE); // not moved automatically
+  // only the Director reassigns (HR and the CEO / Founder / Owner may not)
+  expect((await (await apiAs(playwright, HR)).patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'HR cannot reassign' })).status()).toBe(403);
+  expect((await (await apiAs(playwright, OWNER)).patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'The owner cannot reassign' })).status()).toBe(403);
+  expect((await dir.patch(`employees/${orphan.empId}/job`, { reportsToEmpId: DIRECTOR, reason: 'Finance lead left' })).status()).toBe(200);
+  await directorView.page.reload();
+  // the reassigned person leaves the list; the demo roster's other person who reported to Finance is still waiting
+  await expect(directorView.page.getByTestId('unresolved-reports')).not.toContainText('E2E Orphan');
+  await expect(directorView.page.getByTestId('unresolved-reports')).toContainText('Danish Iqbal');
+  await directorView.context.close();
 });
 
 test('the person whose last working day is today is still on notice: leaving is processed the next day (the clock-moving backend tests prove it)', async ({ playwright }) => {

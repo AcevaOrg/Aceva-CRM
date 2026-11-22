@@ -9,7 +9,7 @@ import { IdentityProvider } from '../identity/identity.provider';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Actor } from './access.types';
 import { AuditService } from './audit.service';
-import { ALLOW_INCOMPLETE, AUTHENTICATED_ONLY, FINANCE_SCREEN, IS_PUBLIC, REQUIRED_PERMISSIONS, SCOPE_RULE } from './decorators';
+import { ALLOW_INCOMPLETE, AUTHENTICATED_ONLY, FINANCE_SCREEN, IS_PUBLIC, REQUIRED_PERMISSIONS, SCOPE_RULE, SESSION_ACTIVITY } from './decorators';
 import { PermissionService } from './permission.service';
 import { ScopeMode, ScopeService } from './scope.service';
 
@@ -59,14 +59,16 @@ export class AccessGuard implements CanActivate {
 
     // 1. Who is calling?
     const financeScreen = !!this.reflector.getAllAndOverride<boolean>(FINANCE_SCREEN, targets);
-    // A screen catching up on its own after a live update (Module 14, part 2) marks its read with this header: the
-    // session is checked exactly as usual but the request does not count as activity. Only reads can be passive, and
-    // the header can only make a session end sooner, never later.
+    // Does this request keep the session alive? Yes, unless the route says when it counts (the activity heartbeat), or
+    // it is a read a screen makes on its own (Module 14 marks those with the passive header: only reads can be passive,
+    // and the header can only make a session end sooner, never later).
+    const countsWhen = this.reflector.getAllAndOverride<((r: Request) => boolean) | undefined>(SESSION_ACTIVITY, targets);
     const passive = !changesData && request.header(PASSIVE_REQUEST_HEADER) === '1';
+    const touch = !passive && (countsWhen ? countsWhen(request) === true : true);
     // The screen's own word that it is a finance screen (the heartbeat): the 10-minute limit applies, and the session
     // remembers it for its live socket. It can only make the limit stricter.
     const financeIdle = financeScreen || request.header(SCREEN_HEADER) === 'finance';
-    const identity = await this.identity.resolve(request, { financeScreen: financeIdle, passive });
+    const identity = await this.identity.resolve(request, { financeScreen: financeIdle, touch });
     const actor = identity ? await this.loadActor(identity.empId) : null;
     if (!identity || !actor) {
       await this.audit.record({ actorId: null, action: 'access.denied', targetType: 'route', targetId: route, outcome: 'denied', reason: 'unauthenticated', ...client });

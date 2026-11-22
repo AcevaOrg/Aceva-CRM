@@ -147,6 +147,28 @@ test('the composer never loses text: quick messages go out in order, and what is
   await b.context.close();
 });
 
+test('a tab that has no CSRF token yet fetches it before its first change, so an early click is not refused', async ({ browser, playwright }) => {
+  // The token is kept per tab and arrives with the tab's first /auth/me. A change made before that used to go out without
+  // it and was refused (403) with nothing on the screen. Removing it here makes that moment certain instead of a race.
+  const a = await openAs(browser, DEV1, '/');
+  await goLive(a.page, `/messages/${dm}`);
+  await a.page.evaluate(() => window.sessionStorage.removeItem('aceva-csrf'));
+  const tag = randomUUID().slice(0, 6);
+  const sent = a.page.waitForRequest((r) => r.method() === 'POST' && r.url().includes(`/comms/conversations/${dm}/messages`));
+  // the lookup is a passive read (it does not count as activity); the minute heartbeat's /auth/me is not passive
+  const lookup = a.page.waitForRequest((r) => r.method() === 'GET' && r.url().endsWith('/auth/me') && r.headers()['x-aceva-passive'] === '1');
+  const box = a.page.getByPlaceholder(/^Message /);
+  await box.fill(`Early ${tag}`);
+  await box.press('Enter');
+  await lookup;
+  const post = await sent;
+  expect(post.headers()['x-csrf-token']).toBeTruthy();
+  expect((await post.response())?.status()).toBe(201);
+  const items = (await (await apiAs(playwright, DEV1)).get(`/comms/conversations/${dm}/messages?limit=5`).then((r) => r.json())).items as Array<{ body: string }>;
+  expect(items.map((m) => m.body)).toContain(`Early ${tag}`);
+  await a.context.close();
+});
+
 test('a member removed while the conversation is open sees "Conversation not found" at once, without a refresh', async ({ browser, playwright }) => {
   test.setTimeout(120_000);
   const dev1 = await apiAs(playwright, DEV1);

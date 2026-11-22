@@ -80,19 +80,7 @@ CREATE TABLE "office_networks" (
     CONSTRAINT "office_networks_pkey" PRIMARY KEY ("id")
 );
 
--- CreateTable
-CREATE TABLE "holidays" (
-    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "date" DATE NOT NULL,
-    "name" TEXT NOT NULL,
-    "archived_at" TIMESTAMPTZ(3),
-    "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "created_by" UUID,
-    "updated_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_by" UUID,
-
-    CONSTRAINT "holidays_pkey" PRIMARY KEY ("id")
-);
+-- (the holidays table is created by the Module 5 migration 20261116100000_m5_tasks; Module 7 owns its rules)
 
 -- CreateTable
 CREATE TABLE "attendance_records" (
@@ -718,9 +706,6 @@ CREATE UNIQUE INDEX "work_schedules_effective_from_key" ON "work_schedules"("eff
 CREATE INDEX "office_networks_office_id_idx" ON "office_networks"("office_id");
 
 -- CreateIndex
-CREATE INDEX "holidays_date_idx" ON "holidays"("date");
-
--- CreateIndex
 CREATE INDEX "attendance_records_work_date_idx" ON "attendance_records"("work_date");
 
 -- CreateIndex
@@ -1083,8 +1068,6 @@ ALTER TABLE "payment_allocations" ADD CONSTRAINT "payment_allocations_target" CH
 ALTER TABLE "receipts" ADD CONSTRAINT "receipts_size" CHECK ("size_bytes" > 0);
 ALTER TABLE "finance_settings" ADD CONSTRAINT "finance_settings_single_row" CHECK ("id" = 1 AND "step_up_above" >= 0 AND "finance_year_start_month" BETWEEN 1 AND 12);
 
--- One holiday per date among the active rows.
-CREATE UNIQUE INDEX "holidays_active_date" ON "holidays" ("date") WHERE "archived_at" IS NULL;
 -- At most one open correction per employee and day.
 CREATE UNIQUE INDEX "attendance_corrections_one_pending" ON "attendance_corrections" ("employee_id", "work_date") WHERE "status" = 'pending';
 

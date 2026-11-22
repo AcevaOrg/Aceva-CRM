@@ -99,7 +99,7 @@ beforeAll(async () => {
   captureOutput();
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = OWNER; // final company structure (main): the CEO, Founder and Owner are one person, ACV-0001
   prisma = createTestPrisma();
   for (const e of await prisma.employee.findMany({ select: { id: true, empId: true } })) ids[e.empId] = e.id;
 });

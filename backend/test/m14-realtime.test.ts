@@ -747,7 +747,7 @@ describe('10. access changes reach live sockets at once (no waiting for the minu
     const sales = await live(A, SALES1);
     const since = sales.events.length;
     const change = async (headEmpId: string) => {
-      const res = await as('ACV-0001').patch('/api/v1/org/departments/dep-eng').send({ headEmpId, reason: 'Realtime test: head change' });
+      const res = await as(DIRECTOR).patch('/api/v1/org/departments/dep-eng').send({ headEmpId, reason: 'Realtime test: head change' }); // final structure: the Director manages the org
       expect(res.status, JSON.stringify(res.body)).toBe(200);
     };
     try {

@@ -7,12 +7,15 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.setup';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { testDatabaseUrl } from './helpers/env';
+import { switchOffBackgroundWork } from './helpers/quiet-env';
 
 describe('GET /api/v1/health', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
     process.env.DATABASE_URL = testDatabaseUrl();
+    // This file builds AppModule itself and never resets the database: no summary jobs and no polling timers.
+    switchOffBackgroundWork();
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     configureApp(app);
@@ -25,6 +28,11 @@ describe('GET /api/v1/health', () => {
   it('returns 200 and reports the real database as up', async () => {
     const response = await request(app.getHttpServer()).get('/api/v1/health').expect(200);
     expect(healthResponseSchema.parse(response.body)).toMatchObject({ status: 'ok', database: 'up' });
+  });
+
+  it('runs the API database sessions in UTC, whatever time zone the server is set to', async () => {
+    const rows = await app.get(PrismaService).$queryRawUnsafe<Record<string, string>[]>('SHOW TimeZone');
+    expect(Object.values(rows[0])).toEqual(['UTC']);
   });
 
   it('serves Swagger documentation at /api/docs', async () => {

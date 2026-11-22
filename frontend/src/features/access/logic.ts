@@ -7,37 +7,36 @@ import type { OrgNode, Role, StandIn, StandInInput, StandInStatus } from "./type
 
 /**
  * Who may report to whom (plan §5, decision C2). Mirrors the server, which is the real check.
- * Normally a person reports to someone at a strictly higher level. Same-level reporting is allowed only where it is
- * configured: the CTO reports to the Director (both Level 3).
+ * A person reports to someone at a STRICTLY higher level. No same-level line is configured in the final structure:
+ * the CTO (Level 3) reports to the Director (Level 2).
  */
 export function canReportTo(
   employee: Pick<Employee, "level" | "role">,
   boss: Pick<Employee, "level" | "role" | "status">,
 ): boolean {
   if (boss.status === "left" || employee.level === 1) return false;
-  if (boss.level < employee.level) return true;
-  return boss.level === employee.level && boss.role === "director" && employee.role === "cto";
+  return boss.level < employee.level;
 }
 
 /** Level-only helper for the profile screens (Module 3 mock): the level a new person normally reports to. */
 export function reportsToLevel(level: Level): Level | null {
-  return ({ 1: null, 2: 1, 3: 2, 4: 3, 5: 3 } as Record<Level, Level | null>)[level];
+  return ({ 1: null, 2: 1, 3: 2, 4: 2, 5: 3 } as Record<Level, Level | null>)[level];
 }
 
 /** Hint shown next to a "Reports to" picker. */
 export const REPORTS_TO_HINT: Record<Level, string> = {
-  1: "The Owner reports to nobody.",
-  2: "The CEO reports to the Owner.",
-  3: "The Director reports to the CEO. The CTO reports to the Director (the one same-level line).",
-  4: "Heads and leads report to a Level 3 manager, usually the Director.",
-  5: "Employees report to a manager above them, usually the CTO.",
+  1: "The CEO / Founder / Owner reports to nobody.",
+  2: "The Director reports to the CEO / Founder / Owner.",
+  3: "The CTO reports to the Director.",
+  4: "Sales and Finance report to the Director.",
+  5: "Developer / SQA report to the CTO (or another manager above them).",
 };
 
 /**
- * People who manage others and can approve for them: the CEO, the Director, the CTO and Level 4 heads and leads.
- * The Owner oversees everything but approves nothing.
+ * People who manage others and can approve for them: the Director and the CTO.
+ * The CEO / Founder / Owner oversees everything but approves nothing except the Director's own leave and corrections.
  */
-export const isManager = (e: Pick<Employee, "role">) => e.role === "ceo" || e.role === "director" || e.role === "cto" || e.role === "level4_default";
+export const isManager = (e: Pick<Employee, "role">) => e.role === "director" || e.role === "cto";
 
 /**
  * Maker-checker on the roles matrix (only roles.manage, the Director, edits it):
@@ -49,7 +48,7 @@ export function roleEditBlock(
   viewer: Pick<Employee, "role" | "level" | "duties">,
   role: Pick<Role, "key" | "level" | "isDuty">,
 ): string | null {
-  if (role.key === "owner" || role.key === "ceo") return "Fixed by the structure: the Owner and CEO roles are oversight roles.";
+  if (role.key === "owner") return "Fixed by the structure: the CEO / Founder / Owner role sees everything and approves nothing.";
   if (role.isDuty) return viewer.duties.includes(role.key as Duty) ? "You hold this duty, so you can't change it." : null;
   if (role.key === viewer.role) return "Nobody changes the permissions of their own role.";
   if (role.level !== undefined && role.level < viewer.level) return "You can't change a role above yours.";
@@ -99,8 +98,9 @@ export function standInStatus(s: StandIn, now = Date.now()): StandInStatus {
 }
 
 /**
- * Stand-in rules (plan §5): a manager names a stand-in (or nobody) for set dates. The stand-in must be able to approve (not the
- * Owner), at the manager's level or higher, and not the manager. Without a stand-in, approvals go one level up.
+ * Stand-in rules (plan §5): a manager names a stand-in (or nobody) for set dates. The stand-in must be able to approve (never the
+ * CEO / Founder / Owner), at the manager's level or higher, and not the manager. Without a stand-in, approvals go one level up,
+ * but never on to the CEO / Founder / Owner (he approves only for the Director).
  * The server repeats every check.
  */
 export function validateStandIn(input: StandInInput, list: Pick<Employee, "empId" | "level" | "role">[]): string | null {
@@ -110,7 +110,7 @@ export function validateStandIn(input: StandInInput, list: Pick<Employee, "empId
   if (input.standInEmpId) {
     if (input.managerEmpId === input.standInEmpId) return "You can't be your own stand-in.";
     const s = list.find((e) => e.empId === input.standInEmpId);
-    if (s && s.role === "owner") return "The Owner approves nothing, so can't be a stand-in.";
+    if (s && s.role === "owner") return "The CEO / Founder / Owner approves only the Director's own requests, so can't be a stand-in.";
     if (s && !isManager(s)) return "A stand-in must be someone who can approve (a manager).";
     if (m && s && s.level > m.level) return "A stand-in must be at the same level or higher.";
   }
@@ -119,7 +119,7 @@ export function validateStandIn(input: StandInInput, list: Pick<Employee, "empId
   return null;
 }
 
-/** Who can stand in for this manager (another manager at the same level or higher; never the Owner). */
+/** Who can stand in for this manager (another manager at the same level or higher; never the CEO / Founder / Owner). */
 export function standInCandidates<T extends Pick<Employee, "empId" | "level" | "role" | "status">>(manager: Pick<Employee, "empId" | "level"> | undefined, list: T[]): T[] {
   if (!manager) return [];
   return list.filter((e) => e.status !== "left" && e.empId !== manager.empId && isManager(e) && e.level <= manager.level);
@@ -151,13 +151,15 @@ const GROUP_LABEL: Record<string, string> = {
   announcements: "Announcements",
   sales: "Sales",
   integrations: "Integrations",
+  approval: "Approvals",
+  duty: "Extra duties",
 };
 
 export const groupLabel = (prefix: string) => GROUP_LABEL[prefix] ?? prefix;
 
 const ACTION_LABEL: Partial<Record<Permission, string>> = {
   "org.view": "See the org chart",
-  "org.manage": "Change levels and reporting lines",
+  "org.manage": "Change levels, reporting lines, departments and offices",
   "roles.manage": "Edit roles and permissions",
   "standin.manage": "Set stand-ins",
   "people.view_directory": "See the staff directory",
@@ -180,6 +182,10 @@ const ACTION_LABEL: Partial<Record<Permission, string>> = {
   "finance.close": "Run or approve the month close",
   "finance.reopen": "Reopen a closed month",
   "sales.commission_approve": "Approve commission",
+  "approval.approve": "Approve requests (and be a stand-in)",
+  "duty.assign": "Give or end extra duties",
+  "auth.set_temporary_password": "Set a temporary password",
+  "auth.reset_two_factor": "Reset a lost authenticator",
 };
 
 /** "task.assign" → "Assign tasks"; falls back to a humanised action. */

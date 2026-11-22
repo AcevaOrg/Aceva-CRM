@@ -9,6 +9,7 @@ import { createEmployee } from './helpers/people';
 import { createTestPrisma } from './helpers/prisma';
 import { resetTestDatabase } from './helpers/reset-db';
 
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner
 const DIRECTOR = 'ACV-0003';
 let HR = ''; // test-only HR officer (not in the demo seed), see helpers/people.ts
 const SALES1 = 'ACV-0009';
@@ -161,6 +162,23 @@ describe('M2 account lockout after five wrong passwords', () => {
     await hr.post(`/api/v1/auth/employees/${DEV3}/unlock`).send({}).expect(200);
     expect((await login(DEV3, TEST_PASSWORD).expect(200)).body.status).toBe('ok');
     expect((await prisma.auditLog.findFirstOrThrow({ where: { action: 'auth.account.unlocked', targetId: DEV3 } })).details).toMatchObject({ byHrDuty: true });
+  });
+
+  it('the CEO / Founder / Owner unlocks only his direct report (the Director), nobody else', async () => {
+    const owner = await t.signIn(OWNER);
+    // a developer far below him: refused, even though he is above them in the reporting line
+    for (let i = 0; i < 5; i++) await login(DEV1, `wrong-owner-${i}`);
+    expect((await login(DEV1, TEST_PASSWORD).expect(200)).body.status).toBe('locked');
+    await owner.post(`/api/v1/auth/employees/${DEV1}/unlock`).send({}).expect(403);
+    await (await t.signIn(HR)).post(`/api/v1/auth/employees/${DEV1}/unlock`).send({}).expect(200); // HR does it instead
+
+    // the Director, who reports to him: allowed
+    for (let i = 0; i < 5; i++) await login(DIRECTOR, `wrong-director-${i}`);
+    expect((await login(DIRECTOR, TEST_PASSWORD).expect(200)).body.status).toBe('locked');
+    await owner.post(`/api/v1/auth/employees/${DIRECTOR}/unlock`).send({ reason: 'Identity confirmed in person' }).expect(200);
+    expect((await login(DIRECTOR, TEST_PASSWORD).expect(200)).body.status).not.toBe('locked');
+    const entry = await prisma.auditLog.findFirstOrThrow({ where: { action: 'auth.account.unlocked', targetId: DIRECTOR }, include: { actor: true } });
+    expect(entry.actor?.empId).toBe(OWNER);
   });
 });
 

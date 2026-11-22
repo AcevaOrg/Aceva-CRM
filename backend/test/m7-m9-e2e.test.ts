@@ -38,14 +38,14 @@ let runId = '';
 let bankId = '';
 let totals: { gross: string; tax: string; net: string } = { gross: '', tax: '', net: '' };
 
-const approverFor = (level: number | null) => (level === 3 ? DIRECTOR : level === 2 ? CEO : OWNER);
+const approverFor = (level: number | null) => (level === 2 ? DIRECTOR : OWNER); // D26: the Director approves; the Owner only what the Director made
 
 beforeAll(async () => {
   prisma = createTestPrisma();
   t = await createTestApp();
   t.clock.set(new Date('2027-02-01T02:00:00.000Z')); // 07:00 in Pakistan, Monday 1 February 2027
   await t.ensureFixtures();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
   m7as = m7Personas(t);
 }, 180000);
 
@@ -104,7 +104,8 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     runId = (await t.as(FINANCE).post(`${API}/payroll/runs`).send({ month: MONTH }).expect(201)).body.id;
     const run = (await t.as(FINANCE).post(`${API}/payroll/runs/${runId}/calculate`).expect(200)).body;
     expect(run.workingDays).toBe(wd);
-    expect(await prisma.attendancePeriod.findUnique({ where: { month: MONTH } })).not.toBeNull();
+    // decision: calculating does NOT lock the month (check-ins and leave stay possible until the payroll is approved)
+    expect(await prisma.attendancePeriod.findUnique({ where: { month: MONTH } })).toBeNull();
 
     const lines = (await t.as(FINANCE).get(`${API}/payroll/runs/${runId}/lines`).expect(200)).body.lines;
     const l1 = lines.find((l: { empId: string }) => l.empId === DEV1);
@@ -114,17 +115,11 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     // D6 (pending): lateness and absence without leave do not change pay; only unpaid leave does
     expect(l2.net).toBe('59900.00');
 
-    // the locked month: no more attendance and no more leave, even written directly to the database
-    await expect(prisma.attendanceRecord.create({ data: { employeeId: dev2.id, workDate: new Date('2027-02-15'), checkInAt: new Date('2027-02-15T04:00:00Z') } })).rejects.toThrow();
-    const sick = (await prisma.leaveType.findUniqueOrThrow({ where: { key: 'sick' } })).id;
-    await expect(
-      prisma.leaveRequest.create({ data: { employeeId: dev2.id, leaveTypeId: sick, fromDate: new Date('2027-02-16'), toDate: new Date('2027-02-16'), days: '1', reason: 'Backdated (test)', status: 'approved' } }),
-    ).rejects.toThrow(/period_locked/);
   }, 120_000); // signs every test person in again for March
 
-  it('M8: Finance prepares, the Director approves only after confirming again; the CEO only views (D25)', async () => {
+  it('M8: Finance prepares, the Director approves only after confirming again; the Owner may approve only a run the Director prepared (D26)', async () => {
     await t.as(FINANCE).post(`${API}/payroll/runs/${runId}/prepare`).expect(200);
-    await t.as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(404); // D25: the CEO only views payroll
+    expect((await t.as(CEO).post(`${API}/payroll/runs/${runId}/approve`).expect(403)).body.code).toBe('owner_approves_director_only'); // Finance prepared it
     await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/review`).expect(404); // no separate review step since D25
     expect((await t.as(DIRECTOR).post(`${API}/payroll/runs/${runId}/approve`).expect(403)).body.code).toBe('step_up_required');
     await t.stepUp(DIRECTOR);
@@ -132,6 +127,15 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     totals = approved.totals;
     expect(approved.stage).toBe('approved');
     expect(approved.salaryEntry.status).toBe('pending_approval'); // P7 / D5: waits for normal ledger approval
+
+    // approval locks the month: no more attendance and no more leave, even written directly to the database
+    const dev2 = await prisma.employee.findUniqueOrThrow({ where: { empId: DEV2 } });
+    expect(await prisma.attendancePeriod.findUnique({ where: { month: MONTH } })).not.toBeNull();
+    await expect(prisma.attendanceRecord.create({ data: { employeeId: dev2.id, workDate: new Date('2027-02-15'), checkInAt: new Date('2027-02-15T04:00:00Z') } })).rejects.toThrow();
+    const sick = (await prisma.leaveType.findUniqueOrThrow({ where: { key: 'sick' } })).id;
+    await expect(
+      prisma.leaveRequest.create({ data: { employeeId: dev2.id, leaveTypeId: sick, fromDate: new Date('2027-02-16'), toDate: new Date('2027-02-16'), days: '1', reason: 'Backdated (test)', status: 'approved' } }),
+    ).rejects.toThrow(/period_locked/);
   });
 
   it('M8 -> M9: one balanced salary entry, made by the preparer, approved at the tier its amount needs', async () => {
@@ -151,9 +155,9 @@ describe('Cycle 3 end to end: attendance -> payroll -> ledger -> payment -> mont
     expect(byRole('tax_payable')).toBe(totals.tax);
     expect(byRole('salary_payable')).toBe(totals.net);
 
-    // the maker never approves; the CEO only views (D25: the CEO approves only entries the Director made)
+    // the maker never approves; the Owner only views (D26: the Owner approves only entries the Director made)
     await t.as(FINANCE).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(404);
-    expect(entry.requiredLevel).toBe(3); // the Director's tier
+    expect(entry.requiredLevel).toBe(2); // the Director approves it, whatever the amount
     expect((await t.as(CEO).post(`${API}/journal-entries/${entry.id}/approve`).send({}).expect(403)).body.code).toBe('approval_limit');
     const approver = approverFor(entry.requiredLevel);
     await t.stepUp(approver); // the total is above the "confirm again" amount

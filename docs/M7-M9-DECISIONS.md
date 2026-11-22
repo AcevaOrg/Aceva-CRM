@@ -16,7 +16,7 @@ the system usable and testable until management or the accountant give the real 
 | P6 | Holiday calendar (s.9, s.11, s.17) | Listed under M5, M7 and M12 | Mock data only | One `holidays` table owned by M7; M5, M8 and M12 read it |
 | P7 | Payroll ledger entry (s.12 vs s.13) | s.12: "the approved payroll is posted to the ledger"; s.13: entries the system creates from payroll "start as a Draft" and go to Pending approval | (not built) | The salary entry is created on payroll approval and **waits for normal ledger approval** (the stricter reading; no rule is bypassed). **Needs confirmation (D5)** |
 
-The changes to role permissions are applied to existing databases by migration `20261112190000_m7_m9_foundation` (with an audit-log
+The changes to role permissions are applied to existing databases by migration `20261119090000_m7_m9_foundation` (with an audit-log
 row) and to new databases by `backend/prisma/permission-catalogue.ts`.
 
 ## 2. Development defaults in use (`backend/prisma/seed-cycle3.ts`; development and test databases only)
@@ -99,7 +99,7 @@ setting or a single place in the code.
 | Drafts | Only the maker edits or submits their own draft |
 | Statement CSV | Dates YYYY-MM-DD only; at most 5,000 rows and 2 MB |
 | Close approval | The checklist is checked again; no confirm-again (the plan does not list it) |
-| Reversals | One live reversal per entry; a rejected reversal does not block a new one (migration `20261112230000_m7_m9_integration_rules`) |
+| Reversals | One live reversal per entry; a rejected reversal does not block a new one (migration `20261119090100_m7_m9_integration_rules`) |
 
 ## 5. Known gaps after this cycle
 
@@ -123,7 +123,7 @@ An independent review of the M7 to M9 backend found no IDOR, XSS or data leak. T
 |---|---|
 | The Finance person could remove the "Owner approves" flag from a capital or loan account, or create an equity account without it | Equity accounts created through the API carry the flag by default; only the Owner may create one without it or remove the flag (`403 owner_only`); approval checks the flag again, so an account flagged after an entry was submitted still needs the Owner. In the development chart, 3100 Share capital, 3200 Owner capital and 2500 Loans carry the flag; **3300 Retained earnings does not** (it holds accumulated profit, not share capital or a loan; plan s.13 names only share capital and loan entries). The accountant confirms this with the real chart (D12) |
 | One person with `settings.manage` could give level 3 unlimited approval or raise the confirm-again amount without confirming | The unlimited tier must be the Owner (level 1); changing approval limits or finance settings needs "confirm again" |
-| A direct database write could unlock a payroll month, reopen or close a finance month, post an entry without an approver or skip "pending approval", or move a draft out of a closed month | Database rules in migration `20261112230000_m7_m9_integration_rules`: payroll month locks are never changed or removed; a month closes or reopens only with the matching workflow event in the same transaction; entries start as drafts and follow draft, then pending approval, then posted or rejected; a posted entry always has an approver; the old date of a moved draft is checked too |
+| A direct database write could unlock a payroll month, reopen or close a finance month, post an entry without an approver or skip "pending approval", or move a draft out of a closed month | Database rules in migration `20261119090100_m7_m9_integration_rules`: payroll month locks are never changed or removed; a month closes or reopens only with the matching workflow event in the same transaction; entries start as drafts and follow draft, then pending approval, then posted or rejected; a posted entry always has an approver; the old date of a moved draft is checked too |
 | The payroll reviewer could also be the approver if one person held both permissions | Refused by the service (`403 maker_checker`) and by a database CHECK |
 | Two runs approved at the same moment could both take the same advance balance | The advance rows are locked inside the approval transaction |
 | Changing a leave type from paid to unpaid would silently change locked months | Refused once leave of that type exists (`409 leave_type_in_use`): archive it and add a new type |
@@ -144,7 +144,7 @@ Kept as a documented development default: the Owner's own leave is recorded with
 
 | Rule | Where it is enforced |
 |---|---|
-| Only the Owner changes approval limits and finance-wide security settings (the confirm-again amount, the finance year) | Permission `finance.authority_manage` (Owner role only; migration `20261113100000_m9_owner_authority` and the catalogue), checked again in the service (`403 owner_only`), with server-checked "confirm again". The Director no longer reaches these changes (404), so they cannot raise their own limit |
+| Only the Owner changes approval limits and finance-wide security settings (the confirm-again amount, the finance year) | Permission `finance.authority_manage` (Owner role only; migration `20261119090200_m9_owner_authority` and the catalogue), checked again in the service (`403 owner_only`), with server-checked "confirm again". The Director no longer reaches these changes (404), so they cannot raise their own limit |
 | Unlimited approval always belongs to the Owner | Service validation, a database CHECK (`max_amount IS NULL` exactly for level 1) and a trigger that never lets the Owner tier be deleted |
 | Only the Owner removes the "Owner approves" rule | `PUT /accounts/:id/owner-approval` (Owner only, confirm again, logged). `PATCH /accounts/:id` can add the rule but never remove it. The database accepts a removal only with an audit row `finance.account.owner_approval_removed` for that account, made by a level-1 employee, in the same transaction |
 | A sub-account of an account that needs Owner approval (for example under 2500 Loans) needs it too | Service (`409 owner_approval_inherited`) and database (insert and update refused; flagging an account flags its sub-accounts at any depth; the parent row is locked while a sub-account is checked, so a sub-account created at the same moment cannot slip through). The migration also flags any existing sub-account of a flagged account (it only adds the rule). Removing it from a sub-account is refused while the parent needs it |
@@ -203,8 +203,46 @@ section 13 (month close, reopening, the CEO approval tier) and decision M3-3 ("t
 | Leave and attendance corrections: unchanged from D23 and D24 (the Director; the Director's own go to the CEO) | `RoutingHelper.directorRoute` |
 | Not approvals, so unchanged: the CEO and the Owner still hire directly and change levels and reporting lines (`org.manage`), manage stand-ins, unlock accounts, sign people out and reset authenticators | Role permissions |
 
-Migration `20261117090000_d25_director_approves` is data only (no table, constraint or trigger change): it adds the
+Migration `20261119090300_d25_director_approves` is data only (no table, constraint or trigger change): it adds the
 permission, moves the role permissions, and replaces the approval limits only while they are still the plan's example
 values (an Owner-set value is never overwritten); entries waiting at the old CEO tier move to the Director unless the
 Director made them. On aceva_dev it moves the role permissions only (it has no limits, entries, runs or hire requests
 yet). The payroll stage `reviewed` and the `/review` endpoint stay for runs reviewed before D25.
+
+## 9. Decision D26 and the merge with main (18 November 2026)
+
+Main now carries the final company structure (Level 1 CEO / Founder / Owner, view only; Level 2 Director, the only approver)
+and Modules 4, 5 and 6. This branch was brought up to date with it. Sections 1 to 8 describe the earlier CEO-based design; where
+they disagree with this section, this section wins.
+
+| Rule | Where it is enforced |
+|---|---|
+| The Director approves every journal entry of any amount. Above `finance_settings.step_up_above` (default PKR 50,000) the approver confirms again | `finance/approval-tier.ts`, `journal.service.ts` |
+| An entry the Director made goes one level up: the Owner approves only those (exact level match). An entry the Owner made has nobody above (`no_eligible_approver`) | `requiredApprovalLevel`, `levelCovers` |
+| The Owner is told (audit action `finance.entry.owner_notified`), not asked, about entries above `finance_settings.owner_notify_above` (default PKR 500,000) and every capital or loan entry. The account flag `requires_owner_approval` now means "report to the Owner"; it can only be added | `ownerNotice`, `master-data.service.ts`, database triggers |
+| Payroll: Finance prepares, the Director approves (one step). The Owner approves or sends back only a run the Director prepared | `payroll-runs.service.ts` (`assertOwnerOnlyForDirectorRuns`) |
+| Month close: Finance runs it, the Director approves and reopens (reason, confirm again, alert). The Owner only views | permissions `finance.close_approve`, `finance.reopen` |
+| Hire requests: the Director decides every request except the Director's own, which the Owner decides | `people/joining.service.ts` (`assertMayDecide`), permission `people.approve_hire` |
+| The Director changes the finance settings (permission `finance.authority_manage`, reason, confirm again). **This grant is a development default the project owner has not confirmed** | `finance.controller.ts` |
+| There are no approval tiers: migration `20261119090500_ledger_director_approves_all` drops `approval_limits` (the old limits are kept in the audit log) and moves waiting entries to the new approver | migration |
+
+Other changes made while merging with main
+
+- **Holidays:** Module 5 (already on main) creates the `holidays` table. Module 7's own copy of the table, its Prisma model and its
+  indexes were removed; Module 7 keeps the rules (archive, locked months) and serves `GET /holidays`, which Module 5's screens use too.
+- **Migrations:** the Module 7 to 9 migrations were renamed to `20261119090000` to `20261119090500` so they apply after Module 6.
+- **Routes:** Module 9's project list moved from `GET /projects` to `GET /finance-projects` (Module 5 owns `/projects`).
+- **Contracts:** the Module 7 and 9 names that clashed with `tasks.ts` are `AttendanceHolidayView`, `attendanceHolidaysQuerySchema`,
+  `CloseChecklistItemView` and `FinanceProjectView`.
+- **Jobs:** there is one job runner (the one in `CommonModule`). The extra `JobsModule` was removed: two runners meant job types
+  registered by Modules 5 and 6 were unknown to the other one.
+
+Fixes to the first version of this branch
+
+- Attendance for a month is locked when the payroll is **approved**, not when it is calculated.
+- A salary entry the ledger rejected can be replaced (`POST /payroll/runs/:id/repost-salary-entry`); a run is paid only when its
+  payment entry is posted, and a rejected payment can be recorded again. Migration `20261119090400_m7_m9_retry_rules` lets the
+  database accept the replacement only when the old entry was rejected.
+- A reversed revaluation no longer blocks revaluing the month and no longer counts on the close checklist.
+- A leave request with no approver who may decide it is refused (`409 no_approver`); before, any such request was approved by default.
+  Only the Owner's own leave is recorded without an approver.

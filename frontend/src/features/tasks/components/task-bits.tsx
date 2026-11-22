@@ -1,10 +1,13 @@
 "use client";
-/** Small task widgets: status badge, priority, size chip, size picker. */
-import { ArrowDown, ArrowUp, ChevronsUp, Minus, Scissors } from "lucide-react";
+/** Small task widgets: status badge, priority, size chip, size picker, and the "continue anyway?" dialog for soft warnings. */
+import { ArrowDown, ArrowUp, ChevronsUp, Minus, Scissors, TriangleAlert } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { statusMap, StatusBadge } from "@/components/shared/chips";
 import { cn } from "@/lib/utils";
-import { PRIORITY_LABEL, SIZE_RULES, STATUS_LABEL } from "../logic";
+import { useSizeRules } from "../hooks";
+import { PRIORITY_LABEL, sizeRule, STATUS_LABEL } from "../logic";
 import type { Priority, TaskSize, TaskStatus } from "../types";
 
 const STATUS_TONE: Record<TaskStatus, BadgeTone> = {
@@ -59,21 +62,25 @@ export function PriorityLabel({ priority, compact }: { priority: Priority; compa
   );
 }
 
-export function SizeChip({ size }: { size: TaskSize }) {
-  const r = SIZE_RULES.find((x) => x.size === size)!;
+/** `points` is what the task was created with (they stay frozen when the Director changes the size table); without it the table's points show. */
+export function SizeChip({ size, points }: { size: TaskSize; points?: number }) {
+  const rules = useSizeRules();
+  const r = sizeRule(size, rules);
+  const pts = points ?? r.points;
   return (
-    <Badge tone="work" className="font-mono" title={`${r.meaning} · ${r.hoursLabel} · ${r.points} pts`}>
+    <Badge tone="work" className="font-mono" title={`${r.meaning} · ${r.hoursLabel} · ${pts} pts`}>
       {size}
-      {r.points > 0 && <span className="text-muted-foreground">·{r.points}</span>}
+      {pts > 0 && <span className="text-muted-foreground">·{pts}</span>}
     </Badge>
   );
 }
 
 /** XS…XL picker showing hours and points; XL warns that it must be split (spec §3.5.10). */
 export function SizePicker({ value, onChange }: { value: TaskSize; onChange: (s: TaskSize) => void }) {
+  const rules = useSizeRules();
   return (
     <div role="radiogroup" aria-label="Task size" className="grid grid-cols-5 gap-1.5">
-      {SIZE_RULES.map((r) => {
+      {rules.map((r) => {
         const active = r.size === value;
         const xl = r.size === "XL";
         return (
@@ -98,5 +105,38 @@ export function SizePicker({ value, onChange }: { value: TaskSize; onChange: (s:
         );
       })}
     </div>
+  );
+}
+
+/**
+ * Soft warnings the server wants confirmed (a deadline shorter than the size usually needs, an overloaded week):
+ * the person reads them and either goes back or continues (the request is then sent again with confirmWarnings).
+ */
+export function ConfirmWarningsDialog({ lines, confirmLabel, busy, onConfirm, onCancel }: { lines: string[]; confirmLabel: string; busy?: boolean; onConfirm: () => void; onCancel: () => void }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>Continue anyway?</DialogTitle>
+          <DialogDescription>These are warnings, not errors. You can go back and change it, or continue.</DialogDescription>
+        </DialogHeader>
+        <ul className="grid gap-2">
+          {lines.map((l) => (
+            <li key={l} className="flex items-start gap-1.5 rounded-md bg-warning/14 px-2 py-1.5 text-[12.5px]">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-[oklch(0.6_0.14_70)]" />
+              {l}
+            </li>
+          ))}
+        </ul>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            Go back
+          </Button>
+          <Button onClick={onConfirm} loading={busy}>
+            {confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

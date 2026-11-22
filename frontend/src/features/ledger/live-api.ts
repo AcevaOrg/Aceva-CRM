@@ -5,12 +5,12 @@
  * Money stays a decimal string from the server.
  */
 import type {
-  AccountView, ApprovalLimitView, BankAccountView, BillView, EntryView, ExchangeRateView, InvoiceView, Page, PartyView, PaymentView, PeriodView,
-  ProjectView, ReconciliationView, RevaluationPreviewView, StatementImportResult, StatementLineView,
+  AccountView, BankAccountView, BillView, EntryView, ExchangeRateView, InvoiceView, Page, PartyView, PaymentView, PeriodView,
+  FinanceProjectView, ReconciliationView, RevaluationPreviewView, StatementImportResult, StatementLineView,
 } from "@aceva/contracts";
 import { http } from "@/lib/api/http";
 import { ApiError } from "@/lib/api/mock";
-import type { ApprovalStep, Attachment, Currency, RoleKey } from "@/types";
+import type { ApprovalStep, Attachment, Currency } from "@/types";
 import type { mockLedgerApi } from "./api";
 import type {
   Account, AccountGroup, AccountKind, ApprovalLimit, BankStatementLine, Bill, EntryEvent, EntryListParams, ExchangeRate, FinancePeriod, FinanceProject,
@@ -197,7 +197,6 @@ function mapStatementLine(bankAccountId: string, s: StatementLineView): BankStat
   };
 }
 
-const ROLE_BY_LEVEL: Record<number, RoleKey> = { 1: "owner", 2: "ceo", 3: "director" };
 
 /** Receipt files chosen in the bill form, kept until the bill is saved (the form only holds an Attachment description). */
 const pendingReceipts = new Map<string, File>();
@@ -460,11 +459,10 @@ export const liveLedgerApi: Api & {
   },
 
   /** GET /projects */
-  projects: async (): Promise<FinanceProject[]> => (await http.get<ProjectView[]>("/projects")).map((p) => ({ id: p.id, name: `${p.code} · ${p.name}` })),
+  projects: async (): Promise<FinanceProject[]> => (await http.get<FinanceProjectView[]>("/finance-projects")).map((p) => ({ id: p.id, name: `${p.code} · ${p.name}` })),
 
-  /** GET /settings/approval-limits */
-  approvalLimits: async (): Promise<ApprovalLimit[]> =>
-    (await http.get<ApprovalLimitView[]>("/settings/approval-limits")).map((l) => ({ role: ROLE_BY_LEVEL[l.approverLevel] ?? "director", label: l.label, upTo: l.maxAmount === null ? null : Number(l.maxAmount) })),
+  /** There are no approval tiers any more (decision D26): the Director approves any amount. */
+  approvalLimits: async (): Promise<ApprovalLimit[]> => [{ role: "director", label: "Director", upTo: null }],
 
   /** POST /bank-accounts/:id/reveal (the caller confirms again first; every reveal is logged) */
   revealBankNumber: async (accountId: string) => (await http.post<{ value: string }>(`/bank-accounts/${accountId}/reveal`)).value,

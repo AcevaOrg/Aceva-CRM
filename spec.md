@@ -66,12 +66,14 @@ L1  CEO / Founder / Owner ─── one person · sees everything · approves no
 
 | Level | Role (`RoleKey`) | Reports to | Department | Colour token |
 |---|---|---|---|---|
-| 1 | CEO / Founder / Owner (`ceo`) | nobody | Management | `--level-1` gold |
+| 1 | CEO / Founder / Owner (`owner`) | nobody | Management | `--level-1` gold |
 | 2 | Director (`director`) | CEO / Founder / Owner | Management | `--level-2` violet |
 | 3 | CTO (`cto`) | Director | Software Development | `--level-3` cobalt |
 | 4 | Sales (`sales`) | Director | Sales | `--level-4` teal |
 | 4 | Finance (`finance`) | Director | Finance | `--level-4` teal |
 | 5 | Developer / SQA (`developer`): Software Developer, Backend Developer, SQA Engineer | CTO | Software Development | `--level-5` slate |
+
+The server uses the same role keys (`backend/prisma/permission-catalogue.ts`), with one name difference: its Level 5 role is `employee`, shown here as `developer`. Each level has one default role (L1 `owner`, L2 `director`, L3 `cto`, L4 `sales`, L5 `employee`); `finance` is the second Level 4 role, and its finance permissions come from the Finance duty. There is no separate CEO role and no same-level reporting line.
 
 - **CEO / Founder / Owner** is one person. They see every activity, every report and every record in the company (including exports), but they **approve nothing**, prepare nothing and change no settings. The only thing they sign off is the Director's own leave or attendance correction, because nobody approves their own request.
 - **Director** is the single approver: payroll, every journal entry, the month close and reopening it, Won deals, commission, sales targets, the final step of leave, settings (including ★ sections), and levels and reporting lines. The Director also holds **HR duty** and **sales-manager duty**, and never prepares finance items, so there is always a second person.

@@ -4,7 +4,7 @@
  * who sees whom); these functions only translate between the API and the shapes the screens use.
  */
 import type {
-  AttendanceDayView, AttendanceMonthResponse, CorrectionView, HolidayView, LeaveBalancesResponse, LeaveCalendarEntryView,
+  AttendanceDayView, AttendanceMonthResponse, CorrectionView, AttendanceHolidayView, LeaveBalancesResponse, LeaveCalendarEntryView,
   LeaveChainStep, LeavePreviewResponse, LeaveRequestView, LeaveTypeView, OfficeNetworkView, Page, TeamMonthResponse,
   TeamTodayResponse, TodayResponse, WorkScheduleResponse, WorkScheduleView,
 } from "@aceva/contracts";
@@ -104,7 +104,7 @@ const cache: { holidays: Set<string>; weekdays: number[] } = { holidays: new Set
 
 async function loadHolidays(): Promise<Holiday[]> {
   const year = Number(pkToday().slice(0, 4));
-  const lists = await Promise.all([year, year + 1].map((y) => http.get<HolidayView[]>("/holidays", { year: y })));
+  const lists = await Promise.all([year, year + 1].map((y) => http.get<AttendanceHolidayView[]>("/holidays", { year: y })));
   const all = lists.flat().map((h) => ({ date: h.date, name: h.name }));
   cache.holidays = new Set(all.map((h) => h.date));
   return all;
@@ -283,9 +283,9 @@ export const liveAttendanceSettingsApi = {
   schedule: () => http.get<WorkScheduleResponse>("/settings/work-schedule"),
   newSchedule: (body: { effectiveFrom: string; start: string; end: string; graceMinutes: number; workingWeekdays: number[]; officeOnlyCheckIn: boolean; reason: string }) =>
     http.post<WorkScheduleResponse>("/settings/work-schedule", body),
-  holidays: (year: number) => http.get<HolidayView[]>("/holidays", { year, includeArchived: "true" }),
-  addHoliday: (body: { date: string; name: string; reason: string }) => http.post<HolidayView>("/holidays", body),
-  archiveHoliday: (id: string, reason: string) => http.post<HolidayView>(`/holidays/${id}/archive`, { reason }),
+  holidays: (year: number) => http.get<AttendanceHolidayView[]>("/holidays", { year, includeArchived: "true" }),
+  addHoliday: (body: { date: string; name: string; reason: string }) => http.post<AttendanceHolidayView>("/holidays", body),
+  archiveHoliday: (id: string, reason: string) => http.post<AttendanceHolidayView>(`/holidays/${id}/archive`, { reason }),
   leaveTypes: () => http.get<LeaveTypeView[]>("/leave/types", { includeArchived: "true" }),
   addLeaveType: (body: { key: string; name: string; yearlyDays: number | null; paid: boolean; color?: string; reason: string }) => http.post<LeaveTypeView>("/leave/types", body),
   updateLeaveType: (id: string, body: { name?: string; yearlyDays?: number | null; paid?: boolean; reason: string }) => http.patch<LeaveTypeView>(`/leave/types/${id}`, body),

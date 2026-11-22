@@ -13,6 +13,9 @@
  *  4. A person who has left the company is passed over (the next eligible person upward approves).
  *  5. Nobody ever approves their own request: if the approver would be the requester,
  *     the request goes one level up.
+ *  6. A seat listed in `directReportsOnlyIds` (the CEO / Founder / Owner, Level 1) approves ONLY for the people who
+ *     report to it directly. He approves nothing except the Director's own leave and attendance corrections, so a
+ *     request from further down never climbs to him: when nobody below him can approve, the request waits.
  *
  * Pure function: no database, easy to test.
  */
@@ -29,7 +32,13 @@ export interface AwayPeriod {
   revoked?: boolean;
 }
 
-export type SkipReason = 'self' | 'away_no_stand_in' | 'stand_in_is_requester' | 'stand_in_not_authorized' | 'not_active';
+export type SkipReason =
+  | 'self'
+  | 'away_no_stand_in'
+  | 'stand_in_is_requester'
+  | 'stand_in_not_authorized'
+  | 'not_active'
+  | 'direct_reports_only';
 
 export interface RoutingInput {
   requesterId: string;
@@ -44,6 +53,8 @@ export interface RoutingInput {
   authorizedStandInIds: ReadonlySet<string>;
   /** People in the chain who are no longer with the company: their position is passed over. */
   inactiveIds?: ReadonlySet<string>;
+  /** Seats that approve only for their direct reports (the CEO / Founder / Owner). From further down they are passed over. */
+  directReportsOnlyIds?: ReadonlySet<string>;
 }
 
 export interface RoutingResult {
@@ -71,6 +82,11 @@ export function resolveApprover(input: RoutingInput): RoutingResult {
     const seatId = chain[i];
     if (input.inactiveIds?.has(seatId)) {
       skipped.push({ seatId, reason: 'not_active' });
+      continue;
+    }
+    // chain[0] is the requester's own manager. A direct-reports-only seat further up never approves for them.
+    if (i > 0 && input.directReportsOnlyIds?.has(seatId)) {
+      skipped.push({ seatId, reason: 'direct_reports_only' });
       continue;
     }
     const period = away.find((p) => p.managerId === seatId && isActiveOn(p, onDate));

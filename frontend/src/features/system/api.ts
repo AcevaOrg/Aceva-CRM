@@ -1,6 +1,7 @@
 /**
  * Module 12 service functions. Mock today; each JSDoc names the real endpoint (spec §7.3).
  */
+import type { ScoreWeightsVersionView } from "@aceva/contracts";
 import { currentTaxSlabs, setTaxSlabs } from "@/features/payroll/api";
 import type { TaxSlab } from "@/features/payroll/types";
 import { http, isLive } from "@/lib/api/http";
@@ -27,6 +28,20 @@ const backupTable = () => table<BackupStatus>("system.backup", () => [seedBackup
 const liveNotifications = () => isLive("m12");
 type NotificationWire = Omit<Notification, "body" | "link"> & { body: string | null; link: string | null };
 const fromWire = (n: NotificationWire): Notification => ({ ...n, body: n.body ?? undefined, link: n.link ?? undefined });
+
+/** Module 6 live: a score-weights version from the server as the Settings screen uses it (whole percents, unchanged). */
+const toWeightsVersion = (v: ScoreWeightsVersionView): WeightsVersion => ({
+  id: v.id,
+  kind: v.kind,
+  weights: v.weights,
+  effectiveFrom: v.effectiveFrom,
+  createdBy: v.createdBy,
+  note: v.note,
+  label: v.label,
+  versionNo: v.versionNo,
+  departmentId: v.departmentId,
+  departmentName: v.departmentName,
+});
 
 export const notificationsApi = {
   /** GET /notifications */
@@ -187,16 +202,27 @@ export const settingsApi = {
         .slice(0, 5);
     }, { delay: 100 }),
 
-  /** GET /settings/score-weights (all versions) */
-  weightVersions: () =>
-    mock(() => {
+  /**
+   * GET /settings/score-weights (all versions, newest first).
+   * Module 6 live: the server's versions as they are: WHOLE PERCENTS that add up to exactly 100, each with its label
+   * ("Standard v2"), who saved it (null = the starting version) and its note; a department's own set carries its departmentId.
+   */
+  weightVersions: (): Promise<WeightsVersion[]> => {
+    if (isLive("m6")) return http.get<ScoreWeightsVersionView[]>("/settings/score-weights").then((rows) => rows.map(toWeightsVersion));
+    return mock(() => {
       if (!getViewer().can("settings.view")) notFound("Settings");
       return [...weightsTable()].sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom));
-    }),
+    });
+  },
 
-  /** POST /settings/score-weights (creates a new version; old scorecards keep theirs) */
-  saveWeights: (kind: WeightsVersion["kind"], weights: Record<string, number>, reason: string) =>
-    mock(() => {
+  /**
+   * POST /settings/score-weights { kind, weights, reason } (creates a new version; old scorecards keep theirs).
+   * Module 6 live: only the Director (performance.weights); the server checks the whole percents add up to exactly 100,
+   * keeps every version (never edited) and records who saved it and why in the audit log.
+   */
+  saveWeights: (kind: WeightsVersion["kind"], weights: Record<string, number>, reason: string): Promise<WeightsVersion> => {
+    if (isLive("m6")) return http.post<ScoreWeightsVersionView>("/settings/score-weights", { kind, weights, reason: reason.trim() }).then(toWeightsVersion);
+    return mock(() => {
       const v = getViewer();
       if (!v.can("performance.weights")) throw new ApiError("forbidden", "Only the Director sets score weights.", 403);
       const total = Object.values(weights).reduce((a, b) => a + b, 0);
@@ -215,7 +241,8 @@ export const settingsApi = {
         reason,
       });
       return ver;
-    }),
+    });
+  },
 
   /** POST /settings/:section/test-alert etc. are added per section when the backend exists. */
 };

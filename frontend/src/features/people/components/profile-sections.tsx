@@ -18,7 +18,7 @@ import { DetailList, EmployeeSelect } from "@/components/shared/pickers";
 import { StatusBadge } from "@/components/shared/chips";
 import { EmptyState } from "@/components/shared/states";
 import { FileCard, Timeline } from "@/components/shared/timeline";
-import { REPORTS_TO_HINT, reportsToLevel } from "@/features/access/logic";
+import { REPORTS_TO_HINT } from "@/features/access/logic";
 import { useLookup } from "@/hooks/use-directory";
 import { LEVEL_LABEL } from "@/lib/auth/permissions";
 import { useCan, useViewer } from "@/lib/auth/viewer";
@@ -237,7 +237,7 @@ export function JobSection({ view }: { view: ProfileView }) {
           })}
         >
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Level" htmlFor="j-level" hint={canMoveLevel ? "The role follows the level and the department." : isLive("m3") ? "Only the Owner or CEO change levels." : "Only the Director changes levels."}>
+            <Field label="Level" htmlFor="j-level" hint={canMoveLevel ? "The role follows the level and the department." : "Only the Director changes levels."}>
               {canMoveLevel ? (
                 <NativeSelect id="j-level" {...form.register("level", { valueAsNumber: true, onChange: () => form.setValue("reportsTo", "", { shouldDirty: true }) })}>
                   {levelOptions.map((l) => <option key={l} value={l}>Level {l} · {LEVEL_LABEL[l]}</option>)}
@@ -248,13 +248,14 @@ export function JobSection({ view }: { view: ProfileView }) {
                 </div>
               )}
             </Field>
-            <Field label="Reports to" htmlFor="j-boss" hint={canMoveLevel ? REPORTS_TO_HINT[level] : isLive("m3") ? "Only the Owner or CEO change reporting lines." : "Only the Director changes reporting lines."}>
+            <Field label="Reports to" htmlFor="j-boss" hint={canMoveLevel ? REPORTS_TO_HINT[level] : "Only the Director changes reporting lines."}>
               {canMoveLevel ? (
                 <EmployeeSelect
                   id="j-boss"
                   value={form.watch("reportsTo")}
                   onChange={(v) => form.setValue("reportsTo", v, { shouldDirty: true })}
-                  filter={(x) => x.level === reportsToLevel(level) && x.empId !== e.empId}
+                  // Anyone still here at a strictly higher level (the server's rule), for example the Director for a developer.
+                  filter={(x) => x.empId !== e.empId && x.status !== "left" && x.level < level}
                 />
               ) : (
                 <div className="rounded-lg border border-border bg-muted/40 px-3 py-2">

@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import type { AccountView, ApprovalLimitView, BankAccountView, ExchangeRateView, FinanceSettingsView, PartyView, ProjectView } from '@aceva/contracts';
+import type { AccountView, BankAccountView, ExchangeRateView, FinanceSettingsView, PartyView, FinanceProjectView } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
 import { CryptoService } from '../auth/crypto.service';
 import { StepUpService } from '../auth/step-up.service';
-import { isUniqueViolation, withDbRules } from '../common/db-rules';
+import { isUniqueViolation } from '../common/db-rules';
 import { dec, money, ZERO } from '../common/money';
 import { dayOf, dbDate } from '../common/pakistan-time';
 import type { Currency, LedgerAccount, Party, Prisma } from '../generated/prisma/client';
@@ -65,8 +65,8 @@ export class MasterDataService {
     client: RequestInfo,
     bank?: { bankName: string; accountNumber: string },
   ): Promise<AccountView> {
-    // Plan s.13: all share capital and loan entries need the Owner. Equity accounts carry the flag unless the Owner decides
-    // otherwise; only the Owner may create a capital-group account without it (security review, finding 1).
+    // Share capital and loan entries are reported to the Owner (decision D26: the Director approves them, the Owner only views).
+    // Equity accounts always carry the flag; nobody creates a capital-group account without it.
     const parent = dto.parentId ? await this.prisma.ledgerAccount.findUnique({ where: { id: dto.parentId }, include: { _count: { select: { lines: true } } } }) : null;
     // A sub-account of an account that needs Owner approval (for example under 2500 Loans) needs it too; it cannot be
     // switched off (decision D22; the database enforces the same rule).
@@ -74,8 +74,8 @@ export class MasterDataService {
       throw conflict('owner_approval_inherited', `Account ${parent.code} needs Owner approval, so its sub-accounts need it too`);
     }
     const ownerFlag = parent?.requiresOwnerApproval ? true : (dto.requiresOwnerApproval ?? dto.group === 'equity');
-    if (!ownerFlag && dto.group === 'equity' && actor.levelNumber !== 1) {
-      throw forbidden('owner_only', 'Only the Owner may create an equity account that does not need Owner approval');
+    if (!ownerFlag && dto.group === 'equity') {
+      throw forbidden('owner_flag_locked', 'An equity account is always reported to the Owner; the flag cannot be left off');
     }
     if (dto.parentId) {
       if (!parent || parent.archivedAt) throw badRequest('unknown_account', 'The parent account does not exist');
@@ -133,9 +133,8 @@ export class MasterDataService {
       changed.archived = dto.archived;
     }
     if (dto.requiresOwnerApproval !== undefined && dto.requiresOwnerApproval !== a.requiresOwnerApproval) {
-      // Removing the "Owner approves" rule loosens an approval rule: it is never done here, only by the Owner through
-      // PUT /accounts/:id/owner-approval with "confirm again" (decision D22). Adding it is allowed.
-      if (!dto.requiresOwnerApproval) throw forbidden('owner_only', 'Only the Owner removes the Owner-approval rule (Owner approval settings)');
+      // The "reported to the Owner" flag can be added, never removed: the Owner reads the capital and loan entries.
+      if (!dto.requiresOwnerApproval) throw forbidden('owner_flag_locked', 'The report-to-Owner flag of an account can only be added, never removed');
       data.requiresOwnerApproval = dto.requiresOwnerApproval;
       changed.requiresOwnerApproval = dto.requiresOwnerApproval;
     }
@@ -148,43 +147,6 @@ export class MasterDataService {
       await this.audit.record({ actorId: actor.id, action: 'finance.account.updated', targetType: 'ledger_account', targetId: a.code, reason: dto.reason, details: changed as Prisma.InputJsonValue, ...client }, tx);
       return row;
     });
-    const children = await this.prisma.ledgerAccount.count({ where: { parentId: id, archivedAt: null } });
-    return this.accountView(updated, children > 0, (await this.ledger.balances({}, [id])).get(id));
-  }
-
-  /**
-   * The Owner adds or removes the "Owner approves" rule on an account (decision D22), after confirming again. Removing it
-   * is refused for a sub-account whose parent needs Owner approval (inherited). The database accepts the removal only
-   * with this audit row, made by an Owner, in the same transaction.
-   */
-  async setOwnerApproval(actor: Actor, id: string, dto: { required: boolean; reason: string }, sessionId: string | null, client: RequestInfo): Promise<AccountView> {
-    if (actor.levelNumber !== 1) throw forbidden('owner_only', 'Only the Owner changes the Owner-approval rule');
-    const a = await this.prisma.ledgerAccount.findUnique({ where: { id }, include: { parent: { select: { code: true, requiresOwnerApproval: true } } } });
-    if (!a) throw notFound('Account');
-    if (!dto.required && a.parent?.requiresOwnerApproval) {
-      throw conflict('owner_approval_inherited', `Account ${a.parent.code} needs Owner approval, so ${a.code} needs it too`);
-    }
-    await this.stepUp.require(actor, sessionId, 'finance.account.owner_approval', { type: 'ledger_account', id: a.code }, client);
-    if (dto.required !== a.requiresOwnerApproval) {
-      await withDbRules(() =>
-        this.prisma.$transaction(async (tx) => {
-          await this.audit.record(
-            {
-              actorId: actor.id,
-              action: dto.required ? 'finance.account.owner_approval_added' : 'finance.account.owner_approval_removed',
-              targetType: 'ledger_account',
-              targetId: a.code,
-              reason: dto.reason,
-              details: { requiresOwnerApproval: dto.required },
-              ...client,
-            },
-            tx,
-          );
-          await tx.ledgerAccount.update({ where: { id }, data: { requiresOwnerApproval: dto.required, updatedBy: actor.id } });
-        }),
-      );
-    }
-    const updated = await this.prisma.ledgerAccount.findUniqueOrThrow({ where: { id } });
     const children = await this.prisma.ledgerAccount.count({ where: { parentId: id, archivedAt: null } });
     return this.accountView(updated, children > 0, (await this.ledger.balances({}, [id])).get(id));
   }
@@ -312,12 +274,12 @@ export class MasterDataService {
 
   // ------------------------------------------------------------------------------------------------- projects
 
-  async projects(includeArchived = false): Promise<ProjectView[]> {
+  async projects(includeArchived = false): Promise<FinanceProjectView[]> {
     const rows = await this.prisma.financeProject.findMany({ where: includeArchived ? {} : { archivedAt: null }, orderBy: { code: 'asc' } });
     return rows.map((p) => ({ id: p.id, code: p.code, name: p.name, active: !p.archivedAt }));
   }
 
-  async createProject(actor: Actor, dto: { code: string; name: string }, client: RequestInfo): Promise<ProjectView> {
+  async createProject(actor: Actor, dto: { code: string; name: string }, client: RequestInfo): Promise<FinanceProjectView> {
     try {
       const p = await this.prisma.$transaction(async (tx) => {
         const row = await tx.financeProject.create({ data: { code: dto.code.toUpperCase(), name: dto.name.trim(), createdBy: actor.id, updatedBy: actor.id } });
@@ -331,7 +293,7 @@ export class MasterDataService {
     }
   }
 
-  async updateProject(actor: Actor, id: string, dto: { name?: string; archived?: boolean }, client: RequestInfo): Promise<ProjectView> {
+  async updateProject(actor: Actor, id: string, dto: { name?: string; archived?: boolean }, client: RequestInfo): Promise<FinanceProjectView> {
     const existing = await this.prisma.financeProject.findUnique({ where: { id } });
     if (!existing) throw notFound('Project');
     const p = await this.prisma.$transaction(async (tx) => {
@@ -373,65 +335,24 @@ export class MasterDataService {
 
   // ------------------------------------------------------------------------------------------------- settings (temporary home until Module 12)
 
-  async approvalLimits(): Promise<ApprovalLimitView[]> {
-    const rows = await this.prisma.approvalLimit.findMany({ orderBy: { approverLevel: 'desc' } });
-    return rows.map((r) => ({ approverLevel: r.approverLevel, maxAmount: r.maxAmount === null ? null : money(r.maxAmount), label: r.label }));
-  }
-
-  /**
-   * Replaces the tiers. Rules: one row per level; exactly one tier without a limit, and it is the most senior level; a more
-   * senior level always has a higher limit. Entries already waiting keep the tier stored when they were submitted.
-   */
-  async setApprovalLimits(
-    actor: Actor,
-    dto: { limits: Array<{ approverLevel: number; maxAmount: string | null; label: string }>; reason: string },
-    sessionId: string | null,
-    client: RequestInfo,
-  ): Promise<ApprovalLimitView[]> {
-    const limits = [...dto.limits].sort((a, b) => b.approverLevel - a.approverLevel);
-    if (new Set(limits.map((l) => l.approverLevel)).size !== limits.length) throw badRequest('invalid_limits', 'One tier per level');
-    const unlimited = limits.filter((l) => l.maxAmount === null);
-    if (unlimited.length !== 1 || unlimited[0] !== limits[limits.length - 1]) throw badRequest('invalid_limits', 'Exactly one tier has no upper limit, and it is the most senior level');
-    // Plan s.13: the Owner approves above the highest limit below the Owner (since D25 the Director's). The unlimited tier is always level 1, so nobody below the Owner can
-    // be given unlimited approval (security review, finding 2).
-    if (unlimited[0].approverLevel !== 1) throw badRequest('invalid_limits', 'The tier without an upper limit is the Owner (level 1)');
-    for (let i = 1; i < limits.length - 1; i++) {
-      if (!dec(limits[i].maxAmount!).gt(dec(limits[i - 1].maxAmount!))) throw badRequest('invalid_limits', 'A more senior level must have a higher limit');
-    }
-    // Decision D22: only the Owner changes approval limits (also by permission: finance.authority_manage).
-    if (actor.levelNumber !== 1) throw forbidden('owner_only', 'Only the Owner changes approval limits');
-    await this.stepUp.require(actor, sessionId, 'finance.approval_limits.change', { type: 'settings', id: 'approval_limits' }, client);
-    const before = await this.approvalLimits();
-    await this.prisma.$transaction(async (tx) => {
-      await tx.approvalLimit.deleteMany({ where: { approverLevel: { notIn: limits.map((l) => l.approverLevel) } } });
-      for (const l of limits) {
-        const data = { maxAmount: l.maxAmount === null ? null : dec(l.maxAmount), label: l.label.trim(), updatedBy: actor.id };
-        await tx.approvalLimit.upsert({ where: { approverLevel: l.approverLevel }, create: { approverLevel: l.approverLevel, ...data, createdBy: actor.id }, update: data });
-      }
-      await this.audit.record({ actorId: actor.id, action: 'finance.approval_limits.changed', targetType: 'settings', targetId: 'approval_limits', reason: dto.reason, details: { before, after: limits } as unknown as Prisma.InputJsonValue, ...client }, tx);
-    });
-    return this.approvalLimits();
-  }
-
   async financeSettings(): Promise<FinanceSettingsView> {
     const s = await this.prisma.financeSetting.findUnique({ where: { id: 1 } });
     if (!s) throw notFound('Finance settings');
-    return { stepUpAbove: money(s.stepUpAbove), financeYearStartMonth: s.financeYearStartMonth };
+    return { stepUpAbove: money(s.stepUpAbove), ownerNotifyAbove: money(s.ownerNotifyAbove), financeYearStartMonth: s.financeYearStartMonth };
   }
 
-  async setFinanceSettings(actor: Actor, dto: { stepUpAbove: string; financeYearStartMonth: number; reason: string }, sessionId: string | null, client: RequestInfo): Promise<FinanceSettingsView> {
-    // Decision D22: only the Owner changes finance-wide security settings (also by permission: finance.authority_manage).
-    if (actor.levelNumber !== 1) throw forbidden('owner_only', 'Only the Owner changes finance security settings');
+  async setFinanceSettings(actor: Actor, dto: { stepUpAbove: string; ownerNotifyAbove: string; financeYearStartMonth: number; reason: string }, sessionId: string | null, client: RequestInfo): Promise<FinanceSettingsView> {
+    // Decision D26: the Director changes finance-wide settings (permission finance.authority_manage), with "confirm again" and a reason. The Owner only views.
     await this.stepUp.require(actor, sessionId, 'finance.settings.change', { type: 'settings', id: 'finance' }, client);
     const before = await this.financeSettings();
     await this.prisma.$transaction(async (tx) => {
       await tx.financeSetting.upsert({
         where: { id: 1 },
-        create: { id: 1, stepUpAbove: dec(dto.stepUpAbove), financeYearStartMonth: dto.financeYearStartMonth, updatedBy: actor.id },
-        update: { stepUpAbove: dec(dto.stepUpAbove), financeYearStartMonth: dto.financeYearStartMonth, updatedBy: actor.id },
+        create: { id: 1, stepUpAbove: dec(dto.stepUpAbove), ownerNotifyAbove: dec(dto.ownerNotifyAbove), financeYearStartMonth: dto.financeYearStartMonth, updatedBy: actor.id },
+        update: { stepUpAbove: dec(dto.stepUpAbove), ownerNotifyAbove: dec(dto.ownerNotifyAbove), financeYearStartMonth: dto.financeYearStartMonth, updatedBy: actor.id },
       });
       await this.audit.record(
-        { actorId: actor.id, action: 'finance.settings.changed', targetType: 'settings', targetId: 'finance', reason: dto.reason, details: { before: { ...before }, after: { stepUpAbove: money(dto.stepUpAbove), financeYearStartMonth: dto.financeYearStartMonth } }, ...client },
+        { actorId: actor.id, action: 'finance.settings.changed', targetType: 'settings', targetId: 'finance', reason: dto.reason, details: { before: { ...before }, after: { stepUpAbove: money(dto.stepUpAbove), ownerNotifyAbove: money(dto.ownerNotifyAbove), financeYearStartMonth: dto.financeYearStartMonth } }, ...client },
         tx,
       );
     });

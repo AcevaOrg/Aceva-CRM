@@ -83,7 +83,7 @@ export class NotificationEventsConsumer implements OnModuleInit {
       }
       case 'payroll.run.ready': {
         const p = event.payload;
-        for (const approver of await this.holders(tx, 'payroll.approve')) {
+        for (const approver of await this.payrollApprovers(tx, event.actor)) {
           await notify(approver, {
             type: 'payroll_ready',
             title: `${p.runNumber} payroll is ready for your approval`,
@@ -134,6 +134,22 @@ export class NotificationEventsConsumer implements OnModuleInit {
         OR EXISTS (SELECT 1 FROM employee_duties ed JOIN duty_permissions dp ON dp.duty_id = ed.duty_id JOIN permissions p ON p.id = dp.permission_id
                    WHERE ed.employee_id = e.id AND ed.ended_at IS NULL AND p.key = ${permission}))
       ORDER BY "empId"`;
+  }
+
+  /**
+   * Who is asked to approve a payroll run that `preparerEmpId` prepared: the holders of payroll.approve, except that the
+   * Owner (level 1) decides only a run the Director (level 2) prepared, as the payroll service enforces (decision D26,
+   * payroll-runs.service.ts). The preparer is never told: notify() skips the person who caused the event.
+   */
+  private async payrollApprovers(tx: Tx, preparerEmpId: string): Promise<Person[]> {
+    const holders = await this.holders(tx, 'payroll.approve');
+    const people = await tx.employee.findMany({
+      where: { empId: { in: [preparerEmpId, ...holders.map((h) => h.empId)] } },
+      select: { empId: true, level: { select: { number: true } } },
+    });
+    const level = new Map(people.map((e) => [e.empId, e.level.number]));
+    const preparedByDirector = level.get(preparerEmpId) === 2;
+    return holders.filter((h) => level.get(h.empId) !== 1 || preparedByDirector);
   }
 
   private withRoles(tx: Tx, roles: string[]): Promise<Person[]> {

@@ -4,7 +4,6 @@ import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { z } from 'zod';
 import {
-  approvalLimitsSchema,
   autoMatchSchema,
   bankDetailsSchema,
   createAccountSchema,
@@ -32,7 +31,6 @@ import {
   statementEntrySchema,
   statementQuerySchema,
   updateAccountSchema,
-  ownerApprovalSchema,
   updatePartySchema,
   updateProjectSchema,
 } from '@aceva/contracts';
@@ -49,7 +47,6 @@ import { MAX_STATEMENT_BYTES, ReconciliationService } from './reconciliation.ser
 
 class CreateAccountDto extends createZodDto(createAccountSchema) {}
 class UpdateAccountDto extends createZodDto(updateAccountSchema) {}
-class OwnerApprovalDto extends createZodDto(ownerApprovalSchema) {}
 class CreateBankAccountDto extends createZodDto(createBankAccountSchema) {}
 class BankDetailsDto extends createZodDto(bankDetailsSchema) {}
 class PartyListQueryDto extends createZodDto(partyListQuerySchema) {}
@@ -75,7 +72,6 @@ class RevaluationDto extends createZodDto(revaluationSchema) {}
 class RevaluationQueryDto extends createZodDto(revaluationSchema) {}
 class ReasonDto extends createZodDto(rejectSchema) {}
 class ReopenDto extends createZodDto(reopenSchema) {}
-class ApprovalLimitsDto extends createZodDto(approvalLimitsSchema) {}
 class FinanceSettingsDto extends createZodDto(financeSettingsSchema) {}
 class DayQueryDto extends createZodDto(ledgerDayQuerySchema) {}
 class RangeQueryDto extends createZodDto(reportRangeQuerySchema) {}
@@ -111,19 +107,6 @@ export class AccountsController {
   @ApiOperation({ summary: 'Rename, archive or flag an account (reason required, logged)' })
   update(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: UpdateAccountDto, @ClientInfo() client: RequestInfo) {
     return this.data.updateAccount(actor, id, body, client);
-  }
-
-  @Put(':id/owner-approval')
-  @RequirePermission(VIEW, 'finance.authority_manage')
-  @ApiOperation({ summary: 'Add or remove the "Owner approves" rule on an account. Owner only, reason and "confirm again" required, logged' })
-  ownerApproval(
-    @CurrentActor() actor: Actor,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() body: OwnerApprovalDto,
-    @CurrentSessionId() sessionId: string | null,
-    @ClientInfo() client: RequestInfo,
-  ) {
-    return this.data.setOwnerApproval(actor, id, body, sessionId, client);
   }
 }
 
@@ -200,7 +183,7 @@ export class PartiesController {
 
 @ApiTags('finance')
 @FinanceScreen()
-@Controller('projects')
+@Controller('finance-projects')
 export class ProjectsController {
   constructor(private readonly data: MasterDataService) {}
 
@@ -518,25 +501,12 @@ export class PeriodsController {
   }
 }
 
-/** Approval limits and finance settings: a temporary home until Module 12. */
+/** Finance settings (the Director changes them, D26): a temporary home until Module 12. */
 @ApiTags('finance')
 @FinanceScreen()
 @Controller('settings')
 export class FinanceSettingsController {
   constructor(private readonly data: MasterDataService) {}
-
-  @Get('approval-limits')
-  @RequirePermission(VIEW)
-  limits() {
-    return this.data.approvalLimits();
-  }
-
-  @Put('approval-limits')
-  @RequirePermission(VIEW, 'finance.authority_manage')
-  @ApiOperation({ summary: 'Replace the approval tiers. Owner only, reason and "confirm again" required, logged; level 1 is the unlimited tier' })
-  setLimits(@CurrentActor() actor: Actor, @Body() body: ApprovalLimitsDto, @CurrentSessionId() sessionId: string | null, @ClientInfo() client: RequestInfo) {
-    return this.data.setApprovalLimits(actor, body, sessionId, client);
-  }
 
   @Get('finance')
   @RequirePermission(VIEW)
@@ -546,7 +516,7 @@ export class FinanceSettingsController {
 
   @Put('finance')
   @RequirePermission(VIEW, 'finance.authority_manage')
-  @ApiOperation({ summary: 'Change the "confirm again" threshold and the finance year start. Owner only, reason and "confirm again" required, logged' })
+  @ApiOperation({ summary: 'Change the "confirm again" amount, the report-to-Owner amount and the finance year start. The Director only, reason and "confirm again" required, logged' })
   setSettings(@CurrentActor() actor: Actor, @Body() body: FinanceSettingsDto, @CurrentSessionId() sessionId: string | null, @ClientInfo() client: RequestInfo) {
     return this.data.setFinanceSettings(actor, body, sessionId, client);
   }

@@ -127,12 +127,13 @@ export class PeopleService {
   }
 
   /**
-   * People who still report to someone who has left. Nothing moves them automatically: the Owner or CEO give each a
-   * new manager (the Module 1 reporting-line change). Visible to Owner, CEO, Director and HR.
+   * People who still report to someone who has left. Nothing moves them automatically: the Director gives each a
+   * new manager (the Module 1 reporting-line change). Visible to the Director, HR and the CEO / Founder / Owner (view only).
    */
   async unresolvedReports(actor: Actor): Promise<UnresolvedReport[]> {
     const access = await this.permissions.getEffectiveAccess(actor.id);
-    if (!access.permissions.has('org.manage') && !access.permissions.has('people.manage')) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
+    const allowed = ['org.manage', 'people.manage', 'people.view_personal'].some((p) => access.permissions.has(p));
+    if (!allowed) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You do not have access to this' });
     const rows = await this.prisma.employee.findMany({
       where: { status: { not: 'left' }, reportsTo: { status: 'left' } },
       orderBy: { empId: 'asc' },
@@ -308,8 +309,8 @@ export class PeopleService {
   }
 
   /**
-   * Job section. Joining date, type and weekly capacity: Director or HR. Level and reporting line: ONLY the Owner or CEO,
-   * through the same validated rules as the org chart. "Left" is set only by the leaving workflow.
+   * Job section. Joining date, type and weekly capacity: Director or HR. Level and reporting line: ONLY the Director
+   * (org.manage), through the same validated rules as the org chart. "Left" is set only by the leaving workflow.
    */
   async updateJob(actor: Actor, empId: string, dto: UpdateJobRequest, client: RequestInfo): Promise<ProfileResponse> {
     const target = await this.requireTarget(empId);
@@ -326,10 +327,10 @@ export class PeopleService {
 
     if (wantsFields && !access.edit.job) return this.deny(actor, 'profile_edit_not_allowed', empId, client);
     if (wantsStructure && !(await this.permissions.can(actor.id, 'org.manage'))) {
-      return this.deny(actor, 'only_owner_or_ceo_change_levels_and_lines', empId, client);
+      return this.deny(actor, 'only_director_changes_levels_and_lines', empId, client);
     }
 
-    // Levels and reporting lines: the Module 1 rules (Owner or CEO, validated, audited).
+    // Levels and reporting lines: the Module 1 rules (the Director, validated, audited).
     if (dto.level !== undefined && dto.level !== target.level.number) await this.org.changeLevel(actor, empId, { level: dto.level, reason: dto.reason }, client);
     if (dto.reportsToEmpId !== undefined && dto.reportsToEmpId !== target.reportsTo?.empId) {
       await this.org.changeReportingLine(actor, empId, { reportsToEmpId: dto.reportsToEmpId, reason: dto.reason }, client);

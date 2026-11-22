@@ -16,6 +16,7 @@ import { createFixtureStaff } from './people';
 import { createTestPrisma } from './prisma';
 import { testDatabaseUrl } from './env';
 import { FakeClock, MemoryMailer } from './fakes';
+import { switchOffBackgroundWork } from './quiet-env';
 
 export { TEST_PASSWORD } from './reset-db';
 import { TEST_PASSWORD } from './reset-db';
@@ -36,11 +37,11 @@ export interface TestApp {
   storageRoot: string;
   /** A request made "as" a demo person with a real session. Call signInAll() first. */
   as: (empId: string | null) => Client;
-  /** Test-only CEO and HR officer (not in the demo seed). Filled by signInAll(). */
-  fixtures: { CEO: string; HR: string };
-  /** Creates the test-only CEO and HR officer (and logins for them) without signing anyone in. */
+  /** The test-only HR officer (not in the demo seed). Filled by signInAll() or ensureFixtures(). */
+  fixtures: { HR: string };
+  /** Creates the test-only HR officer (and a login for them) without signing anyone in. */
   ensureFixtures: () => Promise<void>;
-  /** Creates the test-only CEO and HR officer, then logs every demo person and them in for real (password, and the authenticator code where 2FA is required). */
+  /** Creates the test-only HR officer, then logs every demo person and them in for real (password, and the authenticator code where 2FA is required). */
   signInAll: () => Promise<void>;
   /** A client with a real session: logs in with Emp-ID and password (and the authenticator code when needed). */
   signIn: (empId: string, options?: { password?: string; rememberMe?: boolean; ip?: string; userAgent?: string }) => Promise<SignedIn>;
@@ -87,6 +88,12 @@ export async function createTestApp(
   process.env.REDIS_KEY_PREFIX = process.env.TEST_REDIS_PREFIX ?? 'aceva:test:';
   process.env.FILE_STORAGE_ROOT = mkdtempSync(join(tmpdir(), 'aceva-private-'));
   process.env.TRUST_PROXY = '1'; // tests choose the client address with X-Forwarded-For
+  // Module 4: tests deliver outbox events and build daily summaries themselves (OutboxDispatcher.tick(),
+  // ActivitySummaryService.buildDay()), so nothing runs in the background while a test looks at the tables.
+  switchOffBackgroundWork();
+  // The local city list for tests (documentation address ranges, never used by freshIp()): 192.0.2.x is "Karachi",
+  // 198.51.100.x is "Lahore". No outside GeoIP service is ever called.
+  process.env.GEOIP_RANGES = '192.0.2.0/24=Karachi; 198.51.100.0/24=Lahore';
 
   const clock = new FakeClock();
   const mailer = new MemoryMailer();
@@ -161,7 +168,7 @@ export async function createTestApp(
   };
 
   const personas = new Map<string, SignedIn>();
-  const fixtures = { CEO: '', HR: '' };
+  const fixtures = { HR: '' };
   const ensureFixtures = async () => {
     const prisma = createTestPrisma();
     try {
@@ -173,7 +180,7 @@ export async function createTestApp(
   };
   const signInAll = async () => {
     await ensureFixtures();
-    const everyone = [...DEMO_EMPLOYEES.map((p) => p.empId), fixtures.CEO, fixtures.HR];
+    const everyone = [...DEMO_EMPLOYEES.map((p) => p.empId), fixtures.HR];
     for (const empId of everyone) personas.set(empId, await signIn(empId));
   };
 

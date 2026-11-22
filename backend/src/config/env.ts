@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseIpRanges } from '../activity/rules/ip-ranges';
 
 const bool = z
   .enum(['true', 'false'])
@@ -63,9 +64,26 @@ export const envSchema = z.object({
   ARGON2_TIME_COST: z.coerce.number().int().min(1).default(3),
   ARGON2_PARALLELISM: z.coerce.number().int().min(1).default(1),
 
+  /**
+   * Module 4: approximate city from the internet address, from a LOCAL list of address ranges (no outside GeoIP service
+   * is ever called). Example: "39.45.0.0/16=Karachi; 182.185.0.0/16=Lahore". Empty = every city is "unknown".
+   */
+  GEOIP_RANGES: z.string().default(''),
+  /**
+   * How often the outbox dispatcher looks for new events, in milliseconds. 0 switches automatic dispatching off (the
+   * automated tests do this and call OutboxDispatcher.tick() themselves).
+   */
+  OUTBOX_DISPATCH_INTERVAL_MS: z.coerce.number().int().min(0).max(600_000).default(5000),
+  /** Module 4: build the nightly activity summaries at 00:15 Pakistan time ("off" in the automated tests). */
+  ACTIVITY_SUMMARY_SCHEDULE: z.enum(['on', 'off']).default('on'),
 }).superRefine((env, ctx) => {
   if (env.NODE_ENV === 'production' && env.COOKIE_SECURE === false) {
     ctx.addIssue({ code: 'custom', path: ['COOKIE_SECURE'], message: 'The session cookie must be Secure in production' });
+  }
+  try {
+    parseIpRanges(env.GEOIP_RANGES);
+  } catch (error) {
+    ctx.addIssue({ code: 'custom', path: ['GEOIP_RANGES'], message: (error as Error).message });
   }
 });
 

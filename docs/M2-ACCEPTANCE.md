@@ -1,5 +1,11 @@
 # Module 2 acceptance checklist (plan section 6)
 
+> **Updated for the final company structure** (branch `cycle1-structure-fix`). Level 1 CEO / Founder / Owner (one person,
+> view only), Level 2 Director (the only approver and the org administrator), Level 3 CTO, Level 4 Sales and Finance,
+> Level 5 Developer / SQA. Everything this checklist used to give "Owner/CEO" now belongs to the Director; the separate
+> CEO role is removed. The rows below describe the new rules. The tests named in them (`m2-reset-2fa`, `m2-login`, `m2-sessions`) were updated to the new
+> rules, but the database and browser tests have not been run again yet: GitHub CI runs them.
+
 Statuses: **Done and tested** = a test I ran passes. **Partial** = built, with a stated gap. **Open** = not done.
 Backend tests are in `backend/test/m2-*.test.ts` and `backend/src/auth/primitives.test.ts`; browser tests are in
 `e2e/m2-live.spec.ts`. The tests need PostgreSQL and Redis running; the real-email test needs Mailpit.
@@ -45,5 +51,5 @@ Backend tests are in `backend/test/m2-*.test.ts` and `backend/src/auth/primitive
 - **Screens for newly hired people** work once Module 3 (profiles) is live; until then the built-in demo roster supplies names. The
   first-login wizard already reads the name from the server.
 - **GitHub Actions** has still never run on GitHub; Redis was added to its definition but that is untested.
-| K | Lost authenticator phone: Owner/CEO reset anyone below, Director those below them, HR duty those in its scope; never self, same level or upward; reason required; audited; sessions revoked; old secret invalidated; fresh enrolment at next login | Done and tested (added with Module 3) | `m2-reset-2fa` (9 tests), `docs/API.md` |
+| K | Lost authenticator phone: the Director resets those below them, HR duty those of lower rank, the CEO / Founder / Owner only his direct report (the Director); never self, same level or upward; reason required; audited; sessions revoked; old secret invalidated; fresh enrolment at next login | Done and tested (added with Module 3) | `m2-reset-2fa` (9 tests), `docs/API.md` |
 | L | Confirm again for risky actions (plan section 6): password and 2FA code checked on the server, valid 5 minutes per session | Done and tested (added with Module 3; enforced for bank details, salary and pay edits) | `m3-step-up` (9 tests), e2e |

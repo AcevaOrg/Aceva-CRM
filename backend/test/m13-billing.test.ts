@@ -71,7 +71,7 @@ async function billingSettings(value: Record<string, unknown>) {
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = OWNER; // final company structure (main): the CEO, Founder and Owner are one person, ACV-0001
   prisma = createTestPrisma();
   runner = t.app.get(OutboxConsumerRunner);
   outbox = t.app.get(OutboxService);

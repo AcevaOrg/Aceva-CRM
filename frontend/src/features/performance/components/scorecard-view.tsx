@@ -5,13 +5,13 @@ import { Bot, CheckCheck, Eye, Flag, Info, Lock, MessageSquareQuote, Send, Undo2
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/misc";
 import { PageHeader } from "@/components/layout/page-header";
 import { DataTable } from "@/components/shared/data-table";
 import { StatusBadge } from "@/components/shared/chips";
 import { EmpChip } from "@/components/shared/emp-chip";
-import { ScoreDial } from "@/components/shared/metrics";
 import { Mono } from "@/components/shared/money";
 import { StarRating } from "@/components/shared/pickers";
 import { NotFoundBlock } from "@/components/shared/can";
@@ -21,10 +21,10 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatDateTime, formatMonthKey } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { useAddRemark, useReleaseScorecard, useScorecard } from "../hooks";
-import { SMALL_SAMPLE } from "../logic";
+import { REMARK_MIN_LENGTH, SMALL_SAMPLE } from "../logic";
 import type { ScorecardTask } from "../types";
-import { SalesNumbers } from "./my-performance";
-import { BandBadge, FormulaLine, MetricTiles, SCORECARD_STATUS } from "./parts";
+import { NoSalesFigures, SalesNumbers } from "./my-performance";
+import { BandBadge, FormulaLine, MetricTiles, SCORECARD_STATUS, ScoreDialOrNone, UnmeasuredNotice } from "./parts";
 import { AcknowledgeDialog, RaiseDisputeDialog } from "./perf-dialogs";
 
 export function ScorecardView({ id }: { id: string }) {
@@ -48,23 +48,36 @@ export function ScorecardView({ id }: { id: string }) {
     return <div className="pt-8">{status === 404 ? <NotFoundBlock /> : <ErrorState error={q.error} onRetry={() => q.refetch()} />}</div>;
   }
 
-  const { scorecard: sc, weights, disputes } = q.data;
+  const { scorecard: sc, weights, disputes, comments } = q.data;
   const me = viewer?.employee.empId;
   const mine = sc.empId === me;
-  // Only the person's manager releases or adds a remark; anyone above them (the CEO / Founder / Owner included) only views.
+  // Only the reviewer (the person's manager, or the next level up who reviews work) releases or adds a remark; anyone
+  // else above them (the CEO / Founder / Owner included) only views.
   const isReviewer = !!sc.reviewerEmpId && sc.reviewerEmpId === me && !!viewer?.can("task.review");
   const st = SCORECARD_STATUS(sc.status);
   const canDispute = mine && !!sc.reviewerEmpId && sc.status !== "draft" && sc.kind === "standard";
   const viewOnly = !mine && !isReviewer;
   const openDisputeTasks = new Set(disputes.filter((d) => d.status === "open").map((d) => d.taskNumber));
+  // What was typed now. The server refuses a remark under REMARK_MIN_LENGTH characters, so the screen blocks it first:
+  // empty is fine for a release (no remark), 1 or 2 characters is not.
+  const typed = (remark ?? "").trim();
+  const remarkReady = typed.length >= REMARK_MIN_LENGTH;
+  const remarkTooShort = typed.length > 0 && !remarkReady;
 
   const timeline: TimelineItem[] = [
     { id: "c", icon: <Bot />, title: "Draft created by the system", meta: "From approved task ratings and attendance", time: formatDateTime(sc.createdAt) },
-    ...(sc.remarkAt ? [{ id: "r", icon: <MessageSquareQuote />, title: "Reviewer remark added", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.remarkAt) }] : []),
+    // Live: every remark the reviewer added (the history is kept); the first mock only keeps the newest one.
+    ...(comments
+      ? comments
+          .filter((c) => c.kind === "reviewer_remark")
+          .map((c) => ({ id: `r-${c.id}`, icon: <MessageSquareQuote />, title: "Reviewer remark added", meta: <EmpChip empId={c.author} size="sm" showId={false} />, time: formatDateTime(c.at) }))
+      : sc.remarkAt
+        ? [{ id: "r", icon: <MessageSquareQuote />, title: "Reviewer remark added", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.remarkAt) }]
+        : []),
     sc.releasedAt
-      ? sc.reviewerEmpId
-        ? { id: "rel", icon: <Send />, color: "var(--info)", title: "Released to the employee", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.releasedAt) }
-        : { id: "rel", icon: <Send />, color: "var(--info)", title: "Released automatically", meta: "No reviewer above the Director; the CEO / Founder / Owner views it", time: formatDateTime(sc.releasedAt) }
+      ? (sc.releasedBy ?? sc.reviewerEmpId)
+        ? { id: "rel", icon: <Send />, color: "var(--info)", title: "Released to the employee", meta: <EmpChip empId={sc.releasedBy ?? sc.reviewerEmpId} size="sm" showId={false} />, time: formatDateTime(sc.releasedAt) }
+        : { id: "rel", icon: <Send />, color: "var(--info)", title: "Released automatically", meta: "Nobody above reviews work; the CEO / Founder / Owner views it", time: formatDateTime(sc.releasedAt) }
       : { id: "rel", icon: <Send />, title: "Waiting for the reviewer to release", meta: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} />, muted: true },
     sc.acknowledgedAt
       ? { id: "ack", icon: <CheckCheck />, color: "var(--success)", title: "Acknowledged", meta: sc.employeeComment ? `“${sc.employeeComment}”` : undefined, time: formatDateTime(sc.acknowledgedAt) }
@@ -72,9 +85,11 @@ export function ScorecardView({ id }: { id: string }) {
   ];
 
   const saveRemark = async (andRelease: boolean) => {
-    const text = (remark ?? sc.reviewerRemark ?? "").trim();
+    // Only what was typed now: releasing without a new remark must not add the old remark to the history again.
+    if (remarkTooShort || (!andRelease && !remarkReady)) return;
+    const text = typed;
     try {
-      if (andRelease) await release.mutateAsync({ id: sc.id, remark: text || undefined });
+      if (andRelease) await release.mutateAsync({ id: sc.id, remark: remarkReady ? text : undefined });
       else await addRemark.mutateAsync({ id: sc.id, remark: text });
       toast.success(andRelease ? "Scorecard released" : "Remark saved", { description: andRelease ? "The employee was notified." : undefined });
       setRemark(null);
@@ -93,7 +108,7 @@ export function ScorecardView({ id }: { id: string }) {
             ? `Your monthly results. You can acknowledge${canDispute ? " and dispute a task rating" : ""}.`
             : isReviewer
               ? "Monthly results. As the reviewer you can add a remark and release it, but you can't change the numbers."
-              : "Monthly results. View only: the person's manager reviews and releases it."
+              : "Monthly results. View only: the reviewer releases it."
         }
         seal={mine ? "own" : "confidential"}
         meta={
@@ -107,7 +122,7 @@ export function ScorecardView({ id }: { id: string }) {
           <>
             {mine && sc.status === "released" && <Button onClick={() => setAck(true)}>Acknowledge</Button>}
             {isReviewer && sc.status === "draft" && (
-              <Button onClick={() => saveRemark(true)} loading={release.isPending}>
+              <Button onClick={() => saveRemark(true)} loading={release.isPending} disabled={remarkTooShort}>
                 <Send /> Release
               </Button>
             )}
@@ -119,11 +134,17 @@ export function ScorecardView({ id }: { id: string }) {
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
           <Card className="grid gap-5 p-5 md:grid-cols-[auto_1fr] md:items-center">
             <div className="grid justify-items-center gap-2">
-              <ScoreDial score={sc.score} size={140} showBand={false} />
+              <ScoreDialOrNone score={sc.score} size={140} showBand={false} />
               <BandBadge band={sc.band} />
             </div>
             <div className="grid gap-3">
               <FormulaLine kind={sc.kind} metrics={sc.metrics} weights={weights.weights} score={sc.score} />
+              <UnmeasuredNotice kind={sc.kind} unmeasured={sc.unmeasured} />
+              {!!sc.recomputeCount && (
+                <p className="flex items-start gap-2 text-[12.5px] text-muted-foreground">
+                  <Info className="mt-0.5 size-3.5 shrink-0" /> Recalculated {sc.recomputeCount === 1 ? "once" : `${sc.recomputeCount} times`} after a rating dispute was decided. Only a decided dispute can change the numbers.
+                </p>
+              )}
               {sc.smallSample && (
                 <p className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/10 px-3 py-2 text-[12.5px]">
                   <Info className="mt-0.5 size-4 shrink-0 text-info" /> Small sample: fewer than {SMALL_SAMPLE} tasks this month, so one task can move the score a lot.
@@ -149,10 +170,10 @@ export function ScorecardView({ id }: { id: string }) {
           </Card>
         </div>
 
-        <MetricTiles kind={sc.kind} metrics={sc.metrics} weights={weights.weights} />
+        <MetricTiles kind={sc.kind} metrics={sc.metrics} weights={weights.weights} unmeasured={sc.unmeasured} />
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-          {sc.kind === "sales" && sc.salesDetail ? (
+          {sc.kind === "sales" ? (
             <Card>
               <CardHeader>
                 <div>
@@ -160,9 +181,7 @@ export function ScorecardView({ id }: { id: string }) {
                   <p className="text-[13px] text-muted-foreground">From the daily sales reports. Self-reported counts count toward Activity only.</p>
                 </div>
               </CardHeader>
-              <CardContent>
-                <SalesNumbers d={sc.salesDetail} />
-              </CardContent>
+              <CardContent>{sc.salesDetail ? <SalesNumbers d={sc.salesDetail} /> : <NoSalesFigures />}</CardContent>
             </Card>
           ) : (
             <section className="grid gap-3">
@@ -190,12 +209,27 @@ export function ScorecardView({ id }: { id: string }) {
                     ),
                   },
                   { key: "size", header: "Size", cell: (t) => <Badge tone="outline">{t.size} · {t.points} pt</Badge>, sortValue: (t) => t.points },
-                  { key: "rating", header: "Rating", cell: (t) => (t.rating ? <StarRating value={t.rating} size={13} /> : <span className="text-[12px] text-muted-foreground">{t.status === "cancelled" ? "Cancelled" : "Not approved"}</span>), sortValue: (t) => t.rating ?? 0 },
+                  {
+                    key: "rating",
+                    header: "Rating",
+                    cell: (t) =>
+                      t.rating ? (
+                        <span className="grid justify-items-start gap-0.5">
+                          <StarRating value={t.rating} size={13} />
+                          {t.originalRating !== undefined && t.originalRating !== t.rating && <span className="text-[11px] text-muted-foreground">was {t.originalRating}★ (changed after a dispute)</span>}
+                        </span>
+                      ) : (
+                        <span className="text-[12px] text-muted-foreground">
+                          {t.status === "cancelled" ? "Cancelled" : t.status === "submitted" ? "Waiting for review when the month closed" : "Not approved"}
+                        </span>
+                      ),
+                    sortValue: (t) => t.rating ?? 0,
+                  },
                   {
                     key: "flags",
                     header: "On time",
                     cell: (t) =>
-                      t.status === "cancelled" ? (
+                      t.status === "cancelled" || t.counted === false ? (
                         <span className="text-[12px] text-muted-foreground">Not counted</span>
                       ) : (
                         <span className="flex flex-wrap gap-1">
@@ -239,30 +273,35 @@ export function ScorecardView({ id }: { id: string }) {
                   {sc.reviewerEmpId ? (
                     <p className="text-[13px] text-muted-foreground">Reviewer: <EmpChip empId={sc.reviewerEmpId} size="sm" showId={false} /></p>
                   ) : (
-                    <p className="text-[13px] text-muted-foreground">No reviewer. The Director&apos;s scorecard is released automatically; the CEO / Founder / Owner views it.</p>
+                    <p className="text-[13px] text-muted-foreground">No reviewer: nobody above reviews work (the Director&apos;s case), so the scorecard is released automatically and the CEO / Founder / Owner views it.</p>
                   )}
                 </div>
               </CardHeader>
               <CardContent className="grid gap-3">
                 {isReviewer && sc.status !== "acknowledged" ? (
                   <>
-                    <Textarea
-                      value={remark ?? sc.reviewerRemark ?? ""}
-                      onChange={(e) => setRemark(e.target.value)}
-                      placeholder="Add context for the employee: what went well, what to focus on next month."
-                      aria-label="Reviewer remark"
-                    />
+                    <Field htmlFor="scorecard-remark" hint={`At least ${REMARK_MIN_LENGTH} characters.`} error={remarkTooShort ? `At least ${REMARK_MIN_LENGTH} characters.` : undefined}>
+                      <Textarea
+                        id="scorecard-remark"
+                        value={remark ?? sc.reviewerRemark ?? ""}
+                        onChange={(e) => setRemark(e.target.value)}
+                        placeholder="Add context for the employee: what went well, what to focus on next month."
+                        aria-label="Reviewer remark"
+                        aria-invalid={remarkTooShort || undefined}
+                        aria-describedby={remarkTooShort ? "scorecard-remark-error" : undefined}
+                      />
+                    </Field>
                     <div className="flex flex-wrap justify-end gap-2">
                       {remark !== null && (
                         <Button size="sm" variant="ghost" onClick={() => setRemark(null)}>
                           <Undo2 /> Undo
                         </Button>
                       )}
-                      <Button size="sm" variant="outline" onClick={() => saveRemark(false)} loading={addRemark.isPending} disabled={!(remark ?? "").trim()}>
+                      <Button size="sm" variant="outline" onClick={() => saveRemark(false)} loading={addRemark.isPending} disabled={!remarkReady}>
                         Save remark
                       </Button>
                       {sc.status === "draft" && (
-                        <Button size="sm" onClick={() => saveRemark(true)} loading={release.isPending}>
+                        <Button size="sm" onClick={() => saveRemark(true)} loading={release.isPending} disabled={remarkTooShort}>
                           <Send /> Save and release
                         </Button>
                       )}
@@ -290,6 +329,11 @@ export function ScorecardView({ id }: { id: string }) {
                       </div>
                       <p className="text-muted-foreground">“{d.reason}”</p>
                       {d.decision && <p>Decision: “{d.decision}”</p>}
+                      {d.status === "changed" && d.scoreBefore !== undefined && d.scoreAfter !== undefined && (
+                        <p className="text-muted-foreground">
+                          Score recalculated: {d.scoreBefore.toFixed(1)} → {d.scoreAfter.toFixed(1)}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </CardContent>

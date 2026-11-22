@@ -91,7 +91,10 @@ export function TasksScreen() {
       {view === "calendar" && <TaskCalendarView scope={effectiveScope} />}
       {view === "workload" && isManager && <WorkloadView />}
 
-      <AssignTaskSheet open={assignOpen} onOpenChange={setAssignOpen} />
+      {/* Only people who can assign get the sheet: it starts the manager-only requests (the team workload) that others are refused. */}
+      <Can permission="task.assign">
+        <AssignTaskSheet open={assignOpen} onOpenChange={setAssignOpen} />
+      </Can>
     </>
   );
 }

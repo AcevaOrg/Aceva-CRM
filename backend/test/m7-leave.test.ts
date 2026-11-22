@@ -42,8 +42,10 @@ beforeAll(async () => {
   t = await createTestApp();
   t.clock.set(new Date('2027-05-03T02:00:00.000Z')); // 07:00 Pakistan time, Monday 3 May 2027
   await t.ensureFixtures();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
   prisma = createTestPrisma();
+  // Module 5 seeds demo holidays (for example Eid on 17 May 2027); these tests count working days on their own calendar.
+  await prisma.holiday.deleteMany();
   as = m7Personas(t);
 });
 
@@ -116,7 +118,8 @@ describe('M7 leave: asking', () => {
 describe('M7 leave: deciding (only the routed approver of the current step, never yourself)', () => {
   it("the developer's manager (the CTO) sees it view only; the CEO and others are not the approver either", async () => {
     await (await as(DEV2)).post(`${API}/leave/requests/${req.dev1}/approve`).send({}).expect(403); // no permission
-    for (const who of [CTO, FINANCE, CEO, OWNER]) expect((await decide(who, req.dev1, 'approve', 403)).body.code).toBe('not_routed_approver');
+    for (const who of [CTO, CEO, OWNER]) expect((await decide(who, req.dev1, 'approve', 403)).body.code).toBe('not_routed_approver');
+    expect((await decide(FINANCE, req.dev1, 'approve', 403)).body.code).toBe('forbidden'); // Finance holds no leave approval
     const team = await (await as(CTO)).get(`${API}/leave/requests?scope=team&status=pending`).expect(200);
     expect(team.body.items.find((r: { id: string }) => r.id === req.dev1)).toMatchObject({ canDecide: false });
   });
@@ -149,11 +152,10 @@ describe('M7 leave: deciding (only the routed approver of the current step, neve
     expect((await decide(CTO, req.cto, 'approve', 403)).body.code).toBe('self_approval');
   });
 
-  it("the Director's own leave goes to the CEO", async () => {
+  it("the Director's own leave goes to the Owner", async () => {
     const res = await ask(DIRECTOR, 'casual', '2027-05-14', '2027-05-14', 201);
     expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: CEO, state: 'waiting' }]);
     expect(res.body.chain).toHaveLength(1);
-    expect((await decide(OWNER, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
     expect((await decide(DIRECTOR, res.body.id, 'approve', 403)).body.code).toBe('self_approval');
     expect((await decide(CEO, res.body.id, 'approve', 200)).body.status).toBe('approved');
   });
@@ -192,21 +194,32 @@ describe('M7 leave: deciding (only the routed approver of the current step, neve
 });
 
 describe('M7 leave: stand-ins (Module 1 routing)', () => {
-  it("while the Director is away, the Director's stand-in decides; the away Director and the developer's manager cannot", async () => {
+  it("while the Director is away, the Director's stand-in decides; the away Director cannot", async () => {
+    // The stand-in must hold leave approval (the CTO does; Finance holds none).
+    const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(CTO), startsOn: new Date('2027-05-04T00:00:00.000Z'), endsOn: new Date('2027-05-31T00:00:00.000Z'), reason: 'Director away' } });
+    try {
+      const res = await ask(DEV3, 'casual', '2027-05-17', '2027-05-17', 201);
+      expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: CTO, state: 'waiting', via: 'stand_in' }]);
+      expect(res.body.chain).toHaveLength(1);
+      const list = await (await as(CTO)).get(`${API}/leave/requests?scope=team`).expect(200);
+      expect(list.body.items.find((r: { id: string }) => r.id === res.body.id)).toMatchObject({ canDecide: true });
+      expect((await decide(DIRECTOR, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
+      const decided = await decide(CTO, res.body.id, 'approve', 200);
+      expect(decided.body.status).toBe('approved');
+      const decisions = await prisma.leaveDecision.findMany({ where: { requestId: res.body.id }, orderBy: { step: 'asc' } });
+      expect(decisions.map((d) => [d.step, d.decision, d.via])).toEqual([[1, 'approved', 'stand_in']]);
+    } finally {
+      await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } });
+    }
+  });
+
+  it("a stand-in without leave approval rights cannot leave a request approved by default: it is refused", async () => {
     const standIn = await prisma.standIn.create({ data: { managerId: await idOf(DIRECTOR), standInId: await idOf(FINANCE), startsOn: new Date('2027-05-04T00:00:00.000Z'), endsOn: new Date('2027-05-31T00:00:00.000Z'), reason: 'Director away' } });
-    const res = await ask(DEV3, 'casual', '2027-05-17', '2027-05-17', 201);
-    expect(res.body.chain).toMatchObject([{ step: 1, approverEmpId: FINANCE, state: 'waiting', via: 'stand_in' }]);
-    expect(res.body.chain).toHaveLength(1);
-    const list = await (await as(FINANCE)).get(`${API}/leave/requests?scope=team`).expect(200);
-    // The stand-in sees only what is routed to them now (nobody reports to them).
-    expect(list.body.items.map((r: { id: string }) => r.id)).toContain(res.body.id);
-    expect(list.body.items.every((r: { canDecide: boolean }) => r.canDecide)).toBe(true);
-    for (const who of [DIRECTOR, CTO]) expect((await decide(who, res.body.id, 'approve', 403)).body.code).toBe('not_routed_approver');
-    const decided = await decide(FINANCE, res.body.id, 'approve', 200);
-    expect(decided.body.status).toBe('approved');
-    const decisions = await prisma.leaveDecision.findMany({ where: { requestId: res.body.id }, orderBy: { step: 'asc' } });
-    expect(decisions.map((d) => [d.step, d.decision, d.via])).toEqual([[1, 'approved', 'stand_in']]);
-    await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } });
+    try {
+      expect((await ask(DEV3, 'casual', '2027-05-26', '2027-05-26', 409)).body.code).toBe('no_approver');
+    } finally {
+      await prisma.standIn.update({ where: { id: standIn.id }, data: { revokedAt: new Date() } });
+    }
   });
 
   it('a request made before D24 that is already waiting at step 2 is decided by the Director', async () => {

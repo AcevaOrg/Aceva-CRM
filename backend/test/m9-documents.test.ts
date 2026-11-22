@@ -33,7 +33,7 @@ function filesUnder(dir: string): string[] {
 beforeAll(async () => {
   t = await createTestApp();
   await t.signInAll();
-  CEO = t.fixtures.CEO;
+  CEO = 'ACV-0001';
   prisma = createTestPrisma();
   for (const a of await prisma.ledgerAccount.findMany()) acc[a.code] = a.id;
 }, 180000);
@@ -56,8 +56,8 @@ describe('M9 clients, vendors and projects', () => {
     expect((await fin().get(`${API}/parties?kind=client`).expect(200)).body.total).toBe(1);
     expect((await fin().get(`${API}/parties?kind=client&includeArchived=true`).expect(200)).body.total).toBe(2);
     expect(await prisma.party.count({ where: { id: old } })).toBe(1);
-    project = (await fin().post(`${API}/projects`).send({ code: 'ACME-WEB', name: 'Acme website' }).expect(201)).body.id;
-    expect((await fin().post(`${API}/projects`).send({ code: 'ACME-WEB', name: 'Again' }).expect(409)).body.code).toBe('code_taken');
+    project = (await fin().post(`${API}/finance-projects`).send({ code: 'ACME-WEB', name: 'Acme website' }).expect(201)).body.id;
+    expect((await fin().post(`${API}/finance-projects`).send({ code: 'ACME-WEB', name: 'Again' }).expect(409)).body.code).toBe('code_taken');
     await t.as(DEV).post(`${API}/parties`).send({ kind: 'client', name: 'X', currency: 'PKR' }).expect(404);
   });
 });
@@ -209,7 +209,7 @@ describe('M9 transfers between bank accounts', () => {
     await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1100'], date: '2026-09-20', amount: '10' }).expect(400);
     expect((await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00' }).expect(400)).body.code).toBe('to_amount_required');
     const e = (await fin().post(`${API}/transfers`).send({ fromAccountId: acc['1100'], toAccountId: acc['1110'], date: '2026-09-20', amount: '278000.00', toAmount: '1000.00' }).expect(201)).body;
-    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 3 }); // D25: within the Director's limit
+    expect(e).toMatchObject({ source: 'transfer', currency: 'USD', exchangeRate: '278.000000', totalBase: '278000.00', status: 'pending_approval', requiredLevel: 2 }); // D26: the Director approves any amount
     expect(e.lines.map((l: { accountCode: string; debit: string; baseDebit: string; baseCredit: string }) => [l.accountCode, l.debit, l.baseDebit, l.baseCredit])).toEqual([
       ['1110', '1000.00', '278000.00', '0.00'],
       ['1100', '0.00', '0.00', '278000.00'],

@@ -15,7 +15,7 @@ import { clockTimeSchema, daySchema, decisionNoteSchema, decisionReasonSchema, m
 export const attendanceMonthQuerySchema = z.object({ month: monthSchema });
 export const attendanceDayQuerySchema = z.object({ date: daySchema.optional() });
 export const yearQuerySchema = z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() });
-export const holidaysQuerySchema = yearQuerySchema.extend({ includeArchived: z.enum(['true', 'false']).optional() });
+export const attendanceHolidaysQuerySchema = yearQuerySchema.extend({ includeArchived: z.enum(['true', 'false']).optional() });
 
 const listScope = z.enum(['mine', 'team']).default('mine');
 const page = z.coerce.number().int().min(1).default(1);
@@ -376,7 +376,7 @@ export interface LeaveCalendarEntryView {
   status: LeaveStatusValue;
 }
 
-export interface HolidayView {
+export interface AttendanceHolidayView {
   id: string;
   date: string;
   name: string;
