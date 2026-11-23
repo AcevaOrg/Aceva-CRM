@@ -225,7 +225,8 @@ nowhere else:
 
 `DATA_ENCRYPTION_KEY` encrypts the 2FA secrets, CNIC numbers and bank account numbers in the database. The key is not in
 the database. **A database backup without this key cannot be read.** Make a separate copy of it in the password manager
-the day you create it, and never change it on a live database (key rotation is not built).
+the day you create it, and never change it on a live database (key rotation is not built). One exception: a staging
+database copied from another database (8.3) must keep the key of its source.
 
 ### 2.4 Information to write down
 
@@ -254,18 +255,21 @@ Fill this in as you go (in the password manager, not in this file):
 2. **Project name:** `aceva-staging` (production will be `aceva-production`).
 3. **Database password:** see 3.2.
 4. **Region:** choose **South Asia (Mumbai)**. Choose the specific region. Do not choose one of the "general regions"
-   (they let Supabase pick for you).
+   (they let Supabase pick for you). The form starts with **Region: Auto**; press **Need a specific region?** under it
+   to pick Mumbai. (On 2026-11-23 one project left on Auto was placed in Seoul. The region cannot be changed later, so
+   a project in the wrong region has to be deleted and made again.)
 5. **Compute size:** Micro (or Nano on Free).
 6. **Postgres version:** keep the default. New projects use **Postgres 17**, which is the version used by the local
    development database (`docker-compose.yml`). If the form lets you choose, choose 17.
-   > Check: the exact minor version (17.x) is not fixed. Write down what `select version();` says after step 7.
-7. **Data access / security options** (the names may differ):
-   - untick **Enable Data API**,
-   - untick **Automatically expose new tables** (called "Automatically expose new tables and functions" in some
-     places),
-   - leave **Enable RLS on new tables automatically** ticked. It makes a new table refuse every role except its owner.
-     (This matters only for the logins in section 6.) If the form has no such option, skip it. 6.3 step 4 covers both
-     cases.
+   > Check: the exact minor version (17.x) is not fixed. Write down what `select version();` says after step 7. (A
+   > project made on 2026-11-23 got PostgreSQL 17.12.)
+7. **Data access** (the section and the three boxes as the form showed them on 2026-11-23; names may change):
+   - **Enable Data API**: ticked by default. **Untick it.**
+   - **Grant API access to new tables automatically** ("Expose new tables in the public schema to the Data API"; other
+     pages call it "Automatically expose new tables"): unticked by default. **Leave it unticked.**
+   - **Enable RLS on new tables automatically**: unticked by default. **Tick it.** It makes a new table refuse every role
+     except its owner. (This matters only for the logins in section 6.) If the form has no such option, skip it. 6.3
+     step 4 covers both cases.
 8. Create the project. Wait until it says it is ready.
 
 ### 3.2 The database password
@@ -274,6 +278,9 @@ Fill this in as you go (in the password manager, not in this file):
    special treatment inside a URL. Special characters (`@ : / ? # & %` and spaces) break the URL unless they are written
    as `%40 %3A %2F %3F %23 %26 %25 %20`. Avoiding them removes a whole group of errors.
 2. Paste it into the form. Supabase never shows it again after creation. If you lose it, you reset it (section 12.2).
+   If the form shows "you will need to percent-encode the password", the password has a special character: make a new
+   one of letters and digits. (Tools differ in how they read an unencoded `@` in a URL. node-postgres accepted one in a
+   test on 2026-11-23, but do not rely on that.)
 
 ---
 
@@ -342,6 +349,15 @@ check again. (6.3 adds `aceva_api` to this check.)
 
 > Check: tables created by `postgres` follow the default rights above. The rule that tables created by another role get
 > no rights for `anon` is an inference from how PostgreSQL works. It was not tested. The query above is the proof.
+>
+> Confirmed on a real project on 2026-11-23: after these revokes, the default rights for objects that `postgres` creates
+> name only `postgres`, and after all 92 tables were loaded the check query returned no rows. (The default rights that
+> `supabase_admin` owns still list `anon`, `authenticated` and `service_role`. They apply only to objects Supabase
+> itself creates, not to ours.) PostgreSQL gives every role EXECUTE on new functions by default, so the 24 functions of
+> our migrations stay executable by `anon`. With the Data API off there is no way to call them through the Data API.
+> Removing that right is a later hardening step; test it on staging first. Note the trap: `score_weights_valid` is used
+> in a CHECK constraint (`score_weight_versions_weights`), and a login needs EXECUTE on it to insert. If EXECUTE is ever
+> revoked from everyone, grant it back to `aceva_api` on that function and change the sentence about functions in 6.3.
 
 GraphQL uses the same database roles as the REST API, so removing their rights covers it too.
 
@@ -394,7 +410,9 @@ alter database postgres set timezone to 'UTC';
 alter role postgres set timezone to 'UTC';
 ```
 
-> Check: if the second line is refused, the first line is enough. You prove the result in 9.4.
+> Check: if the second line is refused, the first line is enough. You prove the result in 9.4. (On 2026-11-23, with
+> only the first line, `show timezone` through the session pooler answered `UTC`. That is consistent with the default;
+> it does not prove that the line, rather than the default, gives UTC.)
 
 Newer versions of the pooler send a harmless NOTICE on every connection saying the option was ignored. That is not an
 error.
@@ -449,9 +467,15 @@ needs. It is also what Supabase's own Prisma guide uses for servers. Our app's o
 
 ### 5.2 Get the host and the user name from the dashboard
 
-1. Dashboard, press **Connect** at the top of the project page. Choose the **Session pooler** connection string.
+1. Dashboard, press **Connect** at the top of the project page. The window opens on the **Framework** card (that one is
+   for Supabase's own client libraries; we do not use it). Choose the **Direct** card ("Connection string"), then under
+   **Connection Method** choose **Session pooler**, with **Type: URI**. (As seen on 2026-11-23. The details call it the
+   "Shared pooler" and list host, port `5432`, database `postgres` and user `postgres.<project-ref>`.) The **ORM** card,
+   **Prisma**, shows a `DIRECT_URL` line like it (port 5432). Do not use that card's other line if it shows port 6543
+   or `pgbouncer=true` (5.4).
 2. It looks like this (placeholders):
    `postgresql://postgres.<project-ref>:<db-password>@<pooler-host>:5432/postgres`
+   For Mumbai the host was `aws-0-ap-south-1.pooler.supabase.com` on 2026-11-23. Still copy yours from the dashboard.
 3. Copy the host and the user from the dashboard. **Do not build the host yourself.** It looks like
    `aws-<n>-<region>.pooler.supabase.com`, and `<n>` is a server group number (you will see `0` in some examples and
    `1` in others), not part of the region.
@@ -490,8 +514,9 @@ the file has to be given to it.
    - Write down the SHA-256 fingerprint. Staging and production must give the same one.
    - The `grep` should print `1`. If the file holds more than one certificate, the **root certificate must be first**
      (the Prisma migration tool reads only the first).
-   - Put the `notAfter` date in the team calendar, six months ahead of it. Community reports say about 2031. That date
-     is not on an official page.
+   - Put the `notAfter` date in the team calendar, six months ahead of it. The file downloaded on 2026-11-23 says
+     `notAfter=Apr 26 10:56:53 2031 GMT` (subject and issuer both `Supabase Root 2021 CA`, one certificate). The date is
+     not on an official page; trust what your own file says.
 5. The file may be readable by everyone, because a certificate is public. It must stay in this one place. The API
    re-reads the file every time it opens a connection, and a missing or unreadable file stops the connection.
 
@@ -553,8 +578,15 @@ Where they live, and why:
   receive it. To find out whether the certificate is the cause, use the check in 5.6. It sends no password.
 - Do not add `pgbouncer=true`. It is for the transaction pooler and old Prisma. We do not use either.
 
-> Check: the Prisma migration program was tested against a local fake server on Windows, not against Supabase and not
-> on Linux. Step 7.6 proves on your VPS that the certificate check really happens. A one-URL form also exists
+> Check: proven on 2026-11-23 from a Windows PC against a real Supabase project (Mumbai, session pooler), not yet on
+> Linux:
+> - node-postgres with the app URL connected over TLS 1.3, and with a made-up certificate in `sslrootcert` it refused
+>   with `self-signed certificate in certificate chain`.
+> - `prisma migrate status` with the migrate URL answered "Database schema is up to date!", and with the made-up
+>   certificate in `sslcert` it refused with `P1011: Error opening a TLS connection: ... root certificate which is not
+>   trusted`.
+>
+> Step 7.6 proves the same on your VPS. A one-URL form also exists
 > (`sslmode=verify-full&sslrootcert=...&sslaccept=strict&sslcert=...`, same file twice). It is less tested, so use the
 > pair.
 
@@ -1172,6 +1204,89 @@ Until it exists, production cannot go live. When it exists, the procedure is:
    says that payroll refuses to calculate until the accountant enters a tax slab version. The accountant must supply
    both first.
 
+### 8.3 Staging only: copy an existing database instead of seeding
+
+Instead of 8.1 you can copy a database you already have (for example a developer's local database with demo data) into
+an **empty, locked-down staging project** (sections 3 and 4). This was done once on 2026-11-23 from a Windows PC: 92
+tables, 14 MB, about 3.5 minutes from Pakistan to Mumbai. **Never do this into production**: demo people can never be
+deleted.
+
+What to know first:
+
+- **Skip 7.7.** The copy brings the tables and the `_prisma_migrations` list with it. If 7.7 has already run, the
+  restore stops with "already exists" and writes nothing; start again with a new, empty project.
+- **The same `DATA_ENCRYPTION_KEY`.** The copy carries the encrypted 2FA secrets, CNIC and bank numbers. They can only
+  be read with the key of the database they came from (the `DATA_ENCRYPTION_KEY` in the source's `backend/.env`). Use
+  that key for the staging API instead of the new key 9.1 makes, store it in the password manager under staging (2.3),
+  and never use it for production (11.1): it also sits on a developer's PC.
+- **The same migrations.** The code the VPS runs must contain every migration in the source's `_prisma_migrations`, and
+  no others. Compare `select count(*) from _prisma_migrations;` on the source with the number of folders in
+  `backend/prisma/migrations` of the commit the VPS runs. In this case the numbers in 7.8 come from the source, not from
+  the text.
+- **The demo logins arrive with the copy**, with everyone's 2FA set up (the same authenticator codes keep working). Do
+  not start the API on a reachable address before the allow-list check at the end of 9.5 passes. Skip 9.6 steps 1 and 2
+  and sign in with the source's demo password and authenticators.
+- **Uploaded files are not copied.** They live in `FILE_STORAGE_ROOT` on the source machine, not in the database. The
+  copied rows point at files that staging does not have.
+- **Network restrictions (4.4)** refuse a PC. Either add the PC's address for the time of the copy and remove it
+  afterwards, or copy `source.dump` and `restore.list` to the VPS and run steps 3 and 4 there (with `export
+  PGPASSWORD` instead of the PowerShell lines).
+- An API that is already running keeps its old database until it is restarted. It reads `DATABASE_URL` only at start.
+
+Steps on the PC, with the PostgreSQL 17 client tools (`pg_dump`, `pg_restore`; on Windows they come with PostgreSQL, in
+its `bin` folder). The certificate is the same file as in 5.3: download it to the PC too, and check that its SHA-256
+fingerprint is the one you wrote down.
+
+1. **PC (PowerShell).** Dump only the `public` schema, without owners and rights (Supabase has its own):
+   ```powershell
+   pg_dump -h 127.0.0.1 -p 5432 -U <local-user> -d <local-database> -n public --no-owner --no-privileges -Fc -f source.dump
+   ```
+2. **PC (PowerShell).** Write the list of what to restore, without the line that creates the schema itself (Supabase
+   already has `public`, and restoring that line fails). The list must be plain text: in Windows PowerShell 5.1 a `>`
+   redirect writes Unicode (UTF-16), which `pg_restore` cannot read, so use this line:
+   ```powershell
+   pg_restore -l source.dump | Select-String -NotMatch -SimpleMatch 'SCHEMA - public' | ForEach-Object Line | Out-File -Encoding ascii restore.list
+   ```
+3. **PC (PowerShell).** Give the password to the tools through `PGPASSWORD`, not in a URL, so that no special character
+   can be misread, and without the password reaching the history:
+   ```powershell
+   $sec = Read-Host -AsSecureString "Supabase database password"
+   $env:PGPASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
+   ```
+4. **PC (PowerShell).** Restore everything in **one transaction** (all or nothing), with the certificate checked. Use
+   your own host, project reference and certificate path. Write the path with forward slashes, and put single quotes
+   around it if it has a space (in this string a backslash is an escape character):
+   ```powershell
+   pg_restore --no-owner --no-privileges --single-transaction -L restore.list -d "host=<pooler-host> port=5432 dbname=postgres user=postgres.<project-ref> sslmode=verify-full sslrootcert='C:/Users/<you>/.aceva/prod-ca-2021.crt'" source.dump
+   ```
+   No output means success. **Whatever the result**, remove the password afterwards:
+   `Remove-Item Env:PGPASSWORD; Remove-Variable sec` (or close the window). Delete `source.dump`, because it holds
+   personal data.
+5. Check the result:
+   - every table has the same number of rows as the source (rows written to the source after step 1 are not in the
+     copy);
+   - `prisma migrate status` with the migrate URL (5.4) says "Database schema is up to date!";
+   - the check query in 4.2 returns no rows, and `show timezone` says `UTC`.
+
+### 8.4 A development PC against staging
+
+To run the app on a developer's PC against staging (as on 2026-11-23), the app URL goes in that PC's `backend/.env`,
+with the certificate path written with forward slashes, for example
+`...?sslmode=verify-full&sslrootcert=C:/Users/<you>/.aceva/prod-ca-2021.crt`. Keep the old local line as a comment, and
+switch back when the work is done.
+
+- **While `backend/.env` points at staging, never run** `npm run db:reset -w backend`, `db:migrate:dev`, `db:seed` or
+  `db:seed:passwords` (9.8). They read `DATABASE_URL` from that file: `db:reset` would wipe staging without asking.
+- Which login: prefer the API login `aceva_api` (6.3) in that file. The owner password in a plain file on a PC is the
+  risk 5.4 describes; use the owner login there only on staging, only while needed, and change its password afterwards
+  (12.2).
+- **Leave `TEST_DATABASE_URL` and `SHADOW_DATABASE_URL` on the local database.** The tests delete and rebuild their
+  database on every run.
+- Network restrictions (4.4) refuse the PC unless its address is on the list.
+- Pages are slower than with a local database, because every query travels to Mumbai and back.
+- Migrations still need the migrate URL form (5.4). Plain `npm run db:migrate` with the app URL would connect without
+  checking the certificate.
+
 ---
 
 ## 9. Prove it works
@@ -1191,7 +1306,7 @@ there). Follow the rules in 7.4 (quotes around a value with `#`, a space or `$`)
 | `CORS_ORIGIN` | `https://staging.<your-domain>` | **One exact value**: scheme and host, no slash at the end. It is also the check on the `Origin` of every data-changing request. A mismatch gives `403 origin_not_allowed` on every save, while reading still works. |
 | `APP_URL` | `https://staging.<your-domain>` | Link base in the mails. |
 | `REDIS_URL` | `redis://:<redis-password>@127.0.0.1:6379` | Redis on the same VPS (below). |
-| `DATA_ENCRYPTION_KEY` | a **new** key for this environment | Make it on the VPS: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Copy it to the password manager now. |
+| `DATA_ENCRYPTION_KEY` | a **new** key for this environment, unless the staging database was copied in 8.3 (then the **same** key as its source, 8.3) | Make it on the VPS: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Copy it to the password manager now. |
 | `FILE_STORAGE_ROOT` | `/var/lib/aceva/files` | An absolute folder outside the repository. |
 | `TRUST_PROXY` | `1` | One proxy in front (nginx). Never `2` (see the note below the table). With `0`, every user looks like `127.0.0.1`, and the login rate limit locks everybody out together. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE` | `127.0.0.1`, `1025`, `false` | Staging uses Mailpit (below). These are also the defaults, so on production a forgotten setting gives no warning: the mails (reset links, the welcome mail with the temporary password, alerts) are simply never delivered. |
@@ -1812,7 +1927,7 @@ production network restrictions (4.4).
 | Network restrictions | if the plan has them | **On** (only the production VPS) |
 | SSL enforcement | on | **on** |
 | Data API, rights | off, revoked | **off, revoked** (4.1, 4.2) |
-| Database password, `DATA_ENCRYPTION_KEY`, Redis password | their own | **new and different** (never reuse staging's) |
+| Database password, `DATA_ENCRYPTION_KEY`, Redis password | their own | **new and different** (never reuse staging's, and never a key copied from a developer PC, 8.3) |
 | API login | owner at first, then `aceva_api` | **`aceva_api` (6.3), required**; no owner password in `/etc/aceva/api.env` |
 | API settings | `/etc/aceva/api.env` with `NODE_ENV=production` | the same; no `DEMO_PASSWORD` anywhere; **no `backend/.env`** |
 | `~/aceva-db.conf` | `env_name=staging` | `env_name=production` (the demo seed commands then refuse) |
@@ -1998,6 +2113,8 @@ Notes:
 | `NOTICE` lines about ignored startup parameters in the logs | Newer pooler versions say the time zone option was ignored. | Harmless. Keep the time zone set in 4.5. |
 | `are treated as aliases for 'verify-full'` (Node shows it as `(node:<pid>) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' ...`) | An app or seed URL has `sslmode=require`. | Use `sslmode=verify-full` in `DATABASE_URL`. `require` belongs only in the migrate URL. |
 | `ERR_TLS_CERT_ALTNAME_INVALID` | The host in the URL is not the name in the certificate (for example an IP address or an old host). | Use the host from Connect, not an IP address. |
+| `listen EADDRINUSE: address already in use :::4000` when the API starts | Another API is still running on that port, often an old one that still uses the previous database (it read `DATABASE_URL` when it started). | Stop the old API first (`sudo systemctl stop aceva-api` on the VPS). On a PC: `Get-Process -Id (Get-NetTCPConnection -LocalPort 4000 -State Listen).OwningProcess` shows which program it is; once it is clearly the old API, `Stop-Process -Id <pid>`. Then start the new one. |
+| `schema "public" already exists` from `pg_restore` | The restore list still has the line that creates the `public` schema (8.3). | Make `restore.list` again with the command in 8.3 step 2 and run the restore again. With `--single-transaction` nothing was written. (In 10.4 this error is expected, because that restore does not use `--single-transaction`.) |
 | A seed or any screen action fails with `Transaction already closed` or `P2028`, or a timeout | Round trips to the database are too slow (7.6 step 1). Most actions run in a transaction with a 5-second limit, and the seed is one 60-second transaction. | Move the VPS closer to the project (same region). Run seeds on the VPS, not from a laptop. Do not raise limits. |
 | `Refusing to seed demo data in production.` or `Refusing to create demo logins in production.` | `NODE_ENV=production` is set. This is the safety check. | On staging only, use `~/aceva-db.sh seed` and `~/aceva-db.sh seed-passwords` (8.1, 9.6). On production it must stay. |
 | `DATABASE_URL is not set` when a seed or `db:reset` is started by hand | There is no `backend/.env` on the server, on purpose (5.5). | Use `~/aceva-db.sh`. Do not create `backend/.env` to make it work. |
