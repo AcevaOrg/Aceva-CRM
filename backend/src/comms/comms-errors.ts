@@ -13,7 +13,7 @@ import { isUniqueViolation } from '../common/db-rules';
  */
 
 /** Rule markers raised by the Module 14 triggers (they name the rule, never a value). */
-const RULE_MARKERS = ['(message_rule)', '(conversation_rule)'] as const;
+const RULE_MARKERS = ['(message_rule)', '(conversation_rule)', '(announcement_rule)', '(meeting_rule)', '(attachment_rule)'] as const;
 
 export class CommsDbError extends Error {
   constructor(

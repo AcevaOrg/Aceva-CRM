@@ -3,7 +3,7 @@ import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  AlarmClock, AtSign, Bell, BellOff, CalendarDays, CheckCheck, CircleCheck, ClipboardCheck, CreditCard, Gauge, Inbox, ListTodo, Lock,
+  AlarmClock, AtSign, Bell, BellOff, CalendarDays, CheckCheck, CircleCheck, ClipboardCheck, CreditCard, Gauge, Inbox, ListTodo, Lock, MessageSquare, MessageSquareReply,
   Megaphone, Plug, Receipt, Repeat, ShieldAlert, Sunrise, Wallet,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -29,6 +29,7 @@ const ICON: Record<NotificationType, React.ElementType> = {
   security_alert: ShieldAlert, sales_reply: Sunrise, sales_follow_up: Sunrise, sales_tool_problem: Plug,
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
   invoice_due: CreditCard, invoice_draft_ready: CreditCard, usage_alert: Gauge,
+  message_new: MessageSquare, message_reply: MessageSquareReply, meeting_invited: CalendarDays, meeting_cancelled: CalendarDays,
 };
 
 /** Email preference groups; a group shows only to people who can receive those notifications. */
@@ -38,7 +39,7 @@ const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Perm
   // Finance, Sales and Development approve nothing.
   { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"], permission: ["leave.approve", "payroll.approve", "finance.entry_approve"] },
   { title: "Pay and results", types: ["payslip_available", "scorecard_released"] },
-  { title: "Messages", types: ["message_mention", "announcement"] },
+  { title: "Messages", types: ["message_new", "message_reply", "message_mention", "announcement", "meeting_invited", "meeting_cancelled"] },
   { title: "Security", types: ["security_alert"] },
   { title: "Sales", types: ["sales_reply", "sales_follow_up"], permission: "sales.own" },
   { title: "Sales tools", types: ["sales_tool_problem"], permission: "integrations.view" },
@@ -188,7 +189,9 @@ function PrefsForm({ saved }: { saved: NotificationPrefs }) {
       <CardHeader>
         <div>
           <CardTitle>Email preferences</CardTitle>
-          <CardDescription>Emails come from an @acevatech.com address. Approvals and security alerts can&apos;t be turned off.</CardDescription>
+          <CardDescription>
+            These switches control emails only: every notification still appears here and in the bell. Emails come from an @acevatech.com address. Approvals and security alerts can&apos;t be turned off.
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">

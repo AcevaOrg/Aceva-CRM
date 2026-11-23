@@ -1,4 +1,4 @@
-# Local development services for Aceva: PostgreSQL 17, Redis 7 and Mailpit. DEVELOPMENT ONLY.
+# Local development services for Aceva: PostgreSQL 17, Redis 7, Mailpit, and (on request) ClamAV. DEVELOPMENT ONLY.
 #
 #   Start:            docker compose up -d
 #   Stop:             docker compose down
@@ -49,6 +49,29 @@ services:
       - "127.0.0.1:8025:8025" # web inbox
     restart: unless-stopped
 
+  # Module 14 file scanning (ClamAV daemon). About 1 GB of memory, so it starts only when asked for:
+  #   docker compose --profile scanner up -d clamav
+  # The backend (run with npm, outside Compose) reaches it at 127.0.0.1:3310 (CLAMD_HOST / CLAMD_PORT). It needs no
+  # start order: until clamd answers, uploads stay "scanning" (unopenable) and are checked again (fail closed).
+  # Image: the official Cisco Talos image, pinned to the version the scanner integration was tested with (1.5.5).
+  # Healthcheck: the image's own clamdcheck.sh (PING to clamd on 3310 must answer PONG). The first start downloads the
+  # signatures, so it is given the image's own 6-minute start period. Signatures are kept in the clamav-data volume.
+  clamav:
+    image: clamav/clamav:1.5.5
+    profiles: ["scanner"]
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 6m
+    restart: unless-stopped
+
 volumes:
+  clamav-data:
   postgres-data:
   redis-data:

@@ -2,20 +2,22 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Archive, ListTodo, LogOut, Pencil, Pin, Shield, UserMinus, UserPlus, X } from "lucide-react";
+import { Archive, ListTodo, LogOut, Pencil, Pin, Shield, ShieldOff, ShieldPlus, UserMinus, UserPlus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/misc";
-import { FileCard } from "@/components/shared/timeline";
+import { useReason } from "@/components/shared/dialogs";
+import { CommsFile } from "./comms-file";
 import { ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { ApiError } from "@/lib/api/mock";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 import { cn } from "@/lib/utils";
-import { useRenameConversation, useThread } from "../hooks";
-import { RETENTION_TEXT } from "../logic";
+import { isLive } from "@/lib/api/http";
+import { useArchiveConversation, useCommsPolicy, usePins, useRenameConversation, useSetModerator, useSetTopic, useThread } from "../hooks";
+import { RETENTION_TEXT, retentionNotice } from "../logic";
 import type { Conversation, Message } from "../types";
 import { PresenceDot, usePresenceOf } from "./bits";
 import { Composer } from "./composer";
@@ -76,7 +78,11 @@ export function ThreadPanel({
           </>
         )}
       </div>
-      <Composer conversationId={conversation.id} memberEmpIds={conversation.memberEmpIds} parentId={parentId} placeholder="Reply in thread…" compact autoFocus />
+      {conversation.archived ? (
+        <p className="border-t border-border bg-muted px-4 py-3 text-[12.5px] text-muted-foreground">Archived: replies are closed.</p>
+      ) : (
+        <Composer conversationId={conversation.id} memberEmpIds={conversation.memberEmpIds} parentId={parentId} placeholder="Reply in thread…" compact autoFocus />
+      )}
     </div>
   );
 }
@@ -103,6 +109,49 @@ export function DetailsPanel({
   const [draftName, setDraftName] = React.useState(conversation.name ?? "");
   const [adding, setAdding] = React.useState(false);
   const [removing, setRemoving] = React.useState<string | null>(null);
+  const setTopic = useSetTopic();
+  const [editingTopic, setEditingTopic] = React.useState(false);
+  const [draftTopic, setDraftTopic] = React.useState(conversation.topic ?? "");
+  const setModerator = useSetModerator();
+  const archive = useArchiveConversation();
+  const askReason = useReason();
+  const policy = useCommsPolicy();
+  // Live: the server's pin list (pinned messages older than the loaded history are included). Not for someone who only
+  // manages a channel: they never read its messages.
+  const livePins = usePins(conversation.id, isLive("m14") && !conversation.managingOnly, conversation.pinnedMessageIds);
+  const saveTopic = async (topic: string | null) => {
+    try {
+      await setTopic.mutateAsync({ id: conversation.id, topic });
+      toast.success(topic ? "Topic saved" : "Topic cleared");
+      setEditingTopic(false);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't change the topic.");
+    }
+  };
+  const toggleModerator = async (empId: string, moderator: boolean) => {
+    try {
+      await setModerator.mutateAsync({ id: conversation.id, empId, moderator });
+      toast.success(moderator ? "Now a moderator" : "No longer a moderator");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't change the moderators.");
+    }
+  };
+  const archiveIt = async () => {
+    const reason = await askReason({
+      title: `Archive ${conversation.kind === "channel" ? "this channel" : "this group"}?`,
+      description: "Members can still read its history, but nobody can send, react, pin or change anything. This cannot be undone here. Your reason is kept in the audit log.",
+      confirmLabel: "Archive",
+      destructive: true,
+      placeholder: "Why it is archived (at least 5 characters)",
+    });
+    if (!reason) return;
+    try {
+      await archive.mutateAsync({ id: conversation.id, reason });
+      toast.success("Archived");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't archive it.");
+    }
+  };
   // Only people added by hand can be removed; department members follow the employee records.
   const removable = (id: string) => !!can?.manageMembers && conversation.kind !== "dm" && id !== me && (conversation.memberSources?.[id] ?? "added") === "added";
   const saveName = async () => {
@@ -114,7 +163,7 @@ export function DetailsPanel({
       toast.error(e instanceof ApiError ? e.message : "Couldn't rename it.");
     }
   };
-  const pinned = messages.filter((m) => conversation.pinnedMessageIds.includes(m.id) && !m.deleted);
+  const pinned = (livePins.data ?? messages.filter((m) => conversation.pinnedMessageIds.includes(m.id))).filter((m) => !m.deleted);
   const files = messages.flatMap((m) => m.attachments.map((a) => ({ ...a, at: m.at })));
   const tasks = Array.from(new Map(messages.filter((m) => m.linkedTaskId).map((m) => [m.linkedTaskId!, m])).values());
   const dept = lookup.department(conversation.scope?.departmentId);
@@ -156,11 +205,56 @@ export function DetailsPanel({
             )}
           </div>
         )}
-        {conversation.topic && <p className="mb-3 text-[13px]">{conversation.topic}</p>}
+        {editingTopic ? (
+          <form
+            className="mb-3 grid gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveTopic(draftTopic.trim() || null);
+            }}
+          >
+            <Input autoFocus value={draftTopic} onChange={(e) => setDraftTopic(e.target.value)} maxLength={300} aria-label="Topic" placeholder="What is this conversation for?" className="h-8 text-[13px]" />
+            <div className="flex gap-2">
+              <Button size="sm" type="submit" loading={setTopic.isPending}>
+                Save topic
+              </Button>
+              {conversation.topic && (
+                <Button size="sm" type="button" variant="ghost" onClick={() => void saveTopic(null)}>
+                  Clear
+                </Button>
+              )}
+              <Button size="sm" type="button" variant="ghost" onClick={() => setEditingTopic(false)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <div className="mb-3 flex items-start gap-2">
+            {conversation.topic ? <p className="flex-1 text-[13px]">{conversation.topic}</p> : can?.rename && conversation.kind !== "dm" ? <p className="flex-1 text-[12.5px] text-muted-foreground">No topic yet.</p> : null}
+            {can?.rename && conversation.kind !== "dm" && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-2 text-[12px]"
+                onClick={() => {
+                  setDraftTopic(conversation.topic ?? "");
+                  setEditingTopic(true);
+                }}
+              >
+                <Pencil /> {conversation.topic ? "Edit topic" : "Add a topic"}
+              </Button>
+            )}
+          </div>
+        )}
         <div className="mb-4 flex flex-wrap gap-1.5">
           <Badge tone="outline">{conversation.kind === "channel" ? "Channel" : conversation.kind === "group" ? "Group" : "Direct message"}</Badge>
           {dept && <Badge tone="work">{dept.name}</Badge>}
           {conversation.scope?.projectId && <Badge tone="info">Project channel</Badge>}
+          {conversation.archived && (
+            <Badge tone="outline">
+              <Archive /> Archived
+            </Badge>
+          )}
           <Badge tone="outline">Created {formatDate(conversation.createdAt)}</Badge>
         </div>
 
@@ -198,6 +292,18 @@ export function DetailsPanel({
                       </Badge>
                     )}
                   </Link>
+                  {can?.manageModerators && !left && conversation.kind !== "dm" && id !== me && (
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="size-7 shrink-0 text-muted-foreground"
+                      onClick={() => void toggleModerator(id, !conversation.moderatorEmpIds.includes(id))}
+                      aria-label={conversation.moderatorEmpIds.includes(id) ? `Stop ${e?.name ?? id} being a moderator` : `Make ${e?.name ?? id} a moderator`}
+                      title={conversation.moderatorEmpIds.includes(id) ? "Stop being a moderator" : "Make moderator"}
+                    >
+                      {conversation.moderatorEmpIds.includes(id) ? <ShieldOff /> : <ShieldPlus />}
+                    </Button>
+                  )}
                   {removable(id) && (
                     <Button size="icon-sm" variant="ghost" className="size-7 shrink-0 text-muted-foreground" onClick={() => setRemoving(id)} aria-label={`Remove ${e?.name ?? id}`}>
                       <UserMinus />
@@ -209,6 +315,9 @@ export function DetailsPanel({
           </ul>
         </Section>
 
+        {/* Someone who only manages a channel never sees its messages, pins or files. */}
+        {!conversation.managingOnly && (
+        <>
         <Section title={`Pinned · ${pinned.length}`}>
           {pinned.length ? (
             <ul className="grid gap-2">
@@ -234,7 +343,7 @@ export function DetailsPanel({
           {files.length ? (
             <div className="grid gap-1.5">
               {files.map((f) => (
-                <FileCard key={f.id} file={f} onOpen={() => toast("Opening a private link (demo)")} />
+                <CommsFile key={f.id} file={f} />
               ))}
             </div>
           ) : (
@@ -259,16 +368,25 @@ export function DetailsPanel({
             <p className="text-[12.5px] text-muted-foreground">No tasks linked yet.</p>
           )}
         </Section>
-
-        {can?.leave && me && (
-          <Button size="sm" variant="outline" className="mb-4" onClick={() => setRemoving(me)}>
-            <LogOut /> Leave conversation
-          </Button>
+        </>
         )}
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {can?.leave && me && (
+            <Button size="sm" variant="outline" onClick={() => setRemoving(me)}>
+              <LogOut /> Leave conversation
+            </Button>
+          )}
+          {can?.archive && !conversation.archived && (
+            <Button size="sm" variant="outline" onClick={() => void archiveIt()} loading={archive.isPending}>
+              <Archive /> Archive
+            </Button>
+          )}
+        </div>
 
         <p className="mt-2 flex gap-2 rounded-lg bg-muted px-3 py-2.5 text-[12px] text-muted-foreground">
           <Archive className="mt-0.5 size-3.5 shrink-0" />
-          {RETENTION_TEXT} Private conversations are not visible to managers unless policy allows it.
+          {isLive("m14") ? (policy.data ? retentionNotice(policy.data) : "") : RETENTION_TEXT} Private conversations are not visible to managers unless policy allows it.
         </p>
       </div>
       {adding && <AddMembersDialog conversation={conversation} onClose={() => setAdding(false)} />}

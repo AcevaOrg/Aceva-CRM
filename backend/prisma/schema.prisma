@@ -425,6 +425,8 @@ model Department {
   weightVersions ScoreWeightVersion[]
   /// Module 14 department channels (back-relation only).
   channels  Conversation[]
+  /// Module 14 announcements sent to this department (back-relation only).
+  announcements AnnouncementDepartment[]
 
   @@index([headEmployeeId])
   @@map("departments")
@@ -564,6 +566,17 @@ model Employee {
   messageMentions         MessageMention[]          @relation("MessageMentioned")
   messageReactions        MessageReaction[]
   savedMessages           SavedMessage[]
+  announcementsAuthored   Announcement[]            @relation("AnnouncementAuthor")
+  announcementsPinned     Announcement[]            @relation("AnnouncementPinnedBy")
+  announcementAcks        AnnouncementAck[]
+  meetingsOrganized       Meeting[]                 @relation("MeetingOrganizer")
+  meetingNotesEdited      Meeting[]                 @relation("MeetingNotesEditor")
+  meetingsCancelled       Meeting[]                 @relation("MeetingCanceller")
+  meetingParticipations   MeetingParticipant[]      @relation("MeetingParticipant")
+  meetingInvitesSent      MeetingParticipant[]      @relation("MeetingInviter")
+  commsFilesUploaded      CommsFile[]
+  messageTaskLinks        MessageTaskLink[]
+  meetingTaskLinks        MeetingTaskLink[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -1148,6 +1161,8 @@ model Project {
 
   tasks       Task[]
   repeatRules TaskRepeatRule[]
+  /// Module 14 project channels (back-relation only).
+  channels    Conversation[]
 
   @@map("projects")
 }
@@ -1224,6 +1239,9 @@ model Task {
   reviews     TaskReview[]
   history     TaskHistory[]
   scorecardTasks ScorecardTask[]
+  /// Module 14 links (back-relations only).
+  messageLinks   MessageTaskLink[]
+  meetingLinks   MeetingTaskLink[]
 
   @@unique([repeatRuleId, occurrenceOn])
   @@index([assigneeId, status])
@@ -3168,9 +3186,11 @@ model Conversation {
   topic         String?
   /// Department channels: the department whose current employees (and head) are members.
   departmentId  String?          @map("department_id") @db.Uuid
-  /// Project channels: a free-text project name and code (Module 5 projects do not exist yet; M9 finance projects are not used).
+  /// Project channels: the project's name and code (copied from the Module 5 project when one is chosen).
   projectName   String?          @map("project_name")
   projectCode   String?          @map("project_code")
+  /// Project channels: the Module 5 project it belongs to (null for channels made before projects could be chosen).
+  projectId     String?          @map("project_id") @db.Uuid
   /// DMs only: the two people's ids in sorted order, so the same pair can never get a second DM (unique).
   dmKey         String?          @unique @map("dm_key")
   /// The last sequence number given to a message here. Raised in the same transaction as the message insert, under
@@ -3184,13 +3204,17 @@ model Conversation {
   archivedById  String?          @map("archived_by_id") @db.Uuid
 
   department       Department?               @relation(fields: [departmentId], references: [id])
+  project          Project?                  @relation(fields: [projectId], references: [id])
   members          ConversationMember[]
   reads            ConversationRead[]
   messages         Message[]
   pins             PinnedMessage[]
   departmentAccess DepartmentChannelAccess[]
 
+  files          CommsFile[]
+
   @@index([departmentId])
+  @@index([projectId])
   @@index([kind])
   @@map("conversations")
 }
@@ -3284,6 +3308,9 @@ model Message {
   saves        SavedMessage[]
   pin          PinnedMessage?
 
+  files        CommsFile[]
+  taskLink     MessageTaskLink?
+
   @@unique([conversationId, seq])
   @@unique([authorId, clientKey])
   @@index([conversationId, parentId, seq])
@@ -3362,4 +3389,194 @@ model PinnedMessage {
 
   @@index([conversationId])
   @@map("pinned_messages")
+}
+
+/// Module 14: an announcement to the whole company or to chosen departments (plan section 19). Who it reaches follows the
+/// CURRENT employee records (like department channels): someone who joins a department later sees its announcements.
+/// Never deleted; only the pin can change (database triggers).
+model Announcement {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  body        String
+  authorId    String    @map("author_id") @db.Uuid
+  /// Everyone in the company (otherwise: the departments in announcement_departments).
+  audienceAll Boolean   @map("audience_all")
+  requiresAck Boolean   @map("requires_ack")
+  pinned      Boolean   @default(false)
+  pinnedAt    DateTime? @map("pinned_at") @db.Timestamptz(3)
+  pinnedById  String?   @map("pinned_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  author      Employee                 @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+  pinnedBy    Employee?                @relation("AnnouncementPinnedBy", fields: [pinnedById], references: [id])
+  departments AnnouncementDepartment[]
+  acks        AnnouncementAck[]
+
+  @@index([createdAt])
+  @@map("announcements")
+}
+
+/// The departments an announcement is for (none when it is for everyone).
+model AnnouncementDepartment {
+  announcementId String @map("announcement_id") @db.Uuid
+  departmentId   String @map("department_id") @db.Uuid
+
+  announcement Announcement @relation(fields: [announcementId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+
+  @@id([announcementId, departmentId])
+  @@index([departmentId])
+  @@map("announcement_departments")
+}
+
+/// "I've read this": one row per person, insert-only (the record of who acknowledged and when).
+model AnnouncementAck {
+  announcementId String   @map("announcement_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  ackedAt        DateTime @default(now()) @map("acked_at") @db.Timestamptz(3)
+
+  announcement Announcement @relation(fields: [announcementId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([announcementId, employeeId])
+  @@index([employeeId])
+  @@map("announcement_acks")
+}
+
+/// A meeting invitee's answer.
+enum MeetingRsvp {
+  pending
+  yes
+  no
+  maybe
+
+  @@map("meeting_rsvp")
+}
+
+/// Module 14: a meeting (plan section 19: "create a meeting, invite participants, set date/time, share an agenda and attach
+/// notes or files"). Private to its organizer and the people invited. Never deleted: a cancelled meeting stays, read-only.
+model Meeting {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title            String
+  startsAt         DateTime  @map("starts_at") @db.Timestamptz(3)
+  durationMin      Int       @map("duration_min")
+  location         String
+  agenda           String    @default("")
+  /// Written by the organizer during or after the meeting; read by everyone invited.
+  notes            String?
+  notesUpdatedAt   DateTime? @map("notes_updated_at") @db.Timestamptz(3)
+  notesUpdatedById String?   @map("notes_updated_by_id") @db.Uuid
+  organizerId      String    @map("organizer_id") @db.Uuid
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById    String?   @map("cancelled_by_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  organizer      Employee             @relation("MeetingOrganizer", fields: [organizerId], references: [id])
+  notesUpdatedBy Employee?            @relation("MeetingNotesEditor", fields: [notesUpdatedById], references: [id])
+  cancelledBy    Employee?            @relation("MeetingCanceller", fields: [cancelledById], references: [id])
+  participants   MeetingParticipant[]
+  files          CommsFile[]
+  taskLinks      MeetingTaskLink[]
+
+  @@index([organizerId, startsAt])
+  @@index([startsAt])
+  @@map("meetings")
+}
+
+/// Someone invited to a meeting, with their answer. Invitations are never withdrawn (the meeting is cancelled instead).
+model MeetingParticipant {
+  meetingId   String      @map("meeting_id") @db.Uuid
+  employeeId  String      @map("employee_id") @db.Uuid
+  rsvp        MeetingRsvp @default(pending)
+  respondedAt DateTime?   @map("responded_at") @db.Timestamptz(3)
+  invitedAt   DateTime    @default(now()) @map("invited_at") @db.Timestamptz(3)
+  invitedById String      @map("invited_by_id") @db.Uuid
+
+  meeting   Meeting  @relation(fields: [meetingId], references: [id])
+  employee  Employee @relation("MeetingParticipant", fields: [employeeId], references: [id])
+  invitedBy Employee @relation("MeetingInviter", fields: [invitedById], references: [id])
+
+  @@id([meetingId, employeeId])
+  @@index([employeeId])
+  @@map("meeting_participants")
+}
+
+/// Where a shared file is in its malware check: files are opened only once "clean".
+enum CommsFileScan {
+  scanning
+  clean
+  blocked
+
+  @@map("comms_file_scan")
+}
+
+/// Module 14: a file shared in a conversation (attached to a message) or added to a meeting (plan section 19: "File
+/// sharing with file-type and size limits, malware scanning, private storage and permission-checked download links").
+/// The bytes are in private storage (never a public folder); a download goes through the API, which checks access every
+/// time. A blocked file's bytes are removed; the record stays. Never deleted.
+model CommsFile {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// A conversation file (then attached to one message when it is sent), or a meeting file.
+  conversationId String?       @map("conversation_id") @db.Uuid
+  messageId      String?       @map("message_id") @db.Uuid
+  meetingId      String?       @map("meeting_id") @db.Uuid
+  uploaderId     String        @map("uploader_id") @db.Uuid
+  fileName       String        @map("file_name")
+  mimeType       String        @map("mime_type")
+  sizeBytes      Int           @map("size_bytes")
+  sha256         String
+  storageKey     String        @unique @map("storage_key")
+  scanStatus     CommsFileScan @default(scanning) @map("scan_status")
+  /// What ClamAV found in a blocked file (a signature name, never file content).
+  scanSignature  String?       @map("scan_signature")
+  scannedAt      DateTime?     @map("scanned_at") @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// A conversation file uploaded but never sent: its bytes were removed after the grace period (the record stays).
+  discardedAt    DateTime?     @map("discarded_at") @db.Timestamptz(3)
+
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
+  message      Message?      @relation(fields: [messageId], references: [id])
+  meeting      Meeting?      @relation(fields: [meetingId], references: [id])
+  uploader     Employee      @relation(fields: [uploaderId], references: [id])
+
+  @@index([messageId])
+  @@index([meetingId])
+  @@index([conversationId])
+  @@index([scanStatus])
+  @@index([uploaderId, createdAt])
+  @@map("comms_files")
+}
+
+/// Module 14: a message linked to the Module 5 task it is about (one task per message). Only someone who may see the task
+/// links it; people who may not see it are told only that a task is linked, never which.
+model MessageTaskLink {
+  messageId  String   @id @map("message_id") @db.Uuid
+  taskId     String   @map("task_id") @db.Uuid
+  linkedById String   @map("linked_by_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  task     Task     @relation(fields: [taskId], references: [id])
+  linkedBy Employee @relation(fields: [linkedById], references: [id])
+
+  @@index([taskId])
+  @@map("message_task_links")
+}
+
+/// Module 14: Module 5 tasks a meeting is about (linked by its organizer).
+model MeetingTaskLink {
+  meetingId  String   @map("meeting_id") @db.Uuid
+  taskId     String   @map("task_id") @db.Uuid
+  linkedById String   @map("linked_by_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(3)
+
+  meeting  Meeting  @relation(fields: [meetingId], references: [id])
+  task     Task     @relation(fields: [taskId], references: [id])
+  linkedBy Employee @relation(fields: [linkedById], references: [id])
+
+  @@id([meetingId, taskId])
+  @@index([taskId])
+  @@map("meeting_task_links")
 }

@@ -2,26 +2,39 @@
  * Pure communication rules (plan §19). Mirrored on the server; unit-test these.
  */
 import { isSameDay, isToday, isYesterday } from "date-fns";
+import { COMMS_FILE_MAX_BYTES } from "@aceva/contracts";
+import { isLive } from "@/lib/api/http";
 import type { Employee } from "@/types";
 import { isTopLevelRole } from "@/types";
 import { formatWeekdayLong } from "@/lib/dates";
 import type { Message } from "./types";
 
-/** File sharing limits (plan §19: file-type and size limits). */
-export const FILE_LIMIT_BYTES = 25 * 1024 * 1024;
-export const ALLOWED_EXTENSIONS = ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "png", "jpg", "jpeg", "webp", "zip"];
+/**
+ * File sharing limits (plan §19: file-type and size limits). Live: the server's rules (PDF, PNG, JPEG and Word, 10 MB,
+ * recognised from the content); the demo keeps its wider list.
+ */
+const LIVE_FILES = isLive("m14");
+export const FILE_LIMIT_BYTES = LIVE_FILES ? COMMS_FILE_MAX_BYTES : 25 * 1024 * 1024;
+export const ALLOWED_EXTENSIONS = LIVE_FILES ? ["pdf", "png", "jpg", "jpeg", "docx"] : ["pdf", "docx", "xlsx", "pptx", "csv", "txt", "png", "jpg", "jpeg", "webp", "zip"];
 
 export function checkFile(name: string, size: number): string | null {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   if (!ALLOWED_EXTENSIONS.includes(ext)) return `“.${ext || "?"}” files can't be shared. Allowed: ${ALLOWED_EXTENSIONS.join(", ")}.`;
-  if (size > FILE_LIMIT_BYTES) return "Files must be 25 MB or smaller.";
+  if (size > FILE_LIMIT_BYTES) return `Files must be ${Math.round(FILE_LIMIT_BYTES / 1024 / 1024)} MB or smaller.`;
   return null;
 }
 
 export const QUICK_REACTIONS = ["👍", "🎉", "✅", "👀", "🙏", "😂"];
 
-/** Messages older than this are deleted by policy (placeholder until management decides, spec §14). */
+/** The demo's retention notice (live: the policy the comms admins recorded, GET /comms/policy). */
 export const RETENTION_TEXT = "Messages and files are kept for 2 years (placeholder until the Director confirms the retention period).";
+
+/** What conversation details say about retention, from the recorded policy. Nothing is removed automatically yet. */
+export function retentionNotice(p: { messageRetentionDays: number | null; fileRetentionDays: number | null }): string {
+  const period = (days: number | null) => (days === null ? "not set yet" : days % 365 === 0 ? `${days / 365} ${days === 365 ? "year" : "years"}` : `${days} days`);
+  if (p.messageRetentionDays === null && p.fileRetentionDays === null) return "Retention: management has not set the periods yet, so messages and files are kept.";
+  return `Retention set by management: messages ${period(p.messageRetentionDays)}, files ${period(p.fileRetentionDays)}. Automatic removal is not switched on yet.`;
+}
 
 export function dayLabel(iso: string) {
   const d = new Date(iso);

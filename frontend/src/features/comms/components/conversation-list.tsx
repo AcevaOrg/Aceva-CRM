@@ -37,8 +37,10 @@ export function ConversationList({
   const [search, setSearch] = React.useState("");
   const needle = search.trim().toLowerCase();
   const list = (q.data ?? []).filter((c) => !needle || title(c).toLowerCase().includes(needle) || (c.topic ?? "").toLowerCase().includes(needle));
-  const channels = list.filter((c) => c.kind === "channel").sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  const direct = list.filter((c) => c.kind !== "channel");
+  // Archived conversations stay readable, in a section of their own at the end.
+  const channels = list.filter((c) => c.kind === "channel" && !c.archived).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  const direct = list.filter((c) => c.kind !== "channel" && !c.archived);
+  const archived = list.filter((c) => c.archived);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -82,6 +84,7 @@ export function ConversationList({
           <>
             <Section title="Channels" items={channels} activeId={activeId} title_={title} />
             <Section title="Direct messages" items={direct} activeId={activeId} title_={title} />
+            <Section title="Archived" items={archived} activeId={activeId} title_={title} />
             {!list.length && <p className="px-3 py-6 text-center text-[13px] text-muted-foreground">No conversations match “{search}”.</p>}
           </>
         )}

@@ -7,6 +7,13 @@ import type { Attachment } from "@/types";
 
 export type ConversationKind = "dm" | "group" | "channel";
 
+/** A shared file and its malware check: opened only once "clean"; "blocked" files can never be opened. */
+export type CommsAttachment = Attachment & {
+  scan: "clean" | "scanning" | "blocked";
+  /** Live: uploaded but never sent within the grace period, so it was removed (it can no longer be sent or opened). */
+  discarded?: boolean;
+};
+
 export interface Conversation {
   id: string;
   kind: ConversationKind;
@@ -26,6 +33,8 @@ export interface Conversation {
   /** Live (Module 14 API): the conversation's latest message number, and whether it is archived (read-only). */
   lastSeq?: number;
   archived?: boolean;
+  /** Live: the viewer is not a member (a comms admin managing a channel): its messages are never shown. */
+  managingOnly?: boolean;
   /** What the viewer may do here. Decided by the server (live) or the demo rules (mock); the server checks again. */
   can?: ConversationCan;
   /** How each member belongs: added by hand, or through the department (department members follow the employee records). */
@@ -33,10 +42,17 @@ export interface Conversation {
 }
 
 export interface ConversationCan {
+  /** Rename and change the topic. */
   rename: boolean;
   manageMembers: boolean;
   /** The viewer can leave (only members added by hand; never a DM). */
   leave: boolean;
+  /** Live only (the server's answer); the demo leaves these out. */
+  post?: boolean;
+  manageModerators?: boolean;
+  archive?: boolean;
+  /** Remove someone else's message, with a reason (moderators; comms admins in channels). */
+  removeMessages?: boolean;
 }
 
 /** One search hit: the message and the conversation it is in (only conversations the viewer can see). */
@@ -65,16 +81,38 @@ export interface Message {
   lastReplyAt?: string;
   reactions: Reaction[];
   mentions: string[];
-  attachments: (Attachment & { scan: "clean" | "scanning" | "blocked" })[];
+  attachments: CommsAttachment[];
   /** DMs and groups: who has read it (excluding the author). */
   readBy: string[];
+  /** Live, DMs and groups: who has received it on a screen (excluding the author; everyone who read it received it). */
+  deliveredTo?: string[];
+  /** Deleted by a moderator (with a reason, in the audit log) rather than by its author. */
+  removedByModerator?: boolean;
   linkedTaskId?: string;
   linkedTaskNumber?: string;
   linkedTaskTitle?: string;
+  /**
+   * Live: a task is linked but this view does not say which (live updates are made for no one in particular, or the
+   * viewer may not see that task). The screen asks the server what this person may see (GET /comms/messages/:id/link).
+   */
+  linkHidden?: boolean;
   /** Live (Module 14 API): the message's number in its conversation (no gaps), pinned, and saved by me. */
   seq?: number;
   pinned?: boolean;
   savedByMe?: boolean;
+}
+
+/** One open conversation as the screens hold it: the conversation and its loaded history (top-level messages). */
+export interface MessagesData {
+  conversation: Conversation;
+  messages: Message[];
+  canPin: boolean;
+  /** Live: older messages exist before the loaded ones ("Load older messages"). */
+  hasMoreBefore?: boolean;
+  /** Live: the lowest message number loaded (replies included), where the next older page starts. */
+  historyFrom?: number;
+  /** Live: the person loaded older pages (a reload then keeps them). */
+  olderLoaded?: boolean;
 }
 
 /**
@@ -118,9 +156,11 @@ export interface Meeting {
   agenda: string;
   notes?: string;
   notesUpdatedAt?: string;
-  attachments: Attachment[];
+  attachments: (Attachment & { scan?: CommsAttachment["scan"] })[];
   linkedTaskIds: string[];
   cancelled?: boolean;
+  /** Live: the organizer may still add files (not cancelled). */
+  canAddFiles?: boolean;
 }
 
 export interface LinkedTaskRef {
@@ -133,6 +173,8 @@ export interface LinkedTaskRef {
 export interface MeetingDetail {
   meeting: Meeting;
   linkedTasks: LinkedTaskRef[];
+  /** Live: linked tasks this viewer may not see (Module 5's rule): counted, never named. */
+  hiddenLinkedTasks?: number;
 }
 
 export interface NewConversationInput {
@@ -152,6 +194,8 @@ export interface SendMessageInput {
   body: string;
   parentId?: string;
   attachments?: { fileName: string; sizeBytes: number; mimeType: string }[];
+  /** Live: files already uploaded to this conversation (and checked), attached when the message is sent. */
+  attachmentIds?: string[];
 }
 
 export interface NewAnnouncementInput {

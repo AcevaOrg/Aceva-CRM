@@ -148,6 +148,7 @@ export class ConversationService {
           departmentName: c.department?.name ?? null,
           projectName: c.projectName,
           projectCode: c.projectCode,
+          projectId: c.projectId ?? null,
           dmWith: dmOf.get(c.id) ?? null,
           archived: !!c.archivedAt,
           lastSeq: member ? c.lastSeq : 0,
@@ -255,6 +256,12 @@ export class ConversationService {
       if (!department) throw new BadRequestException({ statusCode: 400, code: 'unknown_department', message: 'That department does not exist or is deactivated' });
       departmentId = department.id;
     }
+    // A Module 5 project: the channel takes its name and code and stays linked to it.
+    let project: { id: string; name: string; code: string } | null = null;
+    if (input.scope === 'project' && input.projectId) {
+      project = await commsDb(() => this.prisma.project.findFirst({ where: { id: input.projectId, archivedAt: null }, select: { id: true, name: true, code: true } }));
+      if (!project) throw new BadRequestException({ statusCode: 400, code: 'unknown_project', message: 'That project does not exist or is archived' });
+    }
     const moderators = await this.activePeople(input.moderatorEmpIds.filter((e) => e !== actor.empId));
     const members = await this.activePeople(input.memberEmpIds.filter((e) => e !== actor.empId && !input.moderatorEmpIds.includes(e)));
     const id = await commsDb(() =>
@@ -266,8 +273,9 @@ export class ConversationService {
             name: input.name,
             topic: input.topic || null,
             departmentId,
-            projectName: input.scope === 'project' ? input.projectName! : null,
-            projectCode: input.scope === 'project' ? (input.projectCode ?? null) : null,
+            projectName: input.scope === 'project' ? (project?.name ?? input.projectName!) : null,
+            projectCode: input.scope === 'project' ? (project?.code ?? input.projectCode ?? null) : null,
+            projectId: project?.id ?? null,
             createdById: actor.id,
             createdAt: now,
             updatedAt: now,

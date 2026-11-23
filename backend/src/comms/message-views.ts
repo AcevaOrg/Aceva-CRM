@@ -4,6 +4,9 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CommsAccessService, type ConversationRow } from './comms-access.service';
 import { commsDb } from './comms-errors';
+import { commsFileSelect, toFileView } from './comms-file-view';
+import { visibleLinkedTasks } from './comms-task-links';
+import { ScopeService } from '../access/scope.service';
 
 type Db = PrismaService | Prisma.TransactionClient;
 
@@ -27,6 +30,7 @@ export class MessageViewBuilder {
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: CommsAccessService,
+    private readonly scope: ScopeService,
   ) {}
 
   /** `conversations` must hold every conversation the messages belong to (for receipts). */
@@ -34,13 +38,18 @@ export class MessageViewBuilder {
     if (!messages.length) return [];
     return commsDb(async () => {
       const ids = messages.map((m) => m.id);
-      const [reactions, mentions, replies, pins, saves] = await Promise.all([
+      const [reactions, mentions, replies, pins, saves, files, links] = await Promise.all([
         db.messageReaction.findMany({ where: { messageId: { in: ids } }, select: { messageId: true, emoji: true, createdAt: true, employee: { select: { empId: true } } }, orderBy: { createdAt: 'asc' } }),
         db.messageMention.findMany({ where: { messageId: { in: ids } }, select: { messageId: true, employee: { select: { empId: true } } } }),
         db.message.groupBy({ by: ['parentId'], where: { parentId: { in: ids }, deletedAt: null }, _count: { _all: true }, _max: { createdAt: true } }),
         db.pinnedMessage.findMany({ where: { messageId: { in: ids } }, select: { messageId: true } }),
         db.savedMessage.findMany({ where: { employeeId: viewerId, messageId: { in: ids } }, select: { messageId: true } }),
+        db.commsFile.findMany({ where: { messageId: { in: ids } }, select: commsFileSelect, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] }),
+        db.messageTaskLink.findMany({ where: { messageId: { in: ids } }, select: { messageId: true, taskId: true } }),
       ]);
+      // The linked tasks this viewer may see (Module 5's rule); the others stay unnamed.
+      const seeable = await visibleLinkedTasks(db, this.scope, viewerId, links.map((l) => l.taskId));
+      const linkOf = new Map(links.map((l) => [l.messageId, l.taskId]));
 
       // Receipts: DMs and groups only (channels show nobody's read position but your own).
       const receipts = new Map<string, Array<{ empId: string; fromSeq: number; delivered: number; read: number }>>();
@@ -89,6 +98,9 @@ export class MessageViewBuilder {
           mentions: deleted ? [] : mentions.filter((x) => x.messageId === m.id).map((x) => x.employee.empId).sort(),
           pinned: pinned.has(m.id),
           savedByMe: saved.has(m.id),
+          // A deleted message's files are gone from the screens too (and refused for download).
+          attachments: deleted ? [] : files.filter((f) => f.messageId === m.id).map(toFileView),
+          link: deleted || !linkOf.has(m.id) ? null : { task: seeable.get(linkOf.get(m.id)!) ?? null },
           receipt: others ? { deliveredTo: others.filter((p) => p.delivered >= m.seq).map((p) => p.empId), readBy: others.filter((p) => p.read >= m.seq).map((p) => p.empId) } : null,
         };
       });

@@ -21,6 +21,10 @@ import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useCreateMeeting } from "../hooks";
 import { checkFile } from "../logic";
+import { isLive } from "@/lib/api/http";
+
+/** Live: files are added on the meeting page (uploaded, scanned and stored privately), not here. */
+const LIVE = isLive("m14");
 
 const schema = z
   .object({
@@ -183,6 +187,9 @@ export function NewMeetingSheet({ open, onOpenChange }: { open: boolean; onOpenC
               )}
             </Field>
 
+            {LIVE ? (
+              <p className="rounded-lg bg-muted px-3 py-2 text-[12.5px] text-muted-foreground">Add files on the meeting page once it is created: each file is checked for viruses before anyone can open it.</p>
+            ) : (
             <Field label="Files (optional)">
               <input
                 ref={fileRef}
@@ -212,6 +219,7 @@ export function NewMeetingSheet({ open, onOpenChange }: { open: boolean; onOpenC
                 ))}
               </div>
             </Field>
+            )}
             <p className="text-[12px] text-muted-foreground">Calendar integration (Google or Outlook) can be added later if the Director approves it.</p>
           </SheetBody>
           <SheetFooter>

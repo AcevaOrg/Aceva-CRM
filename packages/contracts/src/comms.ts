@@ -20,6 +20,8 @@ export const MESSAGE_MAX_LENGTH = 4000;
 export const MESSAGE_EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** At most this many messages per person per minute (server-side limit). */
 export const MESSAGE_RATE_LIMIT_PER_MINUTE = 30;
+/** At most this many files on one message. */
+export const COMMS_FILES_PER_MESSAGE = 5;
 export const GROUP_MAX_MEMBERS = 50;
 
 export const conversationKindSchema = z.enum(['dm', 'group', 'channel']);
@@ -84,15 +86,17 @@ export const createConversationSchema = z.discriminatedUnion('kind', [
       departmentId: departmentCode.optional(),
       projectName: z.string().trim().min(1).max(120).optional(),
       projectCode: z.string().trim().min(1).max(40).optional(),
+      /** A Module 5 project (GET /projects): its name and code are used, and the channel is linked to it. */
+      projectId: z.uuid().optional(),
       memberEmpIds: empIdList(500).default([]),
       moderatorEmpIds: empIdList(20).default([]),
     })
     .superRefine((v, ctx) => {
       if (v.scope === 'department') {
         if (!v.departmentId) ctx.addIssue({ code: 'custom', path: ['departmentId'], message: 'Choose the department' });
-        if (v.projectName || v.projectCode) ctx.addIssue({ code: 'custom', path: ['projectName'], message: 'A department channel has no project' });
+        if (v.projectName || v.projectCode || v.projectId) ctx.addIssue({ code: 'custom', path: ['projectName'], message: 'A department channel has no project' });
       } else {
-        if (!v.projectName) ctx.addIssue({ code: 'custom', path: ['projectName'], message: 'Enter the project name' });
+        if (!v.projectName && !v.projectId) ctx.addIssue({ code: 'custom', path: ['projectName'], message: 'Choose the project or enter its name' });
         if (v.departmentId) ctx.addIssue({ code: 'custom', path: ['departmentId'], message: 'A project channel has no department' });
       }
     }),
@@ -139,6 +143,12 @@ export const sendMessageSchema = z.object({
   body: messageBodySchema,
   /** A reply to a top-level message of the same conversation. */
   parentId: z.uuid().optional(),
+  /** Files I uploaded to this conversation and have not attached yet (POST /comms/conversations/:id/files). */
+  attachmentIds: z
+    .array(z.uuid())
+    .max(COMMS_FILES_PER_MESSAGE)
+    .refine((v) => new Set(v).size === v.length, 'Each file only once')
+    .optional(),
 });
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
@@ -169,6 +179,34 @@ export type MessageSearchQuery = z.infer<typeof messageSearchQuerySchema>;
 
 export const savedMessagesQuerySchema = z.object({ cursor: cursorSchema.optional(), limit: limit(100, 50) });
 
+// ---------- Files (plan section 19: type and size limits, malware scanning, private storage, checked downloads) ----------
+
+/** At most 10 MB per file, the same limit as task files. */
+export const COMMS_FILE_MAX_BYTES = 10 * 1024 * 1024;
+/** Uploads per person (every accepted upload counts, also ones later blocked or never sent): `429 rate_limited`. */
+export const COMMS_UPLOADS_PER_MINUTE = 10;
+export const COMMS_UPLOADS_PER_HOUR = 60;
+/** A file uploaded to a conversation but never sent is discarded (its bytes removed) after this many hours. */
+export const COMMS_UNSENT_FILE_GRACE_HOURS = 24;
+/** What the server accepts, recognised from the file's first bytes (never from its name): PDF, PNG, JPEG and Word (.docx). */
+export const COMMS_FILE_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
+
+/**
+ * A shared file. `scan`: "scanning" until ClamAV has checked it (it cannot be opened yet), "clean" (it can be downloaded
+ * by the people who may see it), or "blocked" (malware was found; the file was removed and can never be opened).
+ */
+export interface CommsFileView {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  scan: 'scanning' | 'clean' | 'blocked';
+  uploaderEmpId: string;
+  uploadedAt: string;
+  /** Uploaded but never sent within the grace period: its bytes were removed (it can no longer be sent or opened). */
+  discarded: boolean;
+}
+
 // ---------- Responses ----------
 
 export interface ConversationMemberView {
@@ -192,6 +230,8 @@ export interface ConversationSummary {
   departmentName: string | null;
   projectName: string | null;
   projectCode: string | null;
+  /** Project channels linked to a Module 5 project. */
+  projectId: string | null;
   /** DMs: the other person. */
   dmWith: { empId: string; fullName: string } | null;
   archived: boolean;
@@ -240,7 +280,25 @@ export interface MessageView {
   savedByMe: boolean;
   /** DMs and groups only: which other members have received and read it (null in channels). */
   receipt: { deliveredTo: string[]; readBy: string[] } | null;
+  /** Files shared with the message (none once it is deleted). */
+  attachments: CommsFileView[];
+  /**
+   * The Module 5 task the message is linked to. null: no link. { task: null }: a task is linked but this viewer may not
+   * see it (or the view was made for no one in particular: ask GET /comms/messages/:id/link), so nothing about it is told.
+   */
+  link: { task: LinkedTaskView | null } | null;
 }
+
+/** A Module 5 task as Module 14 shows it, only to people who may see that task. */
+export interface LinkedTaskView {
+  id: string;
+  number: string;
+  title: string;
+  status: string;
+}
+
+/** Link a message (or a meeting) to a task, by its number (TSK-0001) or id. Never a personal to-do. */
+export const linkTaskSchema = z.object({ task: z.string().trim().min(1).max(40) });
 
 export interface MessagePage {
   items: MessageView[];
@@ -285,4 +343,177 @@ export interface AdminChannelView {
   archived: boolean;
   memberCount: number;
   moderatorEmpIds: string[];
+}
+
+// ---------- Announcements (plan section 19) ----------
+
+/**
+ * Who an announcement is for: everyone, or chosen departments (by code). The audience follows the CURRENT employee
+ * records, like department channels: someone who joins one of those departments later sees it too.
+ */
+export const announcementAudienceSchema = z
+  .object({
+    all: z.boolean(),
+    departmentIds: z
+      .array(departmentCode)
+      .max(20)
+      .refine((v) => new Set(v).size === v.length, 'Each department only once')
+      .default([]),
+  })
+  .refine((v) => v.all || v.departmentIds.length > 0, { path: ['departmentIds'], message: 'Choose at least one department, or send it to everyone' })
+  .refine((v) => !v.all || v.departmentIds.length === 0, { path: ['departmentIds'], message: 'An announcement for everyone has no departments' });
+
+/** announcements.publish: a new announcement. What was announced never changes afterwards; only its pin can. */
+export const publishAnnouncementSchema = z.object({
+  title: z.string().trim().min(4, 'A short, clear title').max(150),
+  body: z.string().trim().min(10, 'Write at least a sentence').max(5000),
+  audience: announcementAudienceSchema,
+  pinned: z.boolean().default(false),
+  requiresAck: z.boolean().default(false),
+});
+export type PublishAnnouncementInput = z.infer<typeof publishAnnouncementSchema>;
+
+export const announcementListQuerySchema = z.object({ cursor: cursorSchema.optional(), limit: limit(100, 50) });
+
+export interface AnnouncementView {
+  id: string;
+  title: string;
+  body: string;
+  authorEmpId: string;
+  audience: { all: boolean; departmentIds: string[] };
+  pinned: boolean;
+  requiresAck: boolean;
+  createdAt: string;
+  /** The viewer is one of the people it is for (an author is not, unless the audience includes them). */
+  inAudience: boolean;
+  acknowledgedByMe: boolean;
+  /**
+   * Publishers only (the author and people with announcements.publish), for announcements that ask for
+   * acknowledgement: everyone it is for now, and who of them has acknowledged. Null for everyone else.
+   */
+  progress: { audienceEmpIds: string[]; ackEmpIds: string[] } | null;
+  can: { pin: boolean };
+}
+
+// ---------- Meetings (plan section 19) ----------
+
+export const MEETING_MAX_PARTICIPANTS = 50;
+export const meetingRsvpSchema = z.enum(['yes', 'no', 'maybe']);
+export type MeetingRsvpAnswer = z.infer<typeof meetingRsvpSchema>;
+
+const meetingTitle = z.string().trim().min(3, 'A short, clear title').max(150);
+const meetingLocation = z.string().trim().min(2, 'Where, or which video link?').max(150);
+const meetingAgenda = z.string().trim().max(5000);
+const meetingDuration = z.number().int().min(5).max(480);
+
+/** Anyone (comms.use) can organise a meeting with current colleagues. The organizer is not an invitee of their own meeting. */
+export const createMeetingSchema = z.object({
+  title: meetingTitle,
+  startsAt: z.iso.datetime({ offset: true }),
+  durationMin: meetingDuration,
+  location: meetingLocation,
+  agenda: meetingAgenda.default(''),
+  participantEmpIds: empIdList(MEETING_MAX_PARTICIPANTS).refine((v) => v.length >= 1, 'Invite at least one person'),
+});
+export type CreateMeetingInput = z.infer<typeof createMeetingSchema>;
+
+/** The organizer changes the meeting, or writes the notes (null clears them). */
+export const updateMeetingSchema = z
+  .object({
+    title: meetingTitle.optional(),
+    startsAt: z.iso.datetime({ offset: true }).optional(),
+    durationMin: meetingDuration.optional(),
+    location: meetingLocation.optional(),
+    agenda: meetingAgenda.optional(),
+    notes: z.string().max(20000).nullable().optional(),
+  })
+  .refine((v) => Object.values(v).some((x) => x !== undefined), 'Nothing to change');
+export type UpdateMeetingInput = z.infer<typeof updateMeetingSchema>;
+
+export const inviteToMeetingSchema = z.object({ empIds: empIdList(MEETING_MAX_PARTICIPANTS).refine((v) => v.length >= 1, 'Choose at least one person') });
+export const meetingRsvpBodySchema = z.object({ rsvp: meetingRsvpSchema });
+export const cancelMeetingSchema = z.object({ reason: decisionReasonSchema });
+export const meetingListQuerySchema = z.object({
+  /** From this moment (default: 30 days ago). */
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+});
+
+export interface MeetingParticipantView {
+  empId: string;
+  fullName: string;
+  rsvp: 'pending' | MeetingRsvpAnswer;
+  respondedAt: string | null;
+}
+
+export interface MeetingView {
+  id: string;
+  title: string;
+  startsAt: string;
+  durationMin: number;
+  location: string;
+  agenda: string;
+  notes: string | null;
+  notesUpdatedAt: string | null;
+  organizerEmpId: string;
+  participants: MeetingParticipantView[];
+  cancelled: boolean;
+  cancelledAt: string | null;
+  /** Files the organizer added (opened only once their malware check is clean). */
+  attachments: CommsFileView[];
+  /** Linked Module 5 tasks this viewer may see, and how many more are linked that they may not see. */
+  linkedTasks: LinkedTaskView[];
+  hiddenLinkedTasks: number;
+  can: { edit: boolean; rsvp: boolean; cancel: boolean; invite: boolean; addFiles: boolean };
+}
+
+// ---------- Retention (plan section 19: "Define message and file retention periods with management before launch";
+// "Admins can ... manage retention") ----------
+
+/**
+ * Module 14 settings (GET/PUT /settings/modules/comms, comms admins, "confirm again", audited with a reason). The periods
+ * are management's decision: null means none has been set yet, and everything is kept. Automatic removal is not part of
+ * this release (it waits for management's periods); the screens show the policy as set.
+ */
+export const commsSettingsSchema = z.object({
+  messageRetentionDays: z.number().int().min(30).max(3650).nullable(),
+  fileRetentionDays: z.number().int().min(30).max(3650).nullable(),
+});
+export type CommsSettings = z.infer<typeof commsSettingsSchema>;
+
+/** GET /comms/policy: what everyone is told in conversation details. */
+export interface CommsPolicyView {
+  messageRetentionDays: number | null;
+  fileRetentionDays: number | null;
+  /** False in this release: nothing is removed automatically yet. */
+  automaticRemoval: boolean;
+}
+
+// ---------- Security and audit events (plan section 19: "Admins can ... review security/audit events") ----------
+
+export const commsAuditQuerySchema = z.object({
+  /** One action (for example comms.file.blocked), or a group: messages, conversations, files, announcements, meetings, settings. */
+  action: z.string().trim().min(1).max(80).optional(),
+  outcome: z.enum(['success', 'denied']).optional(),
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+  cursor: cursorSchema.optional(),
+  limit: limit(200, 50),
+});
+export type CommsAuditQuery = z.infer<typeof commsAuditQuerySchema>;
+
+/**
+ * comms.admin: one Module 14 audit record. Metadata only: ids, Emp-IDs, numbers, reasons typed for the audit and
+ * scanner findings; never message text, file names, agendas or notes (those are never written to the audit log).
+ */
+export interface CommsAuditEventView {
+  id: string;
+  at: string;
+  actorEmpId: string | null;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  outcome: 'success' | 'denied';
+  reason: string | null;
+  details: Record<string, unknown> | null;
 }

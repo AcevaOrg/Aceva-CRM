@@ -649,9 +649,20 @@ export const commsMessageChangedV1 = defineEvent(
   z.object({
     conversationId: z.uuid(),
     messageId: z.uuid(),
-    change: z.enum(['edited', 'deleted', 'removed', 'reaction', 'pinned', 'unpinned']),
+    /** file_scanned: a file attached to the message finished its malware check (clean or blocked). */
+    change: z.enum(['edited', 'deleted', 'removed', 'reaction', 'pinned', 'unpinned', 'file_scanned', 'task_link']),
   }),
 );
+
+/** M14: people were invited to a meeting (at creation or later; never the agenda or notes). */
+export const commsMeetingInvitedV1 = defineEvent(
+  'comms.meeting.invited',
+  1,
+  z.object({ meetingId: z.uuid(), empIds: z.array(empIdSchema).min(1), byEmpId: empIdSchema }),
+);
+
+/** M14: the organizer cancelled a meeting (never the reason text). */
+export const commsMeetingCancelledV1 = defineEvent('comms.meeting.cancelled', 1, z.object({ meetingId: z.uuid(), byEmpId: empIdSchema }));
 
 /** M14: someone stopped being a member of a conversation (removed by a moderator or admin, left, or left the company). */
 export const commsMemberRemovedV1 = defineEvent(
@@ -711,6 +722,8 @@ export const outboxEventSchemas = {
   'comms.message.created': { 1: commsMessageCreatedV1 },
   'comms.message.changed': { 1: commsMessageChangedV1 },
   'comms.member.removed': { 1: commsMemberRemovedV1 },
+  'comms.meeting.invited': { 1: commsMeetingInvitedV1 },
+  'comms.meeting.cancelled': { 1: commsMeetingCancelledV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -760,6 +773,8 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   commsMessageCreatedV1,
   commsMessageChangedV1,
   commsMemberRemovedV1,
+  commsMeetingInvitedV1,
+  commsMeetingCancelledV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

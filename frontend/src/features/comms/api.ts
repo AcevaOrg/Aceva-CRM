@@ -1,10 +1,10 @@
 /**
  * Module 14 service functions. Each JSDoc names the real endpoint (spec §7.3).
  * People only see conversations they belong to (plan §19).
- * Live (NEXT_PUBLIC_LIVE_MODULES contains m14): conversations and messages come from the real API (live-api.ts) and
- * arrive live over the WebSocket (realtime.ts); announcements and meetings stay on the demo data until their parts of
- * Module 14 are built.
+ * Live (NEXT_PUBLIC_LIVE_MODULES contains m14): conversations, messages, announcements and meetings come from the real
+ * API (live-api.ts); messages arrive live over the WebSocket (realtime.ts).
  */
+import type { AdminChannelView } from "@aceva/contracts";
 import { tasksTable } from "@/features/tasks/api";
 import { isLive } from "@/lib/api/http";
 import { ApiError, mock, notFound } from "@/lib/api/mock";
@@ -18,7 +18,7 @@ import {
 import { liveCommsApi } from "./live-api";
 import { canCreateChannel, parseMentions, seesAllAnnouncements } from "./logic";
 import type {
-  Announcement, AnnouncementWithStats, Conversation, ConversationCan, LinkedTaskRef, Meeting, MeetingDetail, Message, MessageSearchResult, NewAnnouncementInput,
+  Announcement, AnnouncementWithStats, Conversation, ConversationCan, LinkedTaskRef, Meeting, MeetingDetail, Message, MessageSearchResult, MessagesData, NewAnnouncementInput,
   NewConversationInput, NewMeetingInput, Presence, Rsvp, SendMessageInput,
 } from "./types";
 
@@ -119,7 +119,7 @@ const mockCommsApi = {
         .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt));
     }, { delay: 120 }),
 
-  /** GET /conversations/:id/messages (top level; replies come from the thread endpoint) */
+  /** GET /conversations/:id/messages (top level; replies come from the thread endpoint). The demo returns everything. */
   messages: (id: string) =>
     mock(() => {
       const c = memberConv(id);
@@ -127,7 +127,7 @@ const mockCommsApi = {
         .filter((m) => m.conversationId === id && !m.parentId)
         .sort((a, b) => a.at.localeCompare(b.at))
         .map((m) => toMessage(m, c));
-      return { conversation: toConversation(c, me()), messages: list, canPin: canPin(c) };
+      return { conversation: toConversation(c, me()), messages: list, canPin: canPin(c), hasMoreBefore: false } as MessagesData;
     }, { delay: 120 }),
 
   /** GET /messages/:id/thread */
@@ -312,6 +312,72 @@ const mockCommsApi = {
       c.moderatorEmpIds = c.moderatorEmpIds.filter((p) => p !== empId);
     }),
 
+  /** GET /conversations/:id/messages?before=N (the demo always returns the whole history at once) */
+  older: (_id: string, before: number) => mock(() => ({ messages: [] as Message[], hasMoreBefore: false, historyFrom: before })),
+
+  /** GET /conversations/:id/pins */
+  pins: (id: string) =>
+    mock(() => {
+      const c = memberConv(id);
+      return msgs().filter((m) => m.conversationId === id && c.pinnedMessageIds.includes(m.id) && !m.deleted).map((m) => toMessage(m, c));
+    }),
+
+  /** PATCH /conversations/:id { topic } */
+  setTopic: (id: string, topic: string | null) =>
+    mock(() => {
+      const c = memberConv(id);
+      if (!mockCan(c, me()).rename) throw new ApiError("forbidden", "You can't change the topic here.", 403);
+      c.topic = topic?.trim() || undefined;
+    }),
+
+  /** PUT|DELETE /conversations/:id/moderators/:empId (the demo: whoever may manage members) */
+  setModerator: (id: string, empId: string, moderator: boolean) =>
+    mock(() => {
+      const c = memberConv(id);
+      if (!mockCan(c, me()).manageMembers) throw new ApiError("forbidden", "You can't change moderators here.", 403);
+      c.moderatorEmpIds = moderator ? Array.from(new Set([...c.moderatorEmpIds, empId])) : c.moderatorEmpIds.filter((p) => p !== empId);
+    }),
+
+  /** POST /conversations/:id/archive { reason } (the demo keeps no archive) */
+  archive: (id: string, reason: string) =>
+    mock<void>(() => {
+      memberConv(id);
+      if (reason.trim().length < 5) throw new ApiError("validation", "Please give a reason (at least 5 characters).");
+      throw new ApiError("not_available", "Archiving works with the real server only.", 501);
+    }),
+
+  /** POST /messages/:id/remove { reason } */
+  removeAsModerator: (id: string, reason: string) =>
+    mock(() => {
+      if (reason.trim().length < 5) throw new ApiError("validation", "Please give a reason (at least 5 characters).");
+      const m = msgs().find((x) => x.id === id);
+      if (!m) notFound("Message");
+      const c = memberConv(m.conversationId);
+      if (!c.moderatorEmpIds.includes(me())) throw new ApiError("forbidden", "Only a moderator can remove other people's messages.", 403);
+      m.deleted = true;
+      m.body = "";
+      m.attachments = [];
+    }),
+
+  /** GET /comms/admin/channels (comms.admin) */
+  adminChannels: () =>
+    mock<AdminChannelView[]>(() =>
+      convs()
+        .filter((c) => c.kind === "channel")
+        .map((c) => ({
+          id: c.id,
+          scope: (c.scope?.departmentId ? "department" : "project") as "department" | "project",
+          name: c.name ?? "",
+          topic: c.topic ?? null,
+          departmentId: c.scope?.departmentId ?? null,
+          projectName: c.scope?.projectId ?? null,
+          projectCode: null,
+          archived: false,
+          memberCount: c.memberEmpIds.length,
+          moderatorEmpIds: c.moderatorEmpIds,
+        })),
+    ),
+
   /** GET /comms/search?q (only conversations I am in) */
   search: (q: string) =>
     mock<MessageSearchResult[]>(() => {
@@ -446,8 +512,9 @@ const mockCommsApi = {
     }),
 
   /** POST /meetings/:id/cancel { reason } (organizer only) */
-  cancelMeeting: (id: string) =>
+  cancelMeeting: (id: string, reason: string) =>
     mock(() => {
+      if (reason.trim().length < 5) throw new ApiError("validation", "Please give a reason (at least 5 characters).");
       const m = meetingsTable().find((x) => x.id === id);
       if (!m) notFound("Meeting");
       if (m.organizer !== me()) throw new ApiError("forbidden", "Only the organizer can cancel.", 403);

@@ -21,6 +21,14 @@ export const envSchema = z.object({
     .min(1, 'DATABASE_URL is required')
     .refine((v) => /^postgres(ql)?:\/\//.test(v), 'DATABASE_URL must start with postgresql://'),
   FILE_STORAGE_ROOT: z.string().min(1).default('./.local-storage'),
+  /**
+   * The ClamAV daemon (clamd) that checks every file shared in Module 14 before anyone can open it (plan section 19:
+   * "malware scanning"). Local only by default. When it cannot be reached, files stay "scanning" and cannot be
+   * downloaded until a later check passes (fail closed).
+   */
+  CLAMD_HOST: z.string().min(1).default('127.0.0.1'),
+  CLAMD_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+  CLAMD_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300_000).default(60_000),
 
   /** Redis holds the fast copy of every session (PostgreSQL keeps the permanent record). */
   REDIS_URL: z

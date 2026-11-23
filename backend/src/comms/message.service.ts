@@ -25,13 +25,19 @@ import { CommsAccessService, conversationInclude, notFound, type ConversationRow
 import { CommsDbError, commsDb } from './comms-errors';
 import { decodeCursor, encodeCursor } from './cursor';
 import { MessageViewBuilder, messageSelect, type MessageRow } from './message-views';
+import { CommsFileService } from './comms-file.service';
+import { visibleLinkedTasks } from './comms-task-links';
+import { ScopeService } from '../access/scope.service';
+import { loadVisibleTask } from '../tasks/task-access';
 import { CommsRealtimePublisher } from './realtime/comms-realtime.publisher';
 
 type Tx = Prisma.TransactionClient;
 
 /** What a retry key stands for: the conversation, the text and the reply target exactly as first sent. */
-export function requestHashOf(conversationId: string, body: string, parentId: string | null): string {
-  return createHash('sha256').update(JSON.stringify([conversationId, body, parentId])).digest('hex');
+export function requestHashOf(conversationId: string, body: string, parentId: string | null, attachmentIds: readonly string[] = []): string {
+  // Files are part of what was sent (a message without files keeps the same hash as before files existed).
+  const parts: unknown[] = attachmentIds.length ? [conversationId, body, parentId, [...attachmentIds].sort()] : [conversationId, body, parentId];
+  return createHash('sha256').update(JSON.stringify(parts)).digest('hex');
 }
 
 const archived = (): never => {
@@ -56,6 +62,8 @@ export class MessageService {
     private readonly outbox: OutboxService,
     private readonly clock: Clock,
     private readonly realtime: CommsRealtimePublisher,
+    private readonly files: CommsFileService,
+    private readonly scope: ScopeService,
   ) {}
 
   // ---------- Sending ----------
@@ -64,7 +72,8 @@ export class MessageService {
     const access = await this.access.memberAccess(actor, conversationId);
     const c = access.conversation;
     const parentId = input.parentId ?? null;
-    const requestHash = requestHashOf(c.id, input.body, parentId);
+    const attachmentIds = input.attachmentIds ?? [];
+    const requestHash = requestHashOf(c.id, input.body, parentId, attachmentIds);
 
     // A retry of a message already saved: the same message again (or a conflict when the key was reused for something else).
     const previous = await this.byClientKey(actor.id, input.clientKey);
@@ -80,6 +89,7 @@ export class MessageService {
       }
     }
     const mentioned = await this.validateMentions(c, input.body);
+    await this.files.checkAttachable(actor, c.id, attachmentIds);
     const now = this.clock.now();
 
     try {
@@ -99,6 +109,7 @@ export class MessageService {
           if (mentioned.length) {
             await tx.messageMention.createMany({ data: mentioned.map((m) => ({ messageId: created.id, employeeId: m.id, createdAt: now })) });
           }
+          await this.files.attach(tx, actor, c.id, created.id, attachmentIds);
           await this.advance(tx, c.id, actor.id, created.seq, now);
           const eventId = await this.outbox.emit(
             {
@@ -379,7 +390,7 @@ export class MessageService {
    * Records that a message changed (ids only), in the same transaction as the change. The live update is sent after the
    * commit; if it is lost, the outbox safety net re-sends it (Module 14, part 2). Returns the event id.
    */
-  private changed(tx: Tx, actor: Actor, conversationId: string, messageId: string, change: 'edited' | 'deleted' | 'removed' | 'reaction' | 'pinned' | 'unpinned'): Promise<string> {
+  private changed(tx: Tx, actor: Actor, conversationId: string, messageId: string, change: 'edited' | 'deleted' | 'removed' | 'reaction' | 'pinned' | 'unpinned' | 'task_link'): Promise<string> {
     return this.outbox.emit({ type: 'comms.message.changed', actor: actor.empId, payload: { conversationId, messageId, change } }, tx);
   }
 
@@ -443,6 +454,69 @@ export class MessageService {
       await commsDb(() => this.prisma.savedMessage.deleteMany({ where: { employeeId: actor.id, messageId: message.id } }));
     }
     return this.view(actor.id, message.id, access.conversation);
+  }
+
+  // ---------- Links to Module 5 tasks ----------
+
+  /**
+   * Links the message to a task (replacing an earlier link). Anyone who may post here, for a task THEY may see under
+   * Module 5's rule; never a personal to-do. The other members see the task only if Module 5 lets them.
+   */
+  async linkTask(actor: Actor, messageId: string, taskKey: string, client: RequestInfo): Promise<MessageView> {
+    const { message, access } = await this.messageAccess(actor, messageId);
+    const c = access.conversation;
+    if (c.archivedAt) archived();
+    if (message.deletedAt) deletedMessage();
+    if (!this.access.capabilities(access).post) throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'You cannot change messages here' });
+    const task = await loadVisibleTask(this.prisma, this.scope, actor, taskKey);
+    if (task.personal) throw new BadRequestException({ statusCode: 400, code: 'personal_task', message: 'A personal to-do cannot be linked' });
+    const now = this.clock.now();
+    const eventId = await commsDb(() =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.messageTaskLink.upsert({
+          where: { messageId: message.id },
+          create: { messageId: message.id, taskId: task.id, linkedById: actor.id, linkedAt: now },
+          update: { taskId: task.id, linkedById: actor.id, linkedAt: now },
+        });
+        await this.audit.record({ actorId: actor.id, action: 'comms.message.task_linked', targetType: 'message', targetId: message.id, details: { conversationId: c.id, task: task.number }, ...client }, tx);
+        return this.changed(tx, actor, c.id, message.id, 'task_link');
+      }),
+    );
+    await this.realtime.messageUpdated(c.id, message.id, eventId);
+    return this.view(actor.id, message.id, c);
+  }
+
+  /** Removes the link: the person who linked it, the message's author, or a moderator. */
+  async unlinkTask(actor: Actor, messageId: string, client: RequestInfo): Promise<MessageView> {
+    const { message, access } = await this.messageAccess(actor, messageId);
+    const c = access.conversation;
+    if (c.archivedAt) archived();
+    const link = await commsDb(() => this.prisma.messageTaskLink.findUnique({ where: { messageId: message.id } }));
+    if (link) {
+      const caps = this.access.capabilities(access);
+      if (link.linkedById !== actor.id && message.author.empId !== actor.empId && !caps.removeMessages) {
+        throw new ForbiddenException({ statusCode: 403, code: 'forbidden', message: 'Only the person who linked it, the author or a moderator can remove the link' });
+      }
+      const eventId = await commsDb(() =>
+        this.prisma.$transaction(async (tx) => {
+          await tx.messageTaskLink.delete({ where: { messageId: message.id } });
+          await this.audit.record({ actorId: actor.id, action: 'comms.message.task_unlinked', targetType: 'message', targetId: message.id, details: { conversationId: c.id, taskId: link.taskId }, ...client }, tx);
+          return this.changed(tx, actor, c.id, message.id, 'task_link');
+        }),
+      );
+      await this.realtime.messageUpdated(c.id, message.id, eventId);
+    }
+    return this.view(actor.id, message.id, c);
+  }
+
+  /** GET /comms/messages/:id/link: the linked task as THIS person may see it (live updates are made for no one in particular). */
+  async link(actor: Actor, messageId: string): Promise<MessageView['link']> {
+    const { message } = await this.messageAccess(actor, messageId);
+    if (message.deletedAt) return null;
+    const link = await commsDb(() => this.prisma.messageTaskLink.findUnique({ where: { messageId: message.id }, select: { taskId: true } }));
+    if (!link) return null;
+    const seeable = await visibleLinkedTasks(this.prisma, this.scope, actor.id, [link.taskId]);
+    return { task: seeable.get(link.taskId) ?? null };
   }
 
   // ---------- Helpers ----------

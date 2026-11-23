@@ -30,9 +30,17 @@ import { apiOrigin } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { liveCommsApi, messagesAfter, toMessage } from "./live-api";
 import { knownSeq, noteSeq, presenceStore, resetLiveStore } from "./live-store";
-import type { Conversation, Message } from "./types";
+import type { Conversation, Message, MessagesData } from "./types";
 
-type MessagesData = { conversation: Conversation; messages: Message[]; canPin: boolean };
+/**
+ * A reload of an open conversation from the database. When the person had scrolled up and loaded older history, the
+ * reload starts from there, so those messages stay on the screen (current, not as they were before the break).
+ */
+function reloadKeepingHistory(qc: QueryClient, id: string): Promise<MessagesData> {
+  const data = qc.getQueryData<MessagesData>(keys.messages(id));
+  const loadedOlder = data?.historyFrom !== undefined && data.olderLoaded;
+  return liveCommsApi.messages(id, loadedOlder ? { seq: data.historyFrom!, hasMoreBefore: !!data.hasMoreBefore } : undefined);
+}
 type ThreadData = { parent: Message; replies: Message[] };
 type CommsSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -173,7 +181,7 @@ class CommsRealtime {
       if (!id || !q.state.data) continue;
       if (this.lost.has(id)) continue;
       jobs.push(
-        liveCommsApi.messages(id).then(
+        reloadKeepingHistory(this.qc, id).then(
           (fresh) => {
             if (!this.lost.has(id)) this.qc.setQueryData(keys.messages(id), fresh);
           },
@@ -241,6 +249,8 @@ class CommsRealtime {
   /** Adds a new message, or replaces the one with the same id (a duplicate is the same message: nothing changes). */
   private merge(m: Message, updateOnly = false): void {
     if (this.lost.has(m.conversationId)) return; // no longer this person's conversation
+    // Live updates never name a linked task (they are made for no one in particular): the screen asks again.
+    if (m.linkHidden) void this.qc.invalidateQueries({ queryKey: ["comms", "link", m.id] });
     // Pinned or unpinned (a deleted message is also unpinned): the conversation's pin list, which the header's pin count
     // and the details panel show, follows at once.
     if (m.pinned !== undefined) {
@@ -294,9 +304,15 @@ class CommsRealtime {
       if (!data || data.conversation.kind === "channel") return data;
       return {
         ...data,
-        messages: data.messages.map((m) =>
-          m.author !== e.empId && (m.seq ?? Infinity) <= e.lastReadSeq && !m.readBy.includes(e.empId) ? { ...m, readBy: [...m.readBy, e.empId] } : m,
-        ),
+        // Per message: received (delivered) and read, each moving forward only.
+        messages: data.messages.map((m) => {
+          if (m.author === e.empId) return m;
+          const seq = m.seq ?? Infinity;
+          const read = seq <= e.lastReadSeq && !m.readBy.includes(e.empId);
+          const delivered = seq <= Math.max(e.lastDeliveredSeq, e.lastReadSeq) && !(m.deliveredTo ?? []).includes(e.empId);
+          if (!read && !delivered) return m;
+          return { ...m, readBy: read ? [...m.readBy, e.empId] : m.readBy, deliveredTo: delivered ? [...(m.deliveredTo ?? []), e.empId] : m.deliveredTo };
+        }),
       };
     });
   }
@@ -311,7 +327,7 @@ class CommsRealtime {
     }
     if (!this.qc.getQueryData(keys.messages(id))) return;
     try {
-      const fresh = await liveCommsApi.messages(id);
+      const fresh = await reloadKeepingHistory(this.qc, id);
       // Removed while this was loading: do not put it back on the screen.
       if (!this.lost.has(id)) this.qc.setQueryData<MessagesData>(keys.messages(id), fresh);
     } catch {

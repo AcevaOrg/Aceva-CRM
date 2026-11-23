@@ -88,6 +88,8 @@ describe('outbox event contracts', () => {
       'billing.invoice.paid',
       'billing.subscription.renewal_due',
       'comms.announcement.published',
+      'comms.meeting.cancelled',
+      'comms.meeting.invited',
       'comms.member.removed',
       'comms.mention',
       'comms.message.changed',

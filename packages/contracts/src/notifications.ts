@@ -25,6 +25,12 @@ export const notificationTypeSchema = z.enum([
   'sales_follow_up',
   'sales_tool_problem',
   'message_mention',
+  // Module 14 (later part): a new message in a DM or group (one per conversation until it is read), a reply to my message
+  'message_new',
+  'message_reply',
+  // Module 14 meetings: invited to a meeting, a meeting I was invited to was cancelled
+  'meeting_invited',
+  'meeting_cancelled',
   'announcement',
   'renewal_due',
   'invoice_overdue',

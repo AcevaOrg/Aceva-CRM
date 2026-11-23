@@ -1,12 +1,14 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { ArrowLeft, Bookmark, Info, MessagesSquare, Pin, SearchX } from "lucide-react";
+import { toast } from "sonner";
+import { Archive, ArrowLeft, Bookmark, History, Info, MessagesSquare, Pin, SearchX, Settings2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tip } from "@/components/ui/overlays";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { PageHeader } from "@/components/layout/page-header";
 import { RequireAccess } from "@/components/shared/can";
+import { useReason } from "@/components/shared/dialogs";
 import { EmptyState, ErrorState, ListSkeleton } from "@/components/shared/states";
 import { useLookup } from "@/hooks/use-directory";
 import { ApiError } from "@/lib/api/mock";
@@ -15,7 +17,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime } from "@/lib/dates";
 import { isLive } from "@/lib/api/http";
 import { cn } from "@/lib/utils";
-import { useMarkConversationRead, useMessages, useSavedMessages } from "../hooks";
+import { useLoadOlder, useMarkConversationRead, useMessages, useRemoveAsModerator, useSavedMessages } from "../hooks";
 import { groupByDay, isContinuation } from "../logic";
 import { whenPersonIsHere } from "../realtime";
 import type { Conversation, Message } from "../types";
@@ -29,8 +31,21 @@ import { DetailsPanel, ThreadPanel } from "./side-panels";
 
 type Panel = { kind: "details" } | { kind: "thread"; id: string } | null;
 
-/** Module 14 live: linking a message to a task comes with Module 5, so the action is hidden there. */
+/** Module 14 live: the real API (linking messages to Module 5 tasks included). */
 const LIVE_API = isLive("m14");
+
+/** comms.admin (live): the channel overview, where channels are managed without reading their messages. */
+function ManageChannelsLink() {
+  const viewer = useViewer();
+  if (!LIVE_API || !viewer?.can("comms.admin")) return null;
+  return (
+    <Button size="sm" variant="outline" asChild>
+      <Link href="/messages/channels">
+        <Settings2 /> Manage channels
+      </Link>
+    </Button>
+  );
+}
 
 export function MessagesScreen({ conversationId }: { conversationId?: string }) {
   const [newParam, setNewParam] = useUrlState<string>("new", "");
@@ -45,7 +60,7 @@ export function MessagesScreen({ conversationId }: { conversationId?: string }) 
 
   return (
     <RequireAccess permission="comms.use">
-      <PageHeader title="Messages" description="Direct messages, groups and team channels. Only people in a conversation can read it." className="mb-4 pb-4" />
+      <PageHeader title="Messages" description="Direct messages, groups and team channels. Only people in a conversation can read it." className="mb-4 pb-4" actions={<ManageChannelsLink />} />
       <div className="-mb-10 flex h-[calc(100dvh-13.5rem)] min-h-[480px] overflow-hidden rounded-xl border border-border bg-card shadow-strata">
         <aside className={cn("w-full min-w-0 md:w-72 md:shrink-0 md:border-r md:border-border", showCenter && "max-md:hidden")}>
           <ConversationList
@@ -84,6 +99,9 @@ function ConversationView({ id }: { id: string }) {
   const q = useMessages(id);
   const savedQ = useSavedMessages();
   const markRead = useMarkConversationRead();
+  const loadOlder = useLoadOlder(id);
+  const moderate = useRemoveAsModerator();
+  const askReason = useReason();
   const title = useConversationTitle();
   const lookup = useLookup();
   const viewer = useViewer();
@@ -96,6 +114,8 @@ function ConversationView({ id }: { id: string }) {
   const scroller = React.useRef<HTMLDivElement>(null);
   const count = q.data?.messages.length ?? 0;
   const lastAuthor = q.data?.messages[count - 1]?.author;
+  // The newest message: older history loaded above it must not move the screen to the bottom.
+  const lastId = q.data?.messages[count - 1]?.id;
 
   // Mark as read when opened and whenever new messages arrive, but only while the person is actually here: a message
   // landing on an unattended screen is not read (and marking it would count as activity, keeping an idle session alive).
@@ -128,15 +148,18 @@ function ConversationView({ id }: { id: string }) {
   }, [focusMessage, q.data]);
 
   const firstScroll = React.useRef(true);
+  const seenLast = React.useRef<string | undefined>(undefined);
   React.useEffect(() => {
     const el = scroller.current;
     if (!el || !count) return;
+    if (!firstScroll.current && lastId === seenLast.current) return; // only older messages were added
+    seenLast.current = lastId;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
     if (firstScroll.current || nearBottom || lastAuthor === viewer?.employee.empId) {
       el.scrollTo({ top: el.scrollHeight, behavior: firstScroll.current ? "auto" : "smooth" });
       firstScroll.current = false;
     }
-  }, [count, lastAuthor, viewer]);
+  }, [lastId, count, lastAuthor, viewer]);
 
   if (q.isPending)
     return (
@@ -157,7 +180,8 @@ function ConversationView({ id }: { id: string }) {
       </section>
     );
 
-  const { conversation: c, messages, canPin } = q.data;
+  const { conversation: c, messages, canPin, hasMoreBefore } = q.data;
+  const archived = !!c.archived;
   const savedIds = new Set((savedQ.data ?? []).map((s) => s.message.id));
   const name = title(c);
   const other = lookup.employee(dmOther(c, viewer?.employee.empId));
@@ -170,12 +194,31 @@ function ConversationView({ id }: { id: string }) {
         : p?.state === "online"
           ? `Online · ${other?.designation ?? ""}`
           : other?.designation
-      : `${c.memberEmpIds.length} members${c.topic ? ` · ${c.topic}` : ""}`;
+      : `${archived ? "Archived · read only · " : ""}${c.memberEmpIds.length} members${c.topic ? ` · ${c.topic}` : ""}`;
+
+  const removeAsModerator = async (m: Message) => {
+    const reason = await askReason({
+      title: "Remove this message?",
+      description: "Everyone here will see “Removed by a moderator”. Your reason is kept in the audit log; the message text is never copied there.",
+      confirmLabel: "Remove",
+      destructive: true,
+      placeholder: "Why it is removed (at least 5 characters)",
+    });
+    if (!reason) return;
+    try {
+      await moderate.mutateAsync({ id: m.id, reason });
+      toast.success("Message removed");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't remove it.");
+    }
+  };
 
   const actions: MessageActions = {
     onReply: (m) => setPanel({ kind: "thread", id: m.id }),
     onDelete: setDeleting,
-    onLinkTask: LIVE_API ? undefined : setLinking,
+    onLinkTask: c.can?.post === false ? undefined : setLinking,
+    onModeratorRemove: c.can?.removeMessages ? removeAsModerator : undefined,
+    readOnly: archived,
   };
 
   const jump = (msgId: string) => {
@@ -187,10 +230,56 @@ function ConversationView({ id }: { id: string }) {
 
   const panelBody =
     panel?.kind === "thread" ? (
-      <ThreadPanel parentId={panel.id} conversation={c} title={name} savedIds={savedIds} canPin={canPin} actions={actions} onClose={() => setPanel(null)} />
+      <ThreadPanel parentId={panel.id} conversation={c} title={name} savedIds={savedIds} canPin={canPin && !archived} actions={actions} onClose={() => setPanel(null)} />
     ) : panel?.kind === "details" ? (
       <DetailsPanel conversation={c} messages={messages} title={name} onClose={() => setPanel(null)} onJump={jump} />
     ) : null;
+
+  if (c.managingOnly) {
+    return (
+      <>
+        <section className="flex min-w-0 flex-1 flex-col" aria-label={name}>
+          <header className="flex items-center gap-3 border-b border-border px-3 py-2.5 sm:px-4">
+            <ConversationAvatar c={c} size={34} />
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-[15px] font-semibold">{name}</h2>
+              <p className="truncate text-[12px] text-muted-foreground">{subtitle}</p>
+            </div>
+          </header>
+          <EmptyState
+            className="m-6 flex-1 border-0"
+            icon={<ShieldCheck />}
+            title="You manage this channel"
+            description="You are not a member, so its messages stay private to you. You can change its name, topic, members and moderators, or archive it."
+            action={<Button onClick={() => setPanel({ kind: "details" })}>Open details</Button>}
+          />
+        </section>
+        {panelBody && wide && <aside className="flex w-80 shrink-0 flex-col border-l border-border">{panelBody}</aside>}
+        {panelBody && !wide && (
+          <Sheet open onOpenChange={(o) => !o && setPanel(null)}>
+            <SheetContent size="md" hideClose className="p-0">
+              <SheetTitle className="sr-only">Details</SheetTitle>
+              {panelBody}
+            </SheetContent>
+          </Sheet>
+        )}
+      </>
+    );
+  }
+
+  const older = async () => {
+    const el = scroller.current;
+    const before = el ? el.scrollHeight - el.scrollTop : 0;
+    try {
+      await loadOlder.mutateAsync();
+      // Keep the same messages in view after the older ones are added above them.
+      requestAnimationFrame(() => {
+        if (el) el.scrollTop = el.scrollHeight - before;
+      });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't load older messages.");
+    }
+  };
 
   return (
     <>
@@ -221,7 +310,14 @@ function ConversationView({ id }: { id: string }) {
         </header>
 
         <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto pb-4 scrollbar-thin" role="log" aria-live="polite" aria-label={`Messages in ${name}`}>
-          {messages.length === 0 ? (
+          {hasMoreBefore && (
+            <div className="flex justify-center pt-3">
+              <Button size="sm" variant="outline" onClick={older} loading={loadOlder.isPending}>
+                <History /> Load older messages
+              </Button>
+            </div>
+          )}
+          {messages.length === 0 && !hasMoreBefore ? (
             <EmptyState className="m-6 border-0" icon={<MessagesSquare />} title="No messages yet" description={c.kind === "dm" ? `Say hello to ${name}.` : "Start the conversation."} />
           ) : (
             groupByDay(messages).map((g) => (
@@ -247,13 +343,19 @@ function ConversationView({ id }: { id: string }) {
           )}
         </div>
 
-        <Composer
-          conversationId={c.id}
-          memberEmpIds={c.memberEmpIds}
-          placeholder={c.kind === "channel" ? `Message ${name}` : `Message ${c.kind === "dm" ? name.split(" ")[0] : name}`}
-          disabled={otherDisabled}
-          disabledReason="This person's account is disabled, so messages can't be delivered. The history stays."
-        />
+        {archived ? (
+          <p className="flex items-center gap-2 border-t border-border bg-muted px-4 py-3 text-[13px] text-muted-foreground">
+            <Archive className="size-4 shrink-0" /> This conversation is archived. Its history can be read; nothing can be sent or changed.
+          </p>
+        ) : (
+          <Composer
+            conversationId={c.id}
+            memberEmpIds={c.memberEmpIds}
+            placeholder={c.kind === "channel" ? `Message ${name}` : `Message ${c.kind === "dm" ? name.split(" ")[0] : name}`}
+            disabled={otherDisabled}
+            disabledReason="This person's account is disabled, so messages can't be delivered. The history stays."
+          />
+        )}
       </section>
 
       {panelBody && wide && <aside className="flex w-80 shrink-0 flex-col border-l border-border">{panelBody}</aside>}

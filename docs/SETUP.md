@@ -199,6 +199,23 @@ No new environment variables. Module 6 uses `OUTBOX_DISPATCH_INTERVAL_MS` (the m
 The order on a new or a main-built database is: Modules 1 to 3, M4, M5, `20261118090000_cycle3_foundation`, M6,
 M7 to M9 (`20261119090000` to `20261119090500`), `20261119110000_m13_billing`, `20261120090000_m14_messaging`.
 `npm run db:migrate` applies whatever is pending, also a migration older than ones already applied.
+The later Module 14 parts add, in this order: `20261123090000_m14_announcements`, `20261123100000_m14_meetings`,
+`20261123110000_m14_files`, `20261123120000_m14_links` and `20261124090000_m14_file_safety`. All are additive: new
+types, tables, indexes, constraints, functions and triggers, plus two new nullable columns on tables of the same module
+(`conversations.project_id`, `comms_files.discarded_at`), whose new CHECKs every existing row already satisfies.
+
+**Backup and rollback (production).** Prisma has no "down" migrations, so the supported way back is the backup:
+1. Before `npx prisma migrate deploy`, take a full backup of the database (`pg_dump -Fc -f before-m14.dump <db>`) and
+   keep it until the release is accepted.
+2. If a migration fails part-way, `npx prisma migrate status` shows it as failed and later ones do not run. Restore the
+   backup (simplest), or remove by hand what the failed migration had created and run
+   `npx prisma migrate resolve --rolled-back <name>` before deploying again.
+3. To undo the Module 14 parts after they applied, restore the backup taken in step 1. Nothing in other modules' tables
+   is changed by them, but anything written to the new tables (announcements, meetings, files, links) after the
+   deployment is lost with the restore, and the shared files of those days stay in `FILE_STORAGE_ROOT` without records.
+   Deleting rows from `_prisma_migrations` or dropping objects by hand is not a supported rollback.
+4. Never run these steps against a database you cannot restore (locally: aceva_test is rebuilt by the tests; aceva_dev
+   is rebuilt with `npm run db:reset -w backend`).
 
 - `20261118090000_cycle3_foundation` keeps its original name (it needs only the employees and the event outbox).
 - The billing migration was first named `20261119090000_m13_billing`. After Modules 7 to 9 moved to `20261119090000`,
@@ -212,6 +229,51 @@ M7 to M9 (`20261119090000` to `20261119090500`), `20261119110000_m13_billing`, `
   (`20261112190000_...` to `20261117090000_...`). Main renamed those and moved the holidays table from Module 7 into
   Module 5, so `20261116100000_m5_tasks` fails there with "relation holidays already exists". The step above does not fix
   that; such a database has to be upgraded by hand or rebuilt (`npm run db:reset -w backend`).
+
+## Module 14 file scanning (ClamAV)
+
+Every file shared in Module 14 (messages and meetings) is checked by ClamAV before anyone can open it. The backend talks
+to the ClamAV daemon (`clamd`) over TCP with its standard `INSTREAM` command: `CLAMD_HOST` (default `127.0.0.1`),
+`CLAMD_PORT` (default `3310`), `CLAMD_TIMEOUT_MS` (default `60000`). No npm package is involved.
+
+- **Fail closed.** Every upload is checked in memory before it is stored. A file with malware is blocked for good: its
+  bytes are never written, the record and the finding stay, audited. While clamd cannot be reached, the upload is kept
+  but stays "Scanning..." and can never be downloaded until a check says clean.
+- **Retries and recovery.** The scan job (`comms.file.scan`) tries again after 1 minute, then follows the job runner's
+  limit of **five attempts** (back-offs of 1 minute, 5 minutes, 30 minutes and 2 hours, about 2.6 hours in all); after
+  the fifth failure the job is marked failed. A sweep that runs every 15 minutes on each server
+  (`CommsFileMaintenance`, only with background workers on) arms the job again, at most once every **6 hours** per file,
+  for as long as the file is still unchecked. So a long outage never leaves a file forgotten, and the file stays closed
+  the whole time.
+- **Files never sent.** A file uploaded to a conversation but not sent within **24 hours** is discarded by the same
+  sweep: its record is marked (never deleted) and then its bytes are removed. A file attached to a message, and a meeting
+  file, is never touched; a send racing the discard is decided by the database (one of them wins, the other changes
+  nothing).
+- **Upload limit.** 10 uploads a minute and 60 an hour per person (`429 rate_limited` with `retryAfterSec`), like the
+  limit of 30 messages a minute.
+- **Memory.** clamd keeps its signatures in memory (about 1 GB). Start it when you work on or test file sharing.
+- **With Docker:** `docker compose --profile scanner up -d clamav` (image `clamav/clamav:1.5.5`, the official Cisco Talos
+  image). It uses the image's own healthcheck (`clamdcheck.sh`: clamd must answer PING on 3310) with the image's 6-minute
+  start period, because the first start downloads the signatures; `docker compose ps` shows `healthy` once it answers.
+  The backend does not need to wait for it: until clamd answers, uploads stay unopenable and are checked again (fail
+  closed). **Not runtime-tested here** (Docker is not installed on the development machine); the image tag and the
+  healthcheck were checked against Docker Hub and the image's Dockerfile.
+- **Without Docker (Windows):** download the official portable `clamav-<version>.win.x64.zip` from clamav.net (check its
+  `.sig` against the Talos key), unzip it, then with a `freshclam.conf` (`DatabaseDirectory <folder>`,
+  `DatabaseMirror database.clamav.net`) run `freshclam.exe --config-file=freshclam.conf` once, and with a `clamd.conf`
+  (`DatabaseDirectory <folder>`, `TCPSocket 3310`, `TCPAddr 127.0.0.1`) run `clamd.exe --config-file=clamd.conf --foreground`.
+- **Tests.** `backend/test/m14-clamav.test.ts` and the Playwright file tests in `e2e/m14-collab.spec.ts` and
+  `e2e/m14-review.spec.ts` need clamd running (like PostgreSQL and Redis). They use the harmless EICAR test sample,
+  assembled at run time so no source file contains it. The scanner-outage test in `e2e/m14-review.spec.ts` stops and
+  starts clamd itself: set `CLAMD_EXE` (path to `clamd.exe`) and `CLAMD_CONF` (its `clamd.conf`) when running it. The
+  other backend file tests use a controllable stand-in scanner.
+
+## HTTPS (production requirement)
+
+Plan section 19 asks for HTTPS. Locally everything runs over plain HTTP on 127.0.0.1 (no certificates are set up in this
+repository). In production the website, the API and the live connection (`/socket.io`) must be served over HTTPS only,
+by the hosting or a reverse proxy in front of the servers; the session cookie is only safe there. This is a deployment
+step, not something the code switches on.
 
 ## Not used locally (on purpose)
 MinIO or any other object storage: uploaded files are kept in the private folder `FILE_STORAGE_ROOT`

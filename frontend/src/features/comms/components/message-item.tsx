@@ -3,27 +3,101 @@ import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  Bookmark, Check, CheckCheck, Copy, Ellipsis, Link2, ListTodo, MessageSquareReply, Pencil, Pin, PinOff, SmilePlus, Trash2,
+  Bookmark, Check, CheckCheck, Copy, Ellipsis, Link2, ListTodo, MessageSquareReply, Pencil, Pin, PinOff, ShieldX, SmilePlus, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Avatar } from "@/components/ui/misc";
 import { Popover, PopoverContent, PopoverTrigger, Tip } from "@/components/ui/overlays";
-import { FileCard } from "@/components/shared/timeline";
+import { CommsFile } from "./comms-file";
 import { useLookup } from "@/hooks/use-directory";
 import { ApiError } from "@/lib/api/mock";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatTime } from "@/lib/dates";
 import { cn } from "@/lib/utils";
+import { useQuery } from "@tanstack/react-query";
 import { useEditMessage, useReact, useTogglePin, useToggleSave } from "../hooks";
+import { liveCommsApi } from "../live-api";
 import { QUICK_REACTIONS, splitMentions } from "../logic";
 import type { ConversationKind, Message } from "../types";
 
 export interface MessageActions {
   onReply?: (m: Message) => void;
   onDelete: (m: Message) => void;
-  /** Absent when linking to tasks is not available (Module 14 live, until Module 5). */
+  /** Absent when linking to tasks is not available. */
   onLinkTask?: (m: Message) => void;
+  /** A moderator (or a comms admin in a channel) removes someone else's message, with a reason. Absent for everyone else. */
+  onModeratorRemove?: (m: Message) => void;
+  /** Archived conversation: it can be read (and saved, copied), nothing else. */
+  readOnly?: boolean;
+}
+
+/**
+ * Per-message status for the author, in DMs and groups (never in channels): sent, delivered (it reached their screen)
+ * and read, with who for a group. `deliveredTo` is known live; the demo only knows who read it.
+ */
+function DeliveryStatus({ m, kind }: { m: Message; kind: ConversationKind }) {
+  const lookup = useLookup();
+  const nameOf = (id: string) => lookup.employee(id)?.name ?? id;
+  const delivered = Array.from(new Set([...(m.deliveredTo ?? []), ...m.readBy]));
+  const knowsDelivery = m.deliveredTo !== undefined;
+  const label = m.readBy.length
+    ? kind === "group"
+      ? `Read by ${m.readBy.length}`
+      : "Read"
+    : !knowsDelivery || delivered.length
+      ? kind === "group" && knowsDelivery
+        ? `Delivered to ${delivered.length}`
+        : "Delivered"
+      : "Sent";
+  const icon = m.readBy.length ? <CheckCheck className="size-3.5 text-info" /> : !knowsDelivery || delivered.length ? <CheckCheck className="size-3.5" /> : <Check className="size-3.5" />;
+  const badge = (
+    <span className="inline-flex items-center gap-1" aria-label={label}>
+      {icon}
+      {label}
+    </span>
+  );
+  if (kind !== "group" || !knowsDelivery) return <span className="ml-auto text-[11px] text-muted-foreground">{badge}</span>;
+  const waiting = delivered.filter((id) => !m.readBy.includes(id));
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button className="ml-auto rounded px-1 text-[11px] text-muted-foreground hover:bg-muted" aria-label={`${label}. Show who`}>
+          {badge}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-60 p-3 text-[12.5px]" align="end">
+        <p className="mb-1 font-medium">Read by {m.readBy.length}</p>
+        <ul className="mb-2 grid gap-0.5 text-muted-foreground">
+          {m.readBy.length ? m.readBy.map((id) => <li key={id}>{nameOf(id)}</li>) : <li>Nobody yet</li>}
+        </ul>
+        <p className="mb-1 font-medium">Delivered, not read yet · {waiting.length}</p>
+        <ul className="grid gap-0.5 text-muted-foreground">{waiting.length ? waiting.map((id) => <li key={id}>{nameOf(id)}</li>) : <li>Nobody</li>}</ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function TaskChip({ id, number, title }: { id: string; number?: string; title?: string }) {
+  return (
+    <Link href={`/tasks/${id}`} className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md border border-zone-work/30 bg-zone-work/10 px-2 py-1 text-[12px] hover:bg-zone-work/15">
+      <ListTodo className="size-3.5 shrink-0 text-zone-work" />
+      <span className="font-mono">{number}</span>
+      <span className="truncate">{title}</span>
+    </Link>
+  );
+}
+
+/** A linked task this view did not name: ask the server what this person may see (Module 5 decides). */
+function HiddenLink({ messageId }: { messageId: string }) {
+  const q = useQuery({ queryKey: ["comms", "link", messageId], queryFn: () => liveCommsApi.messageLink(messageId), staleTime: 0 });
+  if (q.isPending) return null;
+  if (q.data) return <TaskChip id={q.data.id} number={q.data.number} title={q.data.title} />;
+  return (
+    <span className="mt-1.5 inline-flex items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-[12px] text-muted-foreground">
+      <ListTodo className="size-3.5 shrink-0" /> Linked to a task you can&apos;t open
+    </span>
+  );
 }
 
 export function MessageBody({ body }: { body: string }) {
@@ -89,7 +163,7 @@ export function MessageItem({
       <div className={cn("flex gap-3 px-4 py-1.5", !compact && "mt-2")}>
         <span className="w-9 shrink-0" />
         <p className="text-[13px] italic text-muted-foreground">
-          Message deleted · <span className="not-italic">kept in the audit log</span>
+          {m.removedByModerator ? "Removed by a moderator" : "Message deleted"} · <span className="not-italic">kept in the audit log</span>
         </p>
       </div>
     );
@@ -172,17 +246,15 @@ export function MessageItem({
         {m.attachments.length > 0 && (
           <div className="mt-1.5 grid max-w-sm gap-1.5">
             {m.attachments.map((a) => (
-              <FileCard key={a.id} file={a} onOpen={() => toast("Opening a private link (demo)", { description: "Links expire in minutes and every download is permission-checked." })} />
+              <CommsFile key={a.id} file={a} />
             ))}
           </div>
         )}
 
-        {m.linkedTaskId && (
-          <Link href={`/tasks/${m.linkedTaskId}`} className="mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md border border-zone-work/30 bg-zone-work/10 px-2 py-1 text-[12px] hover:bg-zone-work/15">
-            <ListTodo className="size-3.5 shrink-0 text-zone-work" />
-            <span className="font-mono">{m.linkedTaskNumber}</span>
-            <span className="truncate">{m.linkedTaskTitle}</span>
-          </Link>
+        {m.linkedTaskId ? (
+          <TaskChip id={m.linkedTaskId} number={m.linkedTaskNumber} title={m.linkedTaskTitle} />
+        ) : (
+          m.linkHidden && <HiddenLink messageId={m.id} />
         )}
 
         {(m.reactions.length > 0 || (!inThread && m.replyCount > 0) || (mine && kind !== "channel")) && (
@@ -193,7 +265,8 @@ export function MessageItem({
               return (
                 <Tip key={r.emoji} content={names}>
                   <button
-                    onClick={() => run(react.mutateAsync({ id: m.id, emoji: r.emoji }))}
+                    onClick={() => !actions.readOnly && run(react.mutateAsync({ id: m.id, emoji: r.emoji }))}
+                    disabled={actions.readOnly}
                     aria-pressed={mineR}
                     aria-label={`${r.emoji} ${r.empIds.length}, by ${names}`}
                     className={cn(
@@ -213,18 +286,14 @@ export function MessageItem({
                 {m.replyCount} {m.replyCount === 1 ? "reply" : "replies"}
               </button>
             )}
-            {mine && kind !== "channel" && (
-              <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground" aria-label={m.readBy.length ? "Read" : "Delivered"}>
-                {m.readBy.length ? <CheckCheck className="size-3.5 text-info" /> : <Check className="size-3.5" />}
-                {m.readBy.length ? (kind === "group" ? `Read by ${m.readBy.length}` : "Read") : "Delivered"}
-              </span>
-            )}
+            {mine && kind !== "channel" && <DeliveryStatus m={m} kind={kind} />}
           </div>
         )}
       </div>
 
       {/* Hover toolbar (always reachable by keyboard; on phones only the menu shows). */}
       <div className="absolute -top-3 right-3 flex items-center gap-0.5 rounded-lg border border-border bg-popover p-0.5 opacity-0 shadow-strata transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100 max-sm:border-transparent max-sm:bg-transparent max-sm:shadow-none">
+        {!actions.readOnly && (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger asChild>
             <Button size="icon-sm" variant="ghost" className="size-7 max-sm:hidden" aria-label="Add reaction">
@@ -249,7 +318,8 @@ export function MessageItem({
             </div>
           </PopoverContent>
         </Popover>
-        {!inThread && actions.onReply && (
+        )}
+        {!inThread && actions.onReply && !actions.readOnly && (
           <Tip content="Reply in thread">
             <Button size="icon-sm" variant="ghost" className="size-7 max-sm:hidden" onClick={() => actions.onReply?.(m)} aria-label="Reply in thread">
               <MessageSquareReply />
@@ -263,6 +333,7 @@ export function MessageItem({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
+            {!actions.readOnly && (
             <div className="flex justify-between gap-0.5 px-1 py-1 sm:hidden">
               {QUICK_REACTIONS.slice(0, 5).map((e) => (
                 <button key={e} onClick={() => run(react.mutateAsync({ id: m.id, emoji: e }))} className="grid size-8 place-content-center rounded-md text-lg hover:bg-muted" aria-label={`React ${e}`}>
@@ -270,6 +341,7 @@ export function MessageItem({
                 </button>
               ))}
             </div>
+            )}
             {!inThread && actions.onReply && (
               <DropdownMenuItem onSelect={() => actions.onReply?.(m)}>
                 <MessageSquareReply /> Reply in thread
@@ -278,12 +350,12 @@ export function MessageItem({
             <DropdownMenuItem onSelect={() => run(save.mutateAsync(m.id), saved ? "Removed from saved" : "Saved for later")}>
               <Bookmark /> {saved ? "Remove from saved" : "Save for later"}
             </DropdownMenuItem>
-            {canPin && !inThread && (
+            {canPin && !inThread && !actions.readOnly && (
               <DropdownMenuItem onSelect={() => run(pin.mutateAsync(m.id), pinned ? "Unpinned" : "Pinned to the conversation")}>
                 {pinned ? <PinOff /> : <Pin />} {pinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
             )}
-            {actions.onLinkTask && (
+            {actions.onLinkTask && !actions.readOnly && (
               <DropdownMenuItem onSelect={() => actions.onLinkTask?.(m)}>
                 <Link2 /> {m.linkedTaskId ? "Change linked task" : "Link to a task"}
               </DropdownMenuItem>
@@ -296,7 +368,15 @@ export function MessageItem({
             >
               <Copy /> Copy text
             </DropdownMenuItem>
-            {mine && (
+            {!mine && actions.onModeratorRemove && !actions.readOnly && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem destructive onSelect={() => actions.onModeratorRemove?.(m)}>
+                  <ShieldX /> Remove message…
+                </DropdownMenuItem>
+              </>
+            )}
+            {mine && !actions.readOnly && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

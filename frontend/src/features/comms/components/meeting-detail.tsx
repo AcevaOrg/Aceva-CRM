@@ -2,7 +2,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Ban, CalendarClock, CalendarPlus, Clock, ListTodo, MapPin, Save, User } from "lucide-react";
+import { Ban, CalendarClock, CalendarPlus, Clock, ListTodo, MapPin, Paperclip, Save, User, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,14 @@ import { StatusBadge } from "@/components/shared/chips";
 import { useReason } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { ErrorState } from "@/components/shared/states";
-import { FileCard } from "@/components/shared/timeline";
+import { NativeSelect } from "@/components/ui/controls";
+import { useTasks } from "@/features/tasks/hooks";
+import { isLive } from "@/lib/api/http";
+import { useQueryClient } from "@tanstack/react-query";
+import { commsKeys } from "../hooks";
+import { liveCommsApi } from "../live-api";
+import { checkFile } from "../logic";
+import { CommsFile } from "./comms-file";
 import { STATUS_LABEL } from "@/features/tasks/logic";
 import type { TaskStatus } from "@/features/tasks/types";
 import { ApiError } from "@/lib/api/mock";
@@ -23,6 +30,8 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDateTime, formatRelative, formatWeekdayLong } from "@/lib/dates";
 import { useCancelMeeting, useMeeting, useSaveMeetingNotes } from "../hooks";
 import { isPast, RsvpBadge, RsvpControl, timeRange } from "./meeting-bits";
+
+const LIVE = isLive("m14");
 
 export function MeetingDetail({ id }: { id: string }) {
   return (
@@ -39,6 +48,36 @@ function MeetingBody({ id }: { id: string }) {
   const cancel = useCancelMeeting();
   const askReason = useReason();
   const [notes, setNotes] = React.useState<string | null>(null);
+  const qc = useQueryClient();
+  const tasks = useTasks({ scope: "all" });
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [adding, setAdding] = React.useState(false);
+  const refresh = () => qc.invalidateQueries({ queryKey: commsKeys.meeting(id) });
+  const addFile = async (file: File | undefined) => {
+    if (!file) return;
+    const err = checkFile(file.name, file.size);
+    if (err) return void toast.error(`Can't add ${file.name}`, { description: err });
+    setAdding(true);
+    try {
+      const saved = await liveCommsApi.uploadMeetingFile(id, file);
+      if (saved.scan === "blocked") toast.error(`${file.name} was blocked`, { description: "Malware was found in it. It was removed and cannot be shared." });
+      else toast.success(saved.scan === "clean" ? "File added" : "File added: being checked for viruses");
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't add the file.");
+    } finally {
+      setAdding(false);
+      if (fileRef.current) fileRef.current.value = "";
+      void refresh();
+    }
+  };
+  const linkTask = async (taskId: string, on: boolean) => {
+    try {
+      await (on ? liveCommsApi.linkMeetingTask(id, taskId) : liveCommsApi.unlinkMeetingTask(id, taskId));
+      void refresh();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't change the linked tasks.");
+    }
+  };
 
   if (q.isPending)
     return (
@@ -52,7 +91,9 @@ function MeetingBody({ id }: { id: string }) {
     return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   }
 
-  const { meeting: m, linkedTasks } = q.data;
+  const { meeting: m, linkedTasks, hiddenLinkedTasks = 0 } = q.data;
+  // Live: the organizer adds files and links tasks here (not when the meeting is cancelled).
+  const manage = LIVE && !!m.canAddFiles;
   const me = viewer?.employee.empId;
   const organizer = m.organizer === me;
   const mine = m.participants.find((p) => p.empId === me);
@@ -68,8 +109,12 @@ function MeetingBody({ id }: { id: string }) {
   const onCancel = async () => {
     const reason = await askReason({ title: `Cancel “${m.title}”`, description: "Everyone invited is notified. The meeting stays in the list as cancelled.", confirmLabel: "Cancel meeting", destructive: true });
     if (!reason) return;
-    await cancel.mutateAsync(m.id);
-    toast.success("Meeting cancelled", { description: "Invitees were notified." });
+    try {
+      await cancel.mutateAsync({ id: m.id, reason });
+      toast.success("Meeting cancelled", { description: "Invitees were notified." });
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't cancel it.");
+    }
   };
 
   return (
@@ -157,15 +202,25 @@ function MeetingBody({ id }: { id: string }) {
             </CardContent>
           </Card>
 
-          {(m.attachments.length > 0 || linkedTasks.length > 0) && (
+          {(LIVE || m.attachments.length > 0 || linkedTasks.length > 0) && (
             <div className="grid gap-5 md:grid-cols-2">
               <Card>
                 <CardHeader>
-                  <CardTitle>Files</CardTitle>
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle>Files</CardTitle>
+                    {manage && (
+                      <>
+                        <input ref={fileRef} type="file" hidden aria-label="Choose a file for the meeting" onChange={(e) => void addFile(e.target.files?.[0])} />
+                        <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} loading={adding}>
+                          <Paperclip /> Add file
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent className="grid gap-2">
                   {m.attachments.length ? (
-                    m.attachments.map((a) => <FileCard key={a.id} file={a} onOpen={() => toast("Opening a private link (demo)")} />)
+                    m.attachments.map((a) => <CommsFile key={a.id} file={a} />)
                   ) : (
                     <p className="text-[13px] text-muted-foreground">No files.</p>
                   )}
@@ -176,6 +231,18 @@ function MeetingBody({ id }: { id: string }) {
                   <CardTitle>Linked tasks</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-2">
+                  {manage && (
+                    <NativeSelect aria-label="Link a task" value="" onChange={(e) => e.target.value && void linkTask(e.target.value, true)}>
+                      <option value="">Link a task…</option>
+                      {tasks.data
+                        ?.filter((t) => !t.personal && !linkedTasks.some((l) => l.id === t.id))
+                        .map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.number} · {t.title}
+                          </option>
+                        ))}
+                    </NativeSelect>
+                  )}
                   {linkedTasks.length ? (
                     linkedTasks.map((t) => (
                       <Link key={t.id} href={`/tasks/${t.id}`} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-[13px] hover:bg-muted">
@@ -183,10 +250,28 @@ function MeetingBody({ id }: { id: string }) {
                         <span className="font-mono text-[11.5px] text-muted-foreground">{t.number}</span>
                         <span className="min-w-0 flex-1 truncate">{t.title}</span>
                         <StatusBadge label={STATUS_LABEL[t.status as TaskStatus] ?? t.status} tone="outline" />
+                        {manage && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              void linkTask(t.id, false);
+                            }}
+                            className="rounded p-0.5 text-muted-foreground hover:bg-card hover:text-foreground"
+                            aria-label={`Unlink ${t.number}`}
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        )}
                       </Link>
                     ))
                   ) : (
-                    <p className="text-[13px] text-muted-foreground">No linked tasks.</p>
+                    !hiddenLinkedTasks && <p className="text-[13px] text-muted-foreground">No linked tasks.</p>
+                  )}
+                  {hiddenLinkedTasks > 0 && (
+                    <p className="text-[12.5px] text-muted-foreground">
+                      {hiddenLinkedTasks === 1 ? "1 linked task" : `${hiddenLinkedTasks} linked tasks`} you can&apos;t open (Module 5 decides who sees a task).
+                    </p>
                   )}
                 </CardContent>
               </Card>

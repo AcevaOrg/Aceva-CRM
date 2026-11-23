@@ -533,7 +533,7 @@ application log, and database errors on these routes are answered and logged as 
 | Endpoint | Who | Notes |
 |---|---|---|
 | `GET /comms/conversations?cursor&limit` | member | My conversations, most recently active first, with my unread count and the last message |
-| `POST /comms/conversations` | DM, group: anyone; channel: `comms.admin` | `{kind:'dm', empId}` (an existing DM is returned with 200), `{kind:'group', name?, memberEmpIds}` (at most 50 people; the creator moderates), `{kind:'channel', scope:'department', departmentId, name, topic?, moderatorEmpIds?}` or `{kind:'channel', scope:'project', projectName, projectCode?, name, memberEmpIds, moderatorEmpIds?}` |
+| `POST /comms/conversations` | DM, group: anyone; channel: `comms.admin` | `{kind:'dm', empId}` (an existing DM is returned with 200), `{kind:'group', name?, memberEmpIds}` (at most 50 people; the creator moderates), `{kind:'channel', scope:'department', departmentId, name, topic?, moderatorEmpIds?}` or `{kind:'channel', scope:'project', projectId \| projectName, projectCode?, name, memberEmpIds, moderatorEmpIds?}` (a Module 5 `projectId` gives the name and code and links the channel; `400 unknown_project`) |
 | `GET /comms/conversations/:id` | member; a `comms.admin` also for any channel (no messages) | Members (with `source` added or department), my read position, receipts (DMs and groups only), pins, `can` |
 | `PATCH /comms/conversations/:id {name?, topic?, projectName?, projectCode?}` | group moderators; channel moderators and `comms.admin` | |
 | `POST /comms/conversations/:id/archive {reason}` | group moderators; channels: `comms.admin` | Read-only afterwards (`409 conversation_archived`) |
@@ -554,6 +554,48 @@ application log, and database errors on these routes are answered and logged as 
 | `GET /comms/search?q&conversationId&cursor&limit` | member | PostgreSQL full-text search, only in conversations you can see now |
 | `GET /comms/saved?cursor&limit` | anyone | Your saved messages from conversations you can still see |
 | `GET /comms/admin/channels?cursor&limit` | `comms.admin` | Every channel with member count and moderators, never messages |
+
+## Module 14, later parts: notifications, announcements, meetings, files, links and retention
+
+Every route needs `comms.use`. Contracts: `packages/contracts/src/comms.ts`. Database rules (never deleted, what was
+published or uploaded never changes) are enforced by triggers whose errors name the rule only (`announcement_rule`,
+`meeting_rule`, `attachment_rule`), never a value.
+
+| Route | Who | Rules |
+|---|---|---|
+| `POST /comms/conversations/:id/messages {..., attachmentIds?}` | member | Up to 5 files the sender uploaded to this conversation and has not sent yet, not blocked (`400 invalid_attachments`) |
+| `PUT /comms/messages/:id/task {task}` | members who may post | Links the message to a Module 5 task (number or id) the caller may see (`404` otherwise); never a personal to-do (`400 personal_task`). Audited with the task number |
+| `DELETE /comms/messages/:id/task` | the person who linked it, the author, a moderator | |
+| `GET /comms/messages/:id/link` | member | `{ task }` as the caller may see it, `{ task: null }` for a task they may not see (never its number or title), or `null` |
+| `POST /comms/conversations/:id/files` (multipart `file`) | members who may post, not archived | PDF, PNG, JPEG or Word `.docx` by content (`400 file_type_not_allowed`), at most 10 MB (`413`). Scanned by ClamAV in memory **before** it is stored: `scan` is `clean`, `blocked` (never stored, audited `comms.file.blocked` with the signature) or `scanning` (scanner unavailable: kept, unopenable, re-checked by the `comms.file.scan` job: five attempts over about 2.6 hours, then re-armed by the file sweep at most every 6 hours until a check answers). At most 10 uploads a minute and 60 an hour per person (`429 rate_limited`, `retryAfterSec`). Not sent within 24 hours: discarded (record kept, bytes removed; `discarded: true`) |
+| `POST /comms/meetings/:id/files` | the organizer, not cancelled | Same limits and scanning |
+| `GET /comms/files/:id` | whoever may see what it belongs to | Unsent files: their uploader only. Message files: current members whose history includes the message, not deleted. Meeting files: the organizer and invitees. Everyone else `404` |
+| `GET /comms/files/:id/download` | same | `409 file_scanning`, `410 file_blocked`, `410 file_discarded`; `Content-Disposition: attachment`, `nosniff`, `private, no-store`; audited `comms.file.downloaded` |
+| `GET /comms/announcements?cursor&limit` | everyone | The ones for me (everyone, or my current department), my own, and all of them for the CEO / Founder / Owner and the Director. Pinned first. `progress` (who it is for, who acknowledged) only for publishers |
+| `POST /comms/announcements {title, body, audience:{all, departmentIds}, pinned, requiresAck}` | `announcements.publish` | Audited (title and audience, never the body); `comms.announcement.published` |
+| `GET /comms/announcements/:id` | as the list | |
+| `PUT` / `DELETE /comms/announcements/:id/pin` | `announcements.publish` | Audited |
+| `POST /comms/announcements/:id/ack` | people it is for | Once (`400 no_ack_needed`, `403 not_in_audience`) |
+| `GET /comms/meetings?from&to` | everyone | My meetings (organised or invited), soonest first; at most 400 days |
+| `POST /comms/meetings {title, startsAt, durationMin, location, agenda, participantEmpIds}` | everyone | Not in the past (`400 in_the_past`), current colleagues (`400 not_current_employee`); the organizer is never an invitee. Audited without the agenda |
+| `GET /comms/meetings/:id` | organizer and invitees | Everyone else `404`, managers and admins included. Linked tasks the viewer may see, plus `hiddenLinkedTasks` |
+| `PATCH /comms/meetings/:id {title?, startsAt?, durationMin?, location?, agenda?, notes?}` | the organizer | `409 meeting_cancelled`; audited with the changed field names only |
+| `POST /comms/meetings/:id/participants {empIds}` | the organizer | `comms.meeting.invited` |
+| `PUT /comms/meetings/:id/rsvp {rsvp: yes\|no\|maybe}` | invitees | Until the meeting ends (`409 meeting_over`) |
+| `POST /comms/meetings/:id/tasks {task}`, `DELETE /comms/meetings/:id/tasks/:taskId` | the organizer | Tasks the organizer may see; never a personal to-do |
+| `POST /comms/meetings/:id/cancel {reason}` | the organizer | Read-only afterwards; audited with the reason; `comms.meeting.cancelled` |
+| `GET /comms/admin/audit?action&outcome&from&to&cursor&limit` | `comms.admin` | Module 14 security and audit events, newest first: every `comms.*` audit record, the comms retention setting changes and refusals (`access.denied`) on `/comms` routes. `action` is an exact action or a group (`messages`, `conversations`, `files`, `announcements`, `meetings`, `settings`, `denied`). Metadata only (ids, Emp-IDs, numbers, reasons, scanner findings): message text, file names, agendas and notes are never in the audit log |
+| `GET /comms/policy` | everyone | The retention periods management set (`null` = not set: everything is kept); `automaticRemoval: false` |
+| `GET` / `PUT /settings/modules/comms` | `comms.admin` (PUT: confirm again, a reason) | `{ messageRetentionDays, fileRetentionDays }`, 30 to 3650 days or `null`; versioned and audited |
+
+**Notifications** (outbox reader `comms-notifications`, through the Module 12 core). None is essential, so each person
+can turn the **email** for each type off (`PATCH /notifications/prefs`); the notification itself always appears in the
+app (the bell and `/notifications`), as the notification settings of the plan and `spec.md` define them (email
+switches only). Types: `message_new` (DMs and groups: one per conversation until it is read), `message_reply`,
+`message_mention`, `announcement` (the title only), `meeting_invited` and `meeting_cancelled` (the organizer and the
+time only). **Channels notify mentions and replies only**, never every new message; DMs and groups also notify new
+messages. Never the text of a message, an agenda or notes; never for one's own action, a message already read, a
+deleted message or one outside the reader's history.
 
 ## Module 14, part 2: live delivery (WebSocket)
 
