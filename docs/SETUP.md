@@ -78,7 +78,7 @@ Install the three services with your operating system's normal installer or pack
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_API_MODE=live`, `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1` and `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9,m12,m13,m14`, then `npm run dev -w aceva-digital-system-web`. Without these the website runs on in-browser demo data: nothing is shared between people and Messages opens no live connection. See "Local real-time development" below |
 | Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
 | Only the Module 5 database tests | `npm run build:contracts`, then `npm test -w backend -- m5-` |
 | Only the Module 6 database tests | `npm run build:contracts`, then `npm test -w backend -- m6-` |
@@ -98,6 +98,40 @@ Browser downloads for the tests go to Playwright's default folder. To keep them 
 `PLAYWRIGHT_BROWSERS_PATH` to a folder of your choice before `npx playwright install chromium` and before the tests.
 If your system drive is short of space, move npm's download cache in your user-level npm config
 (`npm config set cache <folder> --location=user`), never in the repository.
+
+## Local real-time development (Messages between two people)
+
+To try Module 14 for real (two people chatting live), the website, the API, PostgreSQL, Redis and Mailpit must all run,
+on a database with every migration. Use a database of its own, for example `aceva_realtime_dev`, so `aceva_dev`,
+`aceva_test` and `aceva_shadow` are never touched (`aceva_test` is rebuilt by the tests).
+
+1. **Database.** As the PostgreSQL administrator (the app user `aceva_app` may not create databases):
+   `psql -U postgres -h localhost -c "CREATE DATABASE aceva_realtime_dev OWNER aceva_app;"`
+2. **`backend/.env`** (from `backend/.env.example`; git-ignored, never committed). Point `DATABASE_URL` at the new
+   database; keep `SHADOW_DATABASE_URL` and `TEST_DATABASE_URL` as they are. The other values that matter here:
+   `PORT=4000`, `CORS_ORIGIN=http://localhost:3000` and `APP_URL=http://localhost:3000` (the API and the live
+   connection accept only this origin), `REDIS_URL` with your Redis password, `DATA_ENCRYPTION_KEY` (a random key, see
+   "Needed once"), `SMTP_HOST=127.0.0.1` and `SMTP_PORT=1025` (Mailpit), `FILE_STORAGE_ROOT`. Optional: `CLAMD_HOST` /
+   `CLAMD_PORT` (without a running ClamAV, shared files stay "Scanning..." and cannot be opened; messages work). There
+   are no other secrets: sessions are random tokens kept in PostgreSQL and Redis.
+3. **Tables and demo people** (all three use `DATABASE_URL` from `backend/.env`):
+   `npm run db:migrate`, then `npm run db:seed`, then the demo logins (`DEMO_PASSWORD`, at least 10 characters, set in
+   your shell or in `backend/.env`): `npm run db:seed:passwords -w backend`. Never `db:reset` a database you want to keep.
+4. **`frontend/.env.local`** (git-ignored; only public values, everything `NEXT_PUBLIC_` is visible in the browser):
+   ```
+   NEXT_PUBLIC_API_MODE=live
+   NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+   NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9,m12,m13,m14
+   ```
+   The API address must be absolute: a relative `/api/v1` would send the live connection to the website's own server,
+   which has none. Restart `npm run dev` after changing this file (the values are built into the page).
+5. **Start**, each in its own terminal: Redis and Mailpit (already running if you use Docker or the services above);
+   the API: `npm run build -w backend`, then `npm start -w backend` (check http://localhost:4000/api/v1/health); the
+   website: `npm run dev -w aceva-digital-system-web`.
+6. **Open http://localhost:3000** (not http://127.0.0.1:3000: the live connection is refused from any other origin).
+   Sign in as two people in two separate browser profiles or a normal and a private window (the session is one
+   cookie per browser profile), for example ACV-0006 Fahad Khan and ACV-0007 Mariam Shah (developers: no authenticator
+   needed), with the demo password. Open the same conversation on both: messages appear on the other screen at once.
 
 ## Signing in to the demo
 Everyone in the demo roster signs in with their Emp-ID (for example `ACV-0009`) and the `DEMO_PASSWORD` you chose. The
