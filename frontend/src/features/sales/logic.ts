@@ -2,9 +2,10 @@
  * Pure sales rules (plan §20). Mirrored on the server; unit-test these.
  */
 import type { BadgeTone } from "@/components/ui/badge";
+import { monthKey } from "@/lib/dates";
 import type { Money } from "@/types";
 import type {
-  ActivityKind, Company, DailySalesSummary, DailyTargets, DealService, DealStage, DuplicateResult, EmailCheck, Lead, LeadSource, SalesWeights,
+  ActivityKind, Company, DailySalesSummary, DailyTargets, Deal, DealService, DealStage, DuplicateResult, EmailCheck, Lead, LeadSource, PipelineSummary, SalesWeights,
 } from "./types";
 
 /** Exchange rate saved in Settings (mock). Every entry keeps its own rate in the real system. */
@@ -226,3 +227,31 @@ Tom Reeves,tom.reeves@,Reeves Plumbing,reevesplumbing.co.uk,United Kingdom,Owner
 Sophie Turner,sophie@fernandfig.co.uk,Fern & Fig,fernandfig.co.uk,United Kingdom,Founder,apollo
 Marcus Lee,marcus@ridgelinegyms.com,Ridgeline Gyms,ridgelinegyms.com,United States,Operations Lead,apollo
 Sophie Turner,sophie@fernandfig.co.uk,Fern & Fig,fernandfig.co.uk,United Kingdom,Founder,apollo`;
+
+/** Pipeline totals for a list of deals (USD at the display rate above). Used by the mock and by the live pipeline. */
+export function pipelineSummary(deals: Deal[]): PipelineSummary {
+  const month = monthKey();
+  const stages = STAGES.map((stage) => {
+    const list = deals.filter((d) => d.stage === stage);
+    return { stage, count: list.length, valueUsd: list.reduce((s, d) => s + toUsd(d.value), 0) };
+  });
+  const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
+  const closedAt = (d: Deal) => d.history[d.history.length - 1]?.at ?? d.updatedAt;
+  const wonMonth = deals.filter((d) => d.stage === "won" && d.wonStatus === "confirmed" && monthKey(closedAt(d)) === month);
+  return {
+    stages,
+    openValueUsd: open.reduce((s, d) => s + toUsd(d.value), 0),
+    openCount: open.length,
+    wonThisMonthUsd: wonMonth.reduce((s, d) => s + toUsd(d.value), 0),
+    wonThisMonthCount: wonMonth.length,
+    lostThisMonthCount: deals.filter((d) => d.stage === "lost" && monthKey(closedAt(d)) === month).length,
+    pendingWonCount: deals.filter((d) => d.wonStatus === "pending").length,
+  };
+}
+
+/** Totals per original currency, summed in cents so they never drift. Nothing is converted. */
+export function totalsByCurrency(values: Money[]): Money[] {
+  const cents = new Map<Money["currency"], number>();
+  for (const v of values) cents.set(v.currency, (cents.get(v.currency) ?? 0) + Math.round(Number(v.amount) * 100));
+  return [...cents.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currency, c]) => ({ currency, amount: (c / 100).toFixed(2) }));
+}

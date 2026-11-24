@@ -20,10 +20,10 @@ import { daysFromNow } from "@/mocks/time";
 import { apolloLastSyncAt, consumeMillionVerifierCredits, millionVerifierCredits } from "@/features/integrations/api";
 import {
   capScore, dataQuality, DEFAULT_SALES_WEIGHTS, domainOf, EMAIL_RE, emailsSentTotal, findDuplicate, isDueToday, isGenericDomain, isMissed, OPEN_STAGES,
-  parseCsv, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, STAGES, targetsMet, toUsd,
+  parseCsv, pipelineSummary, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, targetsMet, toUsd,
 } from "./logic";
 import { isLive } from "@/lib/api/http";
-import { type LeadsApi, liveLeadsApi } from "./live-api";
+import { type DealsApi, type LeadsApi, liveDealsApi, liveLeadsApi } from "./live-api";
 import type {
   CommissionLine, CommissionRule, Company, DailySalesSummary, DailyTargets, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, EmailCheck, FollowUp,
   ImportRow, Lead, LeadDetail, LeadSource, LeadStub, LogActivityInput, ManualDailyLog, MonthlyTargets, MySalesDay, NewDealInput, NewLeadInput,
@@ -459,7 +459,7 @@ export interface MoveResult {
   handover?: Deal["handover"];
 }
 
-export const dealsApi = {
+const mockDealsApi = {
   /** GET /deals */
   list: () =>
     mock<DealRow[]>(() => {
@@ -625,25 +625,9 @@ export const dealsApi = {
     }),
 };
 
-function pipelineSummary(deals: Deal[]): PipelineSummary {
-  const month = monthKey();
-  const stages = STAGES.map((stage) => {
-    const list = deals.filter((d) => d.stage === stage);
-    return { stage, count: list.length, valueUsd: list.reduce((s, d) => s + toUsd(d.value), 0) };
-  });
-  const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
-  const closedAt = (d: Deal) => d.history[d.history.length - 1]?.at ?? d.updatedAt;
-  const wonMonth = deals.filter((d) => d.stage === "won" && d.wonStatus === "confirmed" && monthKey(closedAt(d)) === month);
-  return {
-    stages,
-    openValueUsd: open.reduce((s, d) => s + toUsd(d.value), 0),
-    openCount: open.length,
-    wonThisMonthUsd: wonMonth.reduce((s, d) => s + toUsd(d.value), 0),
-    wonThisMonthCount: wonMonth.length,
-    lostThisMonthCount: deals.filter((d) => d.stage === "lost" && monthKey(closedAt(d)) === month).length,
-    pendingWonCount: deals.filter((d) => d.wonStatus === "pending").length,
-  };
-}
+/** Deals: the real API when Module 15 is live (NEXT_PUBLIC_LIVE_MODULES contains m15), the in-browser demo data otherwise. */
+export const dealsApi: DealsApi = isLive("m15") ? liveDealsApi : mockDealsApi;
+
 
 /* ---------------- My sales day, daily log ---------------- */
 

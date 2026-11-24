@@ -25,8 +25,8 @@ import { formatDate, formatDateTime, formatMonthKey } from "@/lib/dates";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils";
 import { canConfirmWon, canWorkOn, isSalesManager, wonConfirmerOf } from "../api";
-import { useConfirmWon, useDeal, useMoveDeal, useRejectWon, useSetProposal } from "../hooks";
-import { LOST_REASONS, OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
+import { useConfirmWon, useDeal, useLostReasons, useMoveDeal, useRejectWon, useSetProposal } from "../hooks";
+import { OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
 import type { DealDetail, DealStage } from "../types";
 import { FollowUpDialog } from "./follow-up-dialog";
 import { LogActivityDialog } from "./lead-actions";
@@ -68,13 +68,14 @@ function DealBody({ d }: { d: DealDetail }) {
   const lookup = useLookup();
   const isOwner = viewer?.employee.empId === deal.ownerEmpId;
   // Won is confirmed by the Director (sales manager), never by the owner (maker-checker).
-  const canConfirm = !!viewer && canConfirmWon(viewer, deal);
+  const canConfirm = deal.canDecideWon ?? (!!viewer && canConfirmWon(viewer, deal));
   // The owner and the Director work the deal; the CEO / Founder / Owner only views it.
   const canWork = !!viewer && canWorkOn(viewer, deal.ownerEmpId);
   const move = useMoveDeal();
   const confirm = useConfirmWon();
   const reject = useRejectWon();
   const askReason = useReason();
+  const lostRules = useLostReasons();
   const [logOpen, setLogOpen] = React.useState(false);
   const [stepMode, setStepMode] = React.useState<"done" | "edit" | null>(null);
   const open = OPEN_STAGES.includes(deal.stage);
@@ -84,16 +85,22 @@ function DealBody({ d }: { d: DealDetail }) {
   const doMove = async (stage: DealStage) => {
     let reason: string | undefined;
     if (stage === "lost") {
-      const r = await askReason({ title: `Why was ${company.name} lost?`, options: LOST_REASONS, confirmLabel: "Mark as lost", destructive: true });
+      // Wait for the settings when the screen has not loaded them yet (never read a missing answer as "not set").
+      const rules = lostRules.data ?? (await lostRules.refetch()).data;
+      if (!rules?.lostReasons.length || !rules.recontactMonths) {
+        toast.error("Deals can't be marked as lost yet", { description: "The Director sets the lost reasons and the re-contact period in Settings > Sales." });
+        return;
+      }
+      const r = await askReason({ title: `Why was ${company.name} lost?`, description: `The lead can be contacted again after ${rules.recontactMonths} months.`, options: rules.lostReasons, confirmLabel: "Mark as lost", destructive: true });
       if (!r) return;
       reason = r;
     }
     move.mutate(
-      { id: deal.id, stage, reason },
+      { id: deal.id, stage, reason, version: deal.version },
       {
         onSuccess: (res) => {
           if (res.pending) toast(`Waiting for ${res.confirmer} to confirm`, { icon: <Hourglass className="size-4" /> });
-          else if (res.handover) toast.success("Won and handed over", { description: `Draft invoice ${res.handover.invoiceNumber} created in Billing.` });
+          else if (res.handover) toast.success("Won and handed over", { description: res.handover.invoiceNumber ? `Draft invoice ${res.handover.invoiceNumber} created in Billing.` : "Billing prepares the draft invoice for Finance." });
           else toast.success(`Moved to ${STAGE_META[stage].label}`);
         },
         onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't move the deal."),
@@ -149,7 +156,7 @@ function DealBody({ d }: { d: DealDetail }) {
           canWork && (
           <>
             {!closed && (
-              <NativeSelect aria-label="Move to stage" value="" onChange={(e) => e.target.value && doMove(e.target.value as DealStage)} className="w-44">
+              <NativeSelect aria-label="Move to stage" value="" disabled={move.isPending} onChange={(e) => e.target.value && doMove(e.target.value as DealStage)} className="w-44">
                 <option value="">Move to…</option>
                 {[...FLOW, "lost" as DealStage]
                   .filter((s) => s !== deal.stage)
@@ -192,12 +199,12 @@ function DealBody({ d }: { d: DealDetail }) {
                 variant="outline"
                 onClick={async () => {
                   const reason = await askReason({ title: "Not won yet?", description: "The deal goes back to its previous stage.", confirmLabel: "Send back" });
-                  if (reason) reject.mutate({ id: deal.id, reason }, { onSuccess: () => toast("Sent back to the salesperson") });
+                  if (reason) reject.mutate({ id: deal.id, reason }, { onSuccess: () => toast("Sent back to the salesperson"), onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't send it back.") });
                 }}
               >
                 <X /> Not yet
               </Button>
-              <Button loading={confirm.isPending} onClick={() => confirm.mutate(deal.id, { onSuccess: (h) => toast.success("Won confirmed", { description: `Draft invoice ${h.invoiceNumber} created. CTO notified.` }) })}>
+              <Button loading={confirm.isPending} onClick={() => confirm.mutate(deal.id, { onSuccess: (h) => toast.success("Won confirmed", { description: h.invoiceNumber ? `Draft invoice ${h.invoiceNumber} created. CTO notified.` : "Billing prepares the draft invoice for Finance to check and send." }), onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't confirm the deal.") })}>
                 <Check /> Confirm won
               </Button>
             </div>

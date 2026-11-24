@@ -19,6 +19,12 @@ export const SALES_ALL = 'sales.all';
  * views (decisions D23-D25). No new permission key is added.
  */
 export const SALES_MANAGE = 'sales.targets';
+/**
+ * Decision B1 (an approved M1 permission change): the CEO / Founder / Owner confirms a Won deal the Director owns, and only
+ * such a deal, because nobody confirms their own deal (the same rule as decision D26 for payroll). DealsService checks the
+ * owner's level; a database trigger refuses a Level 1 confirmation of any other deal.
+ */
+export const SALES_CONFIRM_DIRECTOR_WON = 'sales.won_confirm_director';
 
 /** What the caller may do in Module 15, read from their role and duties for this request. */
 export interface SalesAccess {
@@ -27,6 +33,8 @@ export interface SalesAccess {
   team: boolean;
   all: boolean;
   manage: boolean;
+  /** May confirm a Won deal the Director (Level 2) owns, and only such a deal. */
+  confirmDirectorDeals: boolean;
 }
 
 /**
@@ -54,6 +62,7 @@ export class SalesAccessService {
       team: permissions.has(SALES_TEAM),
       all: permissions.has(SALES_ALL),
       manage: permissions.has(SALES_MANAGE),
+      confirmDirectorDeals: permissions.has(SALES_CONFIRM_DIRECTOR_WON),
     };
   }
 

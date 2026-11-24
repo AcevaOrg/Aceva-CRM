@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { empIdSchema } from './events';
-import { decisionReasonSchema, pageQuerySchema } from './shared';
+import { currencySchema, daySchema, decisionReasonSchema, moneySchema, pageQuerySchema, type Currency } from './shared';
 
 /**
  * Module 15: sales and CRM (plan section 20). M15.1: leads and companies.
@@ -231,9 +231,23 @@ export const salesSettingsSchema = z.object({
     .array(domainSchema)
     .max(200)
     .refine((v) => new Set(v).size === v.length, 'Each domain only once'),
+  /**
+   * M15.2: the reasons a deal can be marked Lost (plan section 20 gives examples only: price, no reply, chose another
+   * company). Empty until management sets the list; until then no deal can be marked Lost.
+   */
+  lostReasons: z
+    .array(z.string().trim().min(2).max(80))
+    .max(30)
+    .refine((v) => new Set(v.map((r) => r.toLowerCase())).size === v.length, 'Each reason only once')
+    .default([]),
+  /**
+   * M15.2: months after a Lost deal before the lead may be contacted again (plan section 20: "a set number of months").
+   * Null until management sets it; until then no deal can be marked Lost.
+   */
+  recontactMonths: z.number().int().min(1).max(60).nullable().default(null),
 });
 export type SalesSettings = z.infer<typeof salesSettingsSchema>;
-export const SALES_SETTINGS_DEFAULTS: SalesSettings = { sharedWebsiteDomains: [] };
+export const SALES_SETTINGS_DEFAULTS: SalesSettings = { sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null };
 
 // -------------------------------------------------------------------------------------------------------------- views
 
@@ -320,4 +334,171 @@ export interface SalesDuplicateLeadError {
   code: 'duplicate_lead';
   message: string;
   existing: { leadId: string; owner: SalesPersonRef };
+}
+
+// =============================================================================================================== M15.2
+// Deals and the pipeline (plan section 20): a deal is one sales opportunity with a company; it sits in one of eight
+// stages; Lost needs a reason (and the lead may be contacted again after a set number of months); Won is marked by the
+// salesperson and confirmed by the sales manager (the Director until there is one), never by the person who owns or
+// asked for it. A confirmed Won deal is handed to Module 13 through sales.deal.won_confirmed (one draft invoice).
+
+export const SALES_DEAL_STAGES = ['new', 'contacted', 'replied', 'meeting_booked', 'proposal_sent', 'negotiation', 'won', 'lost'] as const;
+export const salesDealStageSchema = z.enum(SALES_DEAL_STAGES);
+export type SalesDealStage = z.infer<typeof salesDealStageSchema>;
+/** The stages a deal is still being worked in (every open deal has a next step with a date). */
+export const SALES_OPEN_STAGES = ['new', 'contacted', 'replied', 'meeting_booked', 'proposal_sent', 'negotiation'] as const satisfies readonly SalesDealStage[];
+export const isOpenDealStage = (s: SalesDealStage): boolean => (SALES_OPEN_STAGES as readonly SalesDealStage[]).includes(s);
+
+/** The services Aceva sells (plan section 20). */
+export const SALES_DEAL_SERVICES = ['website', 'custom_software', 'ai_automation', 'mobile_app', 'ecommerce'] as const;
+export const salesDealServiceSchema = z.enum(SALES_DEAL_SERVICES);
+export type SalesDealService = z.infer<typeof salesDealServiceSchema>;
+/** How a service is named on the deal and on the draft invoice line Module 13 makes from a Won deal. */
+export const SALES_DEAL_SERVICE_LABEL: Record<SalesDealService, string> = {
+  website: 'Website',
+  custom_software: 'Custom software',
+  ai_automation: 'AI automation',
+  mobile_app: 'Mobile app',
+  ecommerce: 'E-commerce store',
+};
+
+export const SALES_WON_STATUSES = ['none', 'pending', 'confirmed'] as const;
+export type SalesWonStatus = (typeof SALES_WON_STATUSES)[number];
+
+/** What a history row records. Stage rows have from and to; Won request rows keep the stage the deal is in. */
+export const SALES_DEAL_EVENTS = ['created', 'stage_changed', 'won_requested', 'won_rejected', 'won_confirmed', 'owner_changed'] as const;
+export type SalesDealEvent = (typeof SALES_DEAL_EVENTS)[number];
+
+const nextStepText = z.string().trim().min(2, 'Describe the next step').max(300);
+
+/** POST /sales/deals: a deal for one of your leads (or a team member's, for the sales manager); it starts in New. */
+export const createSalesDealSchema = z.object({
+  leadId: z.uuid(),
+  service: salesDealServiceSchema,
+  value: moneySchema,
+  currency: currencySchema,
+  expectedClose: daySchema,
+  nextStep: nextStepText,
+  nextStepDate: daySchema,
+});
+export type CreateSalesDealRequest = z.input<typeof createSalesDealSchema>;
+export type CreateSalesDealData = z.output<typeof createSalesDealSchema>;
+
+/** PATCH /sales/deals/:id (an open deal that is not waiting for Won confirmation; name the version you read). */
+export const updateSalesDealSchema = z
+  .object({
+    service: salesDealServiceSchema.optional(),
+    value: moneySchema.optional(),
+    currency: currencySchema.optional(),
+    expectedClose: daySchema.optional(),
+    nextStep: nextStepText.optional(),
+    nextStepDate: daySchema.optional(),
+    version: versionSchema,
+  })
+  .refine((v) => Object.keys(v).some((k) => k !== 'version' && v[k as keyof typeof v] !== undefined), 'Change at least one field');
+export type UpdateSalesDealRequest = z.input<typeof updateSalesDealSchema>;
+export type UpdateSalesDealData = z.output<typeof updateSalesDealSchema>;
+
+/**
+ * POST /sales/deals/:id/move. To an open stage (the deal keeps or gets a next step); to Lost (lostReason from the
+ * settings list, an optional note; the re-contact date follows from the settings). Won is never a move: it is asked
+ * for (request-won) and confirmed by the sales manager.
+ */
+export const moveSalesDealSchema = z
+  .object({
+    toStage: salesDealStageSchema,
+    version: versionSchema,
+    nextStep: nextStepText.optional(),
+    nextStepDate: daySchema.optional(),
+    lostReason: z.string().trim().min(2).max(80).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .refine((v) => v.toStage !== 'won', { message: 'Won is asked for with request-won and confirmed by the sales manager', path: ['toStage'] })
+  .refine((v) => v.toStage !== 'lost' || !!v.lostReason, { message: 'Choose why the deal was lost', path: ['lostReason'] });
+export type MoveSalesDealRequest = z.input<typeof moveSalesDealSchema>;
+export type MoveSalesDealData = z.output<typeof moveSalesDealSchema>;
+
+/** POST /sales/deals/:id/request-won and /confirm-won: the version read. */
+export const salesDealVersionSchema = z.object({ version: versionSchema });
+export type SalesDealVersionRequest = z.infer<typeof salesDealVersionSchema>;
+
+/** POST /sales/deals/:id/reject-won: the sales manager sends the Won request back, with a reason. */
+export const rejectSalesWonSchema = z.object({ reason: decisionReasonSchema, version: versionSchema });
+export type RejectSalesWonRequest = z.infer<typeof rejectSalesWonSchema>;
+
+/** GET /sales/deals */
+export const salesDealListQuerySchema = pageQuerySchema.extend({
+  owner: empIdSchema.optional(),
+  stage: salesDealStageSchema.optional(),
+  leadId: z.uuid().optional(),
+  wonStatus: z.enum(SALES_WON_STATUSES).optional(),
+  /** open = every open stage; closed = Won or Lost; all (default). */
+  status: z.enum(['open', 'closed', 'all']).default('all'),
+});
+export type SalesDealListQuery = z.infer<typeof salesDealListQuerySchema>;
+
+export interface SalesDealHistoryView {
+  event: SalesDealEvent;
+  fromStage: SalesDealStage | null;
+  toStage: SalesDealStage;
+  by: SalesPersonRef | null;
+  at: string;
+  reason: string | null;
+  note: string | null;
+}
+
+/** A deal the caller may see in full (own; the team for the sales manager; all for sales.all). */
+export interface SalesDealView {
+  restricted: false;
+  id: string;
+  number: string;
+  leadId: string;
+  leadName: string;
+  company: { id: string; name: string; partyId: string | null };
+  owner: SalesPersonRef;
+  service: SalesDealService;
+  value: string;
+  currency: Currency;
+  expectedClose: string;
+  stage: SalesDealStage;
+  nextStep: string | null;
+  nextStepDate: string | null;
+  lostReason: string | null;
+  lostNote: string | null;
+  recontactAfter: string | null;
+  wonStatus: SalesWonStatus;
+  wonRequestedAt: string | null;
+  wonRequestedBy: SalesPersonRef | null;
+  wonConfirmedAt: string | null;
+  wonConfirmedBy: SalesPersonRef | null;
+  closedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+  /** The caller may confirm or send back the Won request (sales manager, never the owner or the person who asked). */
+  canDecideWon: boolean;
+}
+
+export interface SalesDealDetailView extends SalesDealView {
+  history: SalesDealHistoryView[];
+  /** Module 13: the draft invoice made from this Won deal, once the billing reader has handled it. */
+  handover: { status: 'drafted' | 'needs_client'; invoiceId: string | null } | null;
+}
+
+/** Someone else's deal: only that it exists and who owns it (no value, no notes). */
+export interface SalesDealStubView {
+  restricted: true;
+  id: string;
+  number: string;
+  companyName: string;
+  owner: SalesPersonRef;
+}
+
+export type SalesDealResult = SalesDealDetailView | SalesDealStubView;
+
+/** GET /sales/deals/summary: counts and totals per stage for the deals the caller may see, per currency (no conversion). */
+export interface SalesPipelineSummaryView {
+  stages: Array<{ stage: SalesDealStage; count: number; totals: Array<{ currency: Currency; value: string }> }>;
+  pendingWonCount: number;
 }

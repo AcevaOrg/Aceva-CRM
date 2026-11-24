@@ -3,16 +3,24 @@
  * mock in api.ts, so the screens keep working. The server decides everything: who sees a lead in full (own; the team for
  * the sales manager; all), the duplicate check (email; the company's website domain) and who may change or move a lead.
  *
- * M15.1 makes leads and companies live. Activities, deals, the import, do-not-contact and email checks arrive with the
- * later parts of Module 15 (and Module 16 for email checks): in live mode those calls say so instead of using demo data.
+ * M15.1 makes leads and companies live, M15.2 deals and the pipeline. Activities, follow-ups, the import, do-not-contact
+ * and email checks arrive with the later parts of Module 15 (and Module 16 for email checks): in live mode those calls say
+ * so instead of using demo data.
  */
 import type {
-  CreateSalesLeadRequest, Page, SalesCompanyView, SalesDuplicateCheckView, SalesLeadResult, SalesLeadView, UpdateSalesLeadRequest,
+  CreateSalesDealRequest, CreateSalesLeadRequest, MoveSalesDealRequest, Page, SalesCompanyView, SalesDealDetailView, SalesDealHistoryView, SalesDealResult,
+  SalesDealView, SalesDuplicateCheckView, SalesLeadResult, SalesLeadView, SalesPipelineSummaryView, UpdateSalesLeadRequest,
 } from "@aceva/contracts";
+import { SALES_OPEN_STAGES } from "@aceva/contracts";
 import { http } from "@/lib/api/http";
 import { ApiError } from "@/lib/api/mock";
-import type { LeadRow } from "./api";
-import type { Company, DuplicateResult, ImportRow, Lead, LeadDetail, LeadStub, NewLeadInput, VerifyPreview, VerifyResult } from "./types";
+import { isoDay, monthKey } from "@/lib/dates";
+import type { DealRow, LeadRow, MoveResult } from "./api";
+import { totalsByCurrency } from "./logic";
+import type {
+  Company, Deal, DealDetail, DealStage, DuplicateResult, Handover, ImportRow, Lead, LeadDetail, LeadStub, NewDealInput, NewLeadInput, PipelineSummary, StageChange,
+  VerifyPreview, VerifyResult,
+} from "./types";
 
 const opt = (v: string | null | undefined) => v ?? undefined;
 
@@ -104,8 +112,9 @@ export const liveLeadsApi: LeadsApi = {
   async get(id: string): Promise<LeadDetail | LeadStub> {
     const v = await http.get<SalesLeadResult>(`/sales/leads/${id}`);
     if (v.restricted) return { id: v.id, name: v.fullName, companyName: v.companyName ?? "—", ownerEmpId: v.owner.empId, restricted: true };
-    // Activities and deals arrive with M15.2 and M15.3.
-    return { lead: mapLead(v), company: v.company ? mapCompany(v.company) : NO_COMPANY, activities: [], deals: [] };
+    // Activities arrive with M15.3.
+    const deals = await allDeals({ leadId: v.id });
+    return { lead: mapLead(v), company: v.company ? mapCompany(v.company) : NO_COMPANY, activities: [], deals: deals.map(mapDeal) };
   },
 
   /** POST /sales/leads/check-duplicate */
@@ -153,4 +162,190 @@ export const liveLeadsApi: LeadsApi = {
   importCommit: async () => notYet("Importing leads"),
   verifyPreview: async () => notYet("Checking emails (Module 16)"),
   verify: async () => notYet("Checking emails (Module 16)"),
+};
+
+/* ---------------- M15.2: deals and the pipeline ---------------- */
+
+/** The deals service both the mock (api.ts) and the real API provide. */
+export interface DealsApi {
+  list(): Promise<DealRow[]>;
+  get(id: string): Promise<DealDetail>;
+  create(input: NewDealInput): Promise<Deal>;
+  move(id: string, stage: DealStage, reason?: string, version?: number): Promise<MoveResult>;
+  confirmWon(id: string): Promise<Handover>;
+  rejectWon(id: string, reason: string): Promise<void>;
+  setNextStep(id: string, nextStep: string, nextStepDate: string): Promise<void>;
+  setProposal(id: string, url: string): Promise<void>;
+  followUpDone(id: string, summary: string, nextStep: string, nextStepDate: string): Promise<void>;
+  summary(): Promise<PipelineSummary>;
+}
+
+/** What each history row says on the timeline (the screens show "Moved to <stage>" and the note). */
+function historyRow(h: SalesDealHistoryView): StageChange {
+  const by = h.by?.empId ?? "system";
+  switch (h.event) {
+    case "created":
+      return { stage: h.toStage, at: h.at, by, note: "Deal added" };
+    case "won_requested":
+      return { stage: "won", at: h.at, by, note: "Marked as Won, waiting for confirmation" };
+    case "won_rejected":
+      return { stage: h.toStage, at: h.at, by, note: `Won not confirmed${h.reason ? `: ${h.reason}` : ""}` };
+    case "won_confirmed":
+      return { stage: "won", at: h.at, by, note: "Won confirmed" };
+    case "owner_changed":
+      return { stage: h.toStage, at: h.at, by, note: `Owner changed${h.note ? ` (${h.note})` : ""}${h.reason ? `: ${h.reason}` : ""}` };
+    default:
+      return { stage: h.toStage, at: h.at, by, note: [h.reason, h.note].filter(Boolean).join(" · ") || undefined };
+  }
+}
+
+/**
+ * A server deal in the screens' shape. The server keeps a pending Won request in the deal's real stage; the screens show
+ * it in the Won column as "waiting for confirmation" (stage won, wonStatus pending, previousStage the real stage).
+ */
+export function mapDeal(v: SalesDealView | SalesDealDetailView): Deal {
+  const pending = v.wonStatus === "pending";
+  const detail = "history" in v ? v : null;
+  return {
+    id: v.id,
+    number: v.number,
+    leadId: v.leadId,
+    companyId: v.company.id,
+    service: v.service,
+    value: { amount: v.value, currency: v.currency },
+    expectedClose: v.expectedClose,
+    stage: pending ? "won" : v.stage,
+    previousStage: pending ? v.stage : undefined,
+    nextStep: opt(v.nextStep),
+    nextStepDate: opt(v.nextStepDate),
+    ownerEmpId: v.owner.empId,
+    lostReason: opt(v.lostReason),
+    recontactAfter: opt(v.recontactAfter),
+    wonStatus: v.wonStatus === "none" ? undefined : v.wonStatus,
+    wonRequestedAt: opt(v.wonRequestedAt),
+    wonConfirmedBy: v.wonConfirmedBy?.empId,
+    // Module 13 makes the draft invoice from the Won event; until its reader has, there is no number to show yet.
+    handover:
+      v.wonStatus === "confirmed"
+        ? { clientName: v.company.name, invoiceNumber: detail?.handover?.status === "drafted" ? "Draft created" : detail?.handover?.status === "needs_client" ? "Finance chooses the client" : "", ctoNotified: false, at: v.wonConfirmedAt ?? v.updatedAt }
+        : undefined,
+    history: detail ? detail.history.map(historyRow) : [],
+    createdAt: v.createdAt,
+    updatedAt: v.closedAt ?? v.updatedAt,
+    version: v.version,
+    canDecideWon: v.canDecideWon,
+  };
+}
+
+/** The screens pass dates as ISO date-times (local noon); the server takes the calendar day. */
+const toDay = (value: string): string => (/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : isoDay(new Date(value)));
+
+const toDealRow = (v: SalesDealView): DealRow => ({ ...mapDeal(v), companyName: v.company.name, leadName: v.leadName });
+
+async function dealVersion(id: string): Promise<number> {
+  const d = await http.get<SalesDealResult>(`/sales/deals/${id}`);
+  if (d.restricted) throw new ApiError("forbidden", "Only the owner or the sales manager works on this deal.", 403);
+  return d.version;
+}
+
+async function allDeals(params: Record<string, string> = {}): Promise<SalesDealView[]> {
+  const out: SalesDealView[] = [];
+  for (let page = 1; out.length < MAX_ROWS; page++) {
+    const res = await http.get<Page<SalesDealView>>("/sales/deals", { ...params, page, pageSize: PAGE });
+    out.push(...res.items);
+    if (out.length >= res.total || !res.items.length) break;
+  }
+  return out;
+}
+
+export const liveDealsApi: DealsApi = {
+  /** GET /sales/deals (every page the caller may see) */
+  async list() {
+    return (await allDeals()).map(toDealRow);
+  },
+
+  /** GET /sales/deals/:id, with its lead (activities arrive with M15.3; commission with M15.7) */
+  async get(id) {
+    const v = await http.get<SalesDealResult>(`/sales/deals/${id}`);
+    if (v.restricted) throw new ApiError("not_found", "This deal belongs to someone else.", 404);
+    const lead = await http.get<SalesLeadResult>(`/sales/leads/${v.leadId}`);
+    const company: Company = lead.restricted || !lead.company ? { id: v.company.id, name: v.company.name } : mapCompany(lead.company);
+    const leadView: Lead = lead.restricted
+      ? { id: lead.id, name: lead.fullName, companyId: v.company.id, source: "referral", ownerEmpId: lead.owner.empId, emailCheck: "unchecked", doNotContact: false, archived: false, createdAt: v.createdAt }
+      : mapLead(lead);
+    return { deal: mapDeal(v), lead: leadView, company, activities: [] };
+  },
+
+  /** POST /sales/deals (it starts in New, with its next step) */
+  async create(input) {
+    const body: CreateSalesDealRequest = {
+      leadId: input.leadId,
+      service: input.service,
+      value: Number(input.value.amount).toFixed(2),
+      currency: input.value.currency,
+      expectedClose: toDay(input.expectedClose),
+      nextStep: input.nextStep,
+      nextStepDate: toDay(input.nextStepDate),
+    };
+    return mapDeal(await http.post<SalesDealDetailView>("/sales/deals", body));
+  },
+
+  /** POST /sales/deals/:id/move, or /request-won for Won (the sales manager confirms it) */
+  async move(id, stage, reason, version) {
+    const v = version ?? (await dealVersion(id));
+    if (stage === "won") {
+      await http.post<SalesDealDetailView>(`/sales/deals/${id}/request-won`, { version: v });
+      return { stage, pending: true, confirmer: "The sales manager" };
+    }
+    // The reason dialog gives "<reason>" or "<reason>: <note>": the reason is the one chosen from the settings list.
+    const [lostReason, ...rest] = (reason ?? "").split(": ");
+    const note = rest.join(": ").trim();
+    const body: MoveSalesDealRequest = stage === "lost" ? { toStage: "lost", lostReason, ...(note ? { note } : {}), version: v } : { toStage: stage, version: v };
+    const res = await http.post<SalesDealDetailView>(`/sales/deals/${id}/move`, body);
+    return { stage, recontactAfter: opt(res.recontactAfter) };
+  },
+
+  /** POST /sales/deals/:id/confirm-won (Module 13 then makes the draft invoice from the event) */
+  async confirmWon(id) {
+    const res = await http.post<SalesDealDetailView>(`/sales/deals/${id}/confirm-won`, { version: await dealVersion(id) });
+    return mapDeal(res).handover!;
+  },
+
+  /** POST /sales/deals/:id/reject-won */
+  async rejectWon(id, reason) {
+    await http.post<SalesDealDetailView>(`/sales/deals/${id}/reject-won`, { reason, version: await dealVersion(id) });
+  },
+
+  /** PATCH /sales/deals/:id */
+  async setNextStep(id, nextStep, nextStepDate) {
+    await http.patch<SalesDealDetailView>(`/sales/deals/${id}`, { nextStep, nextStepDate: toDay(nextStepDate), version: await dealVersion(id) });
+  },
+
+  setProposal: async () => notYet("Linking a proposal"),
+  followUpDone: async () => notYet("Recording follow-ups"),
+
+  /**
+   * The server's summary (GET /sales/deals/summary) is the authority for each stage's count and totals, per original
+   * currency. Nothing is converted: the USD fields stay 0 and `totals` carries the amounts. This month's Won and Lost
+   * deals come from the deal list, also per currency.
+   */
+  async summary() {
+    const [server, deals] = await Promise.all([http.get<SalesPipelineSummaryView>("/sales/deals/summary"), allDeals()]);
+    const money = (totals: { currency: "PKR" | "USD"; value: string }[]) => totals.map((t) => ({ amount: t.value, currency: t.currency }));
+    const isOpen = (stage: string) => (SALES_OPEN_STAGES as readonly string[]).includes(stage);
+    const month = monthKey();
+    const closedThisMonth = (d: SalesDealView) => !!d.closedAt && monthKey(d.closedAt) === month;
+    const won = deals.filter((d) => d.stage === "won" && closedThisMonth(d));
+    const openStages = server.stages.filter((s) => isOpen(s.stage));
+    return {
+      stages: server.stages.map((s) => ({ stage: s.stage, count: s.count, valueUsd: 0, totals: money(s.totals) })),
+      openValueUsd: 0,
+      openCount: openStages.reduce((n, s) => n + s.count, 0),
+      wonThisMonthUsd: 0,
+      wonThisMonthCount: won.length,
+      lostThisMonthCount: deals.filter((d) => d.stage === "lost" && closedThisMonth(d)).length,
+      pendingWonCount: server.pendingWonCount,
+      totals: { open: totalsByCurrency(openStages.flatMap((s) => money(s.totals))), wonThisMonth: totalsByCurrency(won.map((d) => ({ amount: d.value, currency: d.currency }))) },
+    };
+  },
 };

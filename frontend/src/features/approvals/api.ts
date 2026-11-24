@@ -22,7 +22,11 @@ import type { ApprovalItem, ApprovalType, DecideOptions } from "./types";
  * disputes when Module 6 is live. Everything else is still decided on the mock.
  */
 function serverTypes(): ApprovalType[] {
-  return [...(isLive("m5") ? (["task_review", "extension"] as const) : []), ...(isLive("m6") ? (["scorecard", "dispute"] as const) : [])];
+  return [
+    ...(isLive("m5") ? (["task_review", "extension"] as const) : []),
+    ...(isLive("m6") ? (["scorecard", "dispute"] as const) : []),
+    ...(isLive("m15") ? (["won_deal"] as const) : []),
+  ];
 }
 
 /**
@@ -117,4 +121,4 @@ const liveApprovalsApi: typeof mockApprovalsApi = {
   },
 };
 
-export const approvalsApi: typeof mockApprovalsApi = isLive("m5") || isLive("m6") ? liveApprovalsApi : mockApprovalsApi;
+export const approvalsApi: typeof mockApprovalsApi = isLive("m5") || isLive("m6") || isLive("m15") ? liveApprovalsApi : mockApprovalsApi;

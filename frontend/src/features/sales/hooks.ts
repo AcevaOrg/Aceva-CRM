@@ -1,7 +1,9 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { http, isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
+import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
 import type { DailyTargets, DealStage, ImportRow, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
@@ -99,12 +101,18 @@ export function useDnc() {
 
 /* ---------- Mutations ---------- */
 
+/**
+ * Reloads what a change touched. It waits for the reload, so a change only counts as done once the screen shows the new
+ * data (in live mode a deal or lead carries its version: the next change must name the new one).
+ */
 function useInvalidate() {
   const qc = useQueryClient();
-  return () => {
-    qc.invalidateQueries({ queryKey: ["sales"] });
-    qc.invalidateQueries({ queryKey: ["approvals"] });
-    qc.invalidateQueries({ queryKey: ["integrations"] });
+  return async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["sales"] }),
+      qc.invalidateQueries({ queryKey: ["approvals"] }),
+      qc.invalidateQueries({ queryKey: ["integrations"] }),
+    ]);
   };
 }
 
@@ -154,7 +162,7 @@ export function useCreateDeal() {
 
 export function useMoveDeal() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, stage, reason }: { id: string; stage: DealStage; reason?: string }) => dealsApi.move(id, stage, reason), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, stage, reason, version }: { id: string; stage: DealStage; reason?: string; version?: number }) => dealsApi.move(id, stage, reason, version), onSuccess: done });
 }
 
 export function useConfirmWon() {
@@ -218,4 +226,16 @@ export function useUpdateCommissionRule() {
 export function useAddDnc() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ email, reason }: { email: string; reason: string }) => dncApi.add(email, reason), onSuccess: done });
+}
+
+/**
+ * The reasons a deal can be marked Lost. Live: the list management keeps in Settings > Sales (empty until it is set, and
+ * then nothing can be marked Lost); mock: the demo list.
+ */
+export function useLostReasons() {
+  return useQuery({
+    queryKey: ["sales", "lost-reasons"],
+    queryFn: async () => (isLive("m15") ? (await http.get<{ value: { lostReasons: string[]; recontactMonths: number | null } }>("/settings/modules/sales")).value : { lostReasons: LOST_REASONS, recontactMonths: RECONTACT_MONTHS }),
+    staleTime: 60_000,
+  });
 }

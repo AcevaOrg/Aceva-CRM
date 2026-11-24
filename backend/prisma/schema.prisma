@@ -580,6 +580,10 @@ model Employee {
 
   // Module 15 (back-relations only)
   salesLeadsOwned         SalesLead[]               @relation("SalesLeadOwner")
+  salesDealsOwned         SalesDeal[]               @relation("SalesDealOwner")
+  salesWonRequested       SalesDeal[]               @relation("SalesDealWonRequester")
+  salesWonConfirmed       SalesDeal[]               @relation("SalesDealWonConfirmer")
+  salesDealHistory        SalesDealHistory[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -3636,6 +3640,7 @@ model SalesCompany {
 
   party Party?      @relation(fields: [partyId], references: [id])
   leads SalesLead[]
+  deals SalesDeal[]
 
   @@index([name])
   @@map("sales_companies")
@@ -3672,10 +3677,129 @@ model SalesLead {
   updatedBy       String?         @map("updated_by") @db.Uuid
 
   company SalesCompany? @relation(fields: [companyId], references: [id])
+  deals   SalesDeal[]
   owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
 
   @@index([ownerId])
   @@index([companyId])
   @@index([lastActivityAt])
   @@map("sales_leads")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.2: deals and the pipeline (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// The eight pipeline stages of plan section 20, in order. Won and Lost are final.
+enum SalesDealStage {
+  new
+  contacted
+  replied
+  meeting_booked
+  proposal_sent
+  negotiation
+  won
+  lost
+
+  @@map("sales_deal_stage")
+}
+
+/// The services Aceva sells (plan section 20).
+enum SalesDealService {
+  website
+  custom_software
+  ai_automation
+  mobile_app
+  ecommerce
+
+  @@map("sales_deal_service")
+}
+
+/// Won is marked by the salesperson (pending) and confirmed by the sales manager (confirmed). A request sent back is none again.
+enum SalesWonStatus {
+  none
+  pending
+  confirmed
+
+  @@map("sales_won_status")
+}
+
+/// What a deal history row records.
+enum SalesDealEvent {
+  created
+  stage_changed
+  won_requested
+  won_rejected
+  won_confirmed
+  owner_changed
+
+  @@map("sales_deal_event")
+}
+
+/// One sales opportunity with a company (plan section 20). Its owner is the lead's owner. The number (DL-YYYY-NNNN) is
+/// what people and Module 13 see. CHECKs in the migration: an open deal has a next step with a date; a Lost deal has a
+/// reason and a re-contact date; a Won deal is confirmed; a pending Won request sits in an open stage.
+model SalesDeal {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// DL-YYYY-NNNN from the sales_deal_seq sequence (default in the migration).
+  number           String           @unique @default(dbgenerated("((('DL-'::text || to_char(now(), 'YYYY'::text)) || '-'::text) || lpad((nextval('sales_deal_seq'::regclass))::text, 4, '0'::text))"))
+  leadId           String           @map("lead_id") @db.Uuid
+  companyId        String           @map("company_id") @db.Uuid
+  ownerId          String           @map("owner_id") @db.Uuid
+  service          SalesDealService
+  value            Decimal          @db.Decimal(12, 2)
+  currency         Currency
+  expectedClose    DateTime         @map("expected_close") @db.Date
+  stage            SalesDealStage   @default(new)
+  nextStep         String?          @map("next_step")
+  nextStepDate     DateTime?        @map("next_step_date") @db.Date
+  lostReason       String?          @map("lost_reason")
+  lostNote         String?          @map("lost_note")
+  recontactAfter   DateTime?        @map("recontact_after") @db.Date
+  wonStatus        SalesWonStatus   @default(none) @map("won_status")
+  wonRequestedAt   DateTime?        @map("won_requested_at") @db.Timestamptz(3)
+  wonRequestedById String?          @map("won_requested_by_id") @db.Uuid
+  wonConfirmedAt   DateTime?        @map("won_confirmed_at") @db.Timestamptz(3)
+  wonConfirmedById String?          @map("won_confirmed_by_id") @db.Uuid
+  /// When the deal became Won or Lost.
+  closedAt         DateTime?        @map("closed_at") @db.Timestamptz(3)
+  version          Int              @default(1)
+  archivedAt       DateTime?        @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy        String?          @map("created_by") @db.Uuid
+  updatedAt        DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?          @map("updated_by") @db.Uuid
+
+  lead           SalesLead          @relation(fields: [leadId], references: [id])
+  company        SalesCompany       @relation(fields: [companyId], references: [id])
+  owner          Employee           @relation("SalesDealOwner", fields: [ownerId], references: [id])
+  wonRequestedBy Employee?          @relation("SalesDealWonRequester", fields: [wonRequestedById], references: [id])
+  wonConfirmedBy Employee?          @relation("SalesDealWonConfirmer", fields: [wonConfirmedById], references: [id])
+  history        SalesDealHistory[]
+
+  @@index([ownerId, stage])
+  @@index([leadId])
+  @@index([companyId])
+  @@index([stage])
+  @@map("sales_deals")
+}
+
+/// Every stage change and Won decision of a deal, in order. Insert-only (a trigger refuses changes and removal).
+model SalesDealHistory {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId    String          @map("deal_id") @db.Uuid
+  event     SalesDealEvent
+  fromStage SalesDealStage? @map("from_stage")
+  toStage   SalesDealStage  @map("to_stage")
+  /// Null for a change made by the system (for example a lead moved when its owner left, M15.5).
+  actorId   String?         @map("actor_id") @db.Uuid
+  reason    String?
+  note      String?
+  at        DateTime        @default(now()) @db.Timestamptz(3)
+
+  deal  SalesDeal @relation(fields: [dealId], references: [id])
+  actor Employee? @relation(fields: [actorId], references: [id])
+
+  @@index([dealId, at])
+  @@map("sales_deal_history")
 }

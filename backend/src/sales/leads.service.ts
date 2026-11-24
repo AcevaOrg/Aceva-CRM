@@ -12,6 +12,7 @@ import {
   type SalesPersonRef,
   type UpdateSalesLeadData,
   SALES_DUPLICATE_CHECKS_PER_MINUTE,
+  SALES_OPEN_STAGES,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
 import { AuditService } from '../access/audit.service';
@@ -203,7 +204,7 @@ export class LeadsService {
 
   /**
    * POST /sales/leads/:id/owner: the sales manager moves a lead to another salesperson in their team (plan section 20,
-   * "moves leads between people"). Needs the version read, a reason, and is logged. (Open deals follow in M15.2.)
+   * "moves leads between people"). Needs the version read, a reason, and is logged. Its open deals move with it.
    */
   async reassign(actor: Actor, id: string, dto: ReassignSalesLeadRequest, client: RequestInfo): Promise<SalesLeadView> {
     const a = await this.access.of(actor);
@@ -217,8 +218,21 @@ export class LeadsService {
     await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.salesLead.updateMany({ where: { id, version: dto.version, ownerId: row.ownerId, archivedAt: null }, data: { ownerId: target.id, version: { increment: 1 }, updatedBy: actor.id } });
       if (!count) conflict('stale_version', 'This lead was changed by someone else. Reload it');
+      // M15.2: the lead's OPEN deals move with it (Won and Lost deals keep their owner: they are final). Each one keeps a
+      // history row; its version changes, so a screen that read it before must reload.
+      const open = await tx.salesDeal.findMany({ where: { leadId: id, ownerId: row.ownerId, stage: { in: [...SALES_OPEN_STAGES] }, archivedAt: null }, select: { id: true, number: true, stage: true } });
+      if (open.length) {
+        // Only while each deal still has this owner and an open stage: one closed or moved meanwhile (Won and Lost keep their
+        // owner) makes the counts differ, and the whole move is refused (rolled back) with a 409 instead of a database error.
+        const moved = await tx.salesDeal.updateMany({
+          where: { id: { in: open.map((d) => d.id) }, ownerId: row.ownerId, stage: { in: [...SALES_OPEN_STAGES] }, archivedAt: null },
+          data: { ownerId: target.id, version: { increment: 1 }, updatedBy: actor.id },
+        });
+        if (moved.count !== open.length) conflict('deals_changed', 'A deal of this lead was changed at the same moment. Reload the lead and try again');
+        await tx.salesDealHistory.createMany({ data: open.map((d) => ({ dealId: d.id, event: 'owner_changed' as const, fromStage: d.stage, toStage: d.stage, actorId: actor.id, reason: dto.reason, note: `${row.owner.empId} to ${target.empId}` })) });
+      }
       await this.audit.record(
-        { actorId: actor.id, action: 'sales.lead.reassigned', targetType: 'sales_lead', targetId: id, reason: dto.reason, details: { from: row.owner.empId, to: target.empId }, ...client },
+        { actorId: actor.id, action: 'sales.lead.reassigned', targetType: 'sales_lead', targetId: id, reason: dto.reason, details: { from: row.owner.empId, to: target.empId, deals: open.map((d) => d.number) }, ...client },
         tx,
       );
     });

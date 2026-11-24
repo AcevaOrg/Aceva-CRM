@@ -1,6 +1,7 @@
 "use client";
 /** Small display pieces used across the Sales module. */
 import * as React from "react";
+import { isLive } from "@/lib/api/http";
 import {
   AlarmClock, Ban, Briefcase, CalendarCheck, CalendarClock, CheckCheck, FileText, Mail, MailCheck, MailX, MapPin, MessageCircle, Phone, Reply, Send, StickyNote, Store, Zap, Hand,
 } from "lucide-react";
@@ -110,9 +111,9 @@ export function activityLabel(kind: ActivityKind) {
   return ACTIVITY_LABEL[kind];
 }
 
-/** Deal value, optionally converted to a display currency. */
+/** Deal value, optionally converted to a display currency (demo data only: live mode always shows the original currency). */
 export function DealValue({ value, display, compact, className }: { value: MoneyT; display?: "USD" | "PKR"; compact?: boolean; className?: string }) {
-  if (!display || display === value.currency) return compact ? <Money value={value} compact className={className} /> : <Money value={value} className={className} />;
+  if (!display || display === value.currency || isLive("m15")) return compact ? <Money value={value} compact className={className} /> : <Money value={value} className={className} />;
   const converted = Math.round(convert(value, display));
   return (
     <Tip content={`Original: ${value.currency} ${Number(value.amount).toLocaleString()} · converted at the saved rate`}>

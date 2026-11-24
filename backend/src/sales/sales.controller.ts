@@ -2,6 +2,12 @@ import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Que
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   createSalesCompanySchema,
+  createSalesDealSchema,
+  moveSalesDealSchema,
+  rejectSalesWonSchema,
+  salesDealListQuerySchema,
+  salesDealVersionSchema,
+  updateSalesDealSchema,
   createSalesLeadSchema,
   reassignSalesLeadSchema,
   salesCompanyListQuerySchema,
@@ -14,6 +20,7 @@ import type { Actor } from '../access/access.types';
 import { ClientInfo, CurrentActor, RequirePermission, type RequestInfo } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import { CompaniesService } from './companies.service';
+import { DealsService } from './deals.service';
 import { LeadsService } from './leads.service';
 import { SALES_OWN } from './sales-access.service';
 
@@ -112,5 +119,90 @@ export class SalesCompaniesController {
   @ApiOperation({ summary: 'Change a company (the sales manager, whoever added it, or the owner of one of its leads). Name the version you read' })
   update(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: UpdateCompanyDto, @ClientInfo() client: RequestInfo) {
     return this.companies.update(actor, id, body, client);
+  }
+}
+
+class DealListQueryDto extends createZodDto(salesDealListQuerySchema) {}
+class CreateDealDto extends createZodDto(createSalesDealSchema) {}
+class UpdateDealDto extends createZodDto(updateSalesDealSchema) {}
+class MoveDealDto extends createZodDto(moveSalesDealSchema) {}
+class DealVersionDto extends createZodDto(salesDealVersionSchema) {}
+class RejectWonDto extends createZodDto(rejectSalesWonSchema) {}
+
+/**
+ * Module 15.2 deals and the pipeline (plan section 20). Every route needs sales.own; DealsService decides inside (own;
+ * the team for the sales manager; all for sales.all; the Won confirmation for the sales manager, never the owner or the
+ * person who asked). A deal is addressed by its id or its number (DL-2026-0001).
+ */
+@ApiTags('sales')
+@Controller('sales/deals')
+export class SalesDealsController {
+  constructor(private readonly deals: DealsService) {}
+
+  @Get()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Deals the caller may see in full. ?owner&stage&leadId&wonStatus&status(open|closed|all)&page' })
+  list(@CurrentActor() actor: Actor, @Query() q: DealListQueryDto) {
+    return this.deals.list(actor, q);
+  }
+
+  @Get('summary')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Per stage: how many deals and their totals per currency (no conversion); pending Won requests' })
+  summary(@CurrentActor() actor: Actor) {
+    return this.deals.summary(actor);
+  }
+
+  @Post()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: "Add a deal for a lead (it starts in New, with a next step and a date). Refused while a lost deal's re-contact date has not come" })
+  create(@CurrentActor() actor: Actor, @Body() body: CreateDealDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.create(actor, body, client);
+  }
+
+  @Get(':id')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: "A deal with its stage history and Module 13 handover, or for someone else's deal only that it exists and who owns it" })
+  get(@CurrentActor() actor: Actor, @Param('id') id: string) {
+    return this.deals.get(actor, id);
+  }
+
+  @Patch(':id')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Change an open deal (service, value, currency, expected close, next step). Name the version you read' })
+  update(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: UpdateDealDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.update(actor, id, body, client);
+  }
+
+  @Post(':id/move')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Move to another open stage, or to Lost with a reason from the settings (the re-contact date follows). Never to Won' })
+  move(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: MoveDealDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.move(actor, id, body, client);
+  }
+
+  @Post(':id/request-won')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Mark the deal Won: it waits for the sales manager to confirm it' })
+  requestWon(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: DealVersionDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.requestWon(actor, id, body.version, client);
+  }
+
+  @Post(':id/confirm-won')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'The sales manager confirms a Won request (never their own deal or request); Module 13 then makes the draft invoice' })
+  confirmWon(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: DealVersionDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.confirmWon(actor, id, body.version, client);
+  }
+
+  @Post(':id/reject-won')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'The sales manager sends a Won request back with a reason; the deal stays open' })
+  rejectWon(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: RejectWonDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.rejectWon(actor, id, body, client);
   }
 }

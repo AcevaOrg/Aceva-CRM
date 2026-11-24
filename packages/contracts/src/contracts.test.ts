@@ -675,10 +675,52 @@ describe('Module 15.1: leads and companies contracts', () => {
 
   it('the settings start with no shared domains (nothing invented); entries must be plain domains', async () => {
     const { salesSettingsSchema, SALES_SETTINGS_DEFAULTS } = await import('./sales');
-    expect(SALES_SETTINGS_DEFAULTS).toEqual({ sharedWebsiteDomains: [] });
+    expect(SALES_SETTINGS_DEFAULTS.sharedWebsiteDomains).toEqual([]);
     expect(salesSettingsSchema.parse({ sharedWebsiteDomains: ['Fiverr.com'] }).sharedWebsiteDomains).toEqual(['fiverr.com']);
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['https://fiverr.com'] }).success).toBe(false);
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['www.fiverr.com'] }).success).toBe(false);
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['a.com', 'a.com'] }).success).toBe(false);
+  });
+});
+
+describe('Module 15.2: deals and pipeline contracts', () => {
+  it('the eight stages of the plan, in order; six are open', async () => {
+    const { SALES_DEAL_STAGES, SALES_OPEN_STAGES, isOpenDealStage, SALES_DEAL_SERVICES } = await import('./sales');
+    expect([...SALES_DEAL_STAGES]).toEqual(['new', 'contacted', 'replied', 'meeting_booked', 'proposal_sent', 'negotiation', 'won', 'lost']);
+    expect([...SALES_OPEN_STAGES]).toEqual(['new', 'contacted', 'replied', 'meeting_booked', 'proposal_sent', 'negotiation']);
+    expect(isOpenDealStage('won')).toBe(false);
+    expect(isOpenDealStage('lost')).toBe(false);
+    expect([...SALES_DEAL_SERVICES]).toEqual(['website', 'custom_software', 'ai_automation', 'mobile_app', 'ecommerce']);
+  });
+
+  it('a deal needs a service, an amount, PKR or USD, dates and a next step', async () => {
+    const { createSalesDealSchema } = await import('./sales');
+    const ok = { leadId: '00000000-0000-4000-8000-000000000001', service: 'website', value: '1500.50', currency: 'USD', expectedClose: '2026-12-31', nextStep: 'Call', nextStepDate: '2026-12-08' };
+    expect(createSalesDealSchema.safeParse(ok).success).toBe(true);
+    expect(createSalesDealSchema.safeParse({ ...ok, currency: 'EUR' }).success).toBe(false);
+    expect(createSalesDealSchema.safeParse({ ...ok, value: '12.345' }).success).toBe(false);
+    expect(createSalesDealSchema.safeParse({ ...ok, value: '-1' }).success).toBe(false);
+    expect(createSalesDealSchema.safeParse({ ...ok, nextStep: ' ' }).success).toBe(false);
+    expect(createSalesDealSchema.safeParse({ ...ok, nextStepDate: '08/12/2026' }).success).toBe(false);
+  });
+
+  it('Won is never a move; Lost needs a reason; edits and decisions name a version; sending back needs a reason', async () => {
+    const { moveSalesDealSchema, updateSalesDealSchema, rejectSalesWonSchema, salesDealVersionSchema } = await import('./sales');
+    expect(moveSalesDealSchema.safeParse({ toStage: 'won', version: 1 }).success).toBe(false);
+    expect(moveSalesDealSchema.safeParse({ toStage: 'lost', version: 1 }).success).toBe(false);
+    expect(moveSalesDealSchema.safeParse({ toStage: 'lost', lostReason: 'Price', version: 1 }).success).toBe(true);
+    expect(moveSalesDealSchema.safeParse({ toStage: 'contacted', version: 1 }).success).toBe(true);
+    expect(moveSalesDealSchema.safeParse({ toStage: 'contacted' }).success).toBe(false);
+    expect(updateSalesDealSchema.safeParse({ version: 1 }).success).toBe(false);
+    expect(rejectSalesWonSchema.safeParse({ reason: 'no', version: 1 }).success).toBe(false);
+    expect(salesDealVersionSchema.safeParse({ version: 0 }).success).toBe(false);
+  });
+
+  it('lost reasons and the re-contact period start unset (nothing invented); stored settings without them still read', async () => {
+    const { salesSettingsSchema, SALES_SETTINGS_DEFAULTS } = await import('./sales');
+    expect(SALES_SETTINGS_DEFAULTS).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null });
+    expect(salesSettingsSchema.parse({ sharedWebsiteDomains: [] })).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null });
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], lostReasons: ['Price', 'price'], recontactMonths: 6 }).success).toBe(false);
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], lostReasons: ['Price'], recontactMonths: 0 }).success).toBe(false);
   });
 });

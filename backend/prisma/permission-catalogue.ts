@@ -36,6 +36,8 @@ export const PERMISSION_KEYS: string[] = [
   'sales.team', 'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve',
   'sales.export', 'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
   'auth.set_temporary_password', 'auth.reset_two_factor',
+  // M15.2, decision B1: confirm a Won deal the Director owns, and only such a deal (the Director cannot confirm their own)
+  'sales.won_confirm_director',
 ];
 
 export interface RoleSeed {
@@ -62,6 +64,8 @@ export interface DutySeed {
  * approval routing lets a Level 1 seat approve only for the people who report to it directly, so nothing else reaches him.
  * For the same reason he may unlock or reset the authenticator of his direct report (the Director) only; AuthService
  * enforces that limit.
+ * Also for that reason (decision B1, Module 15.2) he confirms a Won deal the Director owns, and only such a deal:
+ * DealsService and a database trigger refuse every other deal.
  */
 const OWNER: string[] = [
   'org.view', 'people.view_directory', 'activity.view_own', 'task.view_own', 'performance.view_own',
@@ -78,6 +82,8 @@ const OWNER: string[] = [
   'payroll.approve',
   // only for his direct report, the Director (see above)
   'auth.unlock_account', 'auth.reset_two_factor',
+  // M15.2, decision B1: a Won deal the Director owns (the service and a database trigger allow nothing else)
+  'sales.won_confirm_director',
 ];
 
 /**

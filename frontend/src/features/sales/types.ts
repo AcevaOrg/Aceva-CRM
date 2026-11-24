@@ -91,6 +91,10 @@ export interface Deal {
   history: StageChange[];
   createdAt: string;
   updatedAt: string;
+  /** Live mode: the version the server has (a change names it, so a stale screen cannot overwrite a newer change). */
+  version?: number;
+  /** Live mode: the server says whether the viewer may confirm or send back the Won request. */
+  canDecideWon?: boolean;
 }
 
 export type ActivityKind =
@@ -187,8 +191,10 @@ export interface MySalesDay {
 export interface PipelineStageSummary {
   stage: DealStage;
   count: number;
-  /** Total in USD at the saved exchange rate. */
+  /** Total in USD at the saved exchange rate (demo data only; 0 in live mode, which never converts). */
   valueUsd: number;
+  /** Live mode: the totals per original currency, from the server (no conversion). */
+  totals?: Money[];
 }
 
 export interface PipelineSummary {
@@ -199,6 +205,11 @@ export interface PipelineSummary {
   wonThisMonthCount: number;
   lostThisMonthCount: number;
   pendingWonCount: number;
+  /**
+   * Live mode: the totals per original currency (PKR and USD are never added together or converted until management decides
+   * the reporting currency and the exchange-rate source). The *Usd fields above are 0 in live mode.
+   */
+  totals?: { open: Money[]; wonThisMonth: Money[] };
 }
 
 export interface CommissionRule {

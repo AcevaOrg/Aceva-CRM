@@ -136,6 +136,10 @@ describe('seed data integrity', () => {
     expect(owner).toEqual(expect.arrayContaining(['leave.approve', 'attendance.approve_correction', 'approval.approve']));
     // decision D26: also the Director's own journal entries, hire requests and payroll (the services check that they are the Director's)
     expect(owner).toEqual(expect.arrayContaining(['finance.entry_approve', 'people.approve_hire', 'payroll.approve']));
+    // decision B1 (M15.2): a Won deal the Director owns, and only such a deal (DealsService and a trigger check it);
+    // nobody else holds this key
+    expect(owner).toContain('sales.won_confirm_director');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_confirm_director');
     // everything the old "Owner or CEO" could change now belongs to the Director
     expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.view', 'payroll.export', 'people.approve_hire', 'sales.commission_approve', 'duty.assign']));
   });

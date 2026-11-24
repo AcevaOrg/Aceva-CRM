@@ -660,6 +660,43 @@ views); everyone else gets 403. What each person sees inside is decided on the s
 
 Leads and companies are never deleted (a database trigger).
 
+## Module 15, part 2: deals and the pipeline
+
+Plan section 20. Same access rule as leads:
+- **Your own deals** in full.
+- **The team** with `sales.team`.
+- **Every deal** with `sales.all`.
+- **Someone else's deal:** only `{ restricted: true, number, companyName, owner }`.
+
+A deal is addressed by its id or its number (`DL-YYYY-NNNN`). Every change names the version it read (409
+`stale_version`).
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/deals?owner&stage&leadId&wonStatus&status(open\|closed\|all)&page` | `sales.own` | Deals you may see in full |
+| `GET /sales/deals/summary` | `sales.own` | Per stage: the count and the totals per currency (no conversion); pending Won requests |
+| `POST /sales/deals {leadId, service, value, currency, expectedClose, nextStep, nextStepDate}` | the lead's owner, or the sales manager for their team | Starts in New. 400 `lead_needs_company`, `next_step_in_past`; 409 `recontact_later` while a lost deal's re-contact date has not come |
+| `GET /sales/deals/:id` | `sales.own` | The deal with its history and the Module 13 handover (`drafted` / `needs_client`), or the restricted view |
+| `PATCH /sales/deals/:id {…, version}` | owner or sales manager | An open deal that is not waiting for Won confirmation (409 `deal_closed`, `won_pending`) |
+| `POST /sales/deals/:id/move {toStage, version, nextStep?, nextStepDate?, lostReason?, note?}` | owner or sales manager | Between open stages, or to Lost. Lost needs a reason from the settings list (400 `unknown_lost_reason`) and gets `recontactAfter` = today + `recontactMonths`. Until both settings are set, 409 `sales_rules_missing`. Never to Won |
+| `POST /sales/deals/:id/request-won {version}` | owner or sales manager | Won waits for confirmation (`wonStatus: pending`, the stage unchanged) |
+| `POST /sales/deals/:id/confirm-won {version}` | the sales manager of the deal's owner, never the deal's owner or the person who asked (403 `self_approval`; also a database CHECK). A deal the Director owns: the CEO / Owner (`sales.won_confirm_director`, decision B1), who confirms nothing else (403 `owner_confirms_director_deals_only`; also a database trigger) | Won. In the same transaction: history, audit, and the outbox event `sales.deal.won_confirmed` for Module 13 (one draft invoice per deal number) |
+| `POST /sales/deals/:id/reject-won {reason, version}` | the sales manager; or the person who asked, taking their own request back | Back to open |
+| Approvals inbox `won_deal:<id>` | as `confirm-won` / `reject-won` | The same decision from `/approvals` |
+
+**Settings** (`/settings/modules/sales`, changed by `settings.manage` on the live Settings > Sales screen): `lostReasons`
+(empty) and `recontactMonths` (null) until management sets them.
+
+**Currency:** amounts are never converted. The server and the live screens give totals per original currency (PKR and
+USD apart) until management decides the reporting currency and the exchange-rate source.
+
+**Final deals:** Won and Lost deals are final. A database trigger keeps their stage, value, outcome and owner. The history
+(`sales_deal_history`) is insert-only.
+
+**Moving a lead** to another salesperson also moves its open deals.
+
+**Audit actions:** `sales.deal.created`, `.updated`, `.moved`, `.won_requested`, `.won_confirmed`, `.won_rejected`.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

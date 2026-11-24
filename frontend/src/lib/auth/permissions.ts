@@ -22,6 +22,8 @@ export const PERMISSIONS = [
   "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.export",
   "integrations.view", "integrations.manage",
   "approval.approve", "duty.assign", "auth.set_temporary_password", "auth.reset_two_factor",
+  // M15.2, decision B1: the Owner confirms a Won deal the Director owns, and only such a deal
+  "sales.won_confirm_director",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -74,6 +76,8 @@ const OWNER: Permission[] = [
   // Decision D25: only for the Director's own items (leave, corrections, journal entries, hire requests)
   "leave.approve", "attendance.approve_correction", "approval.approve", "finance.entry_approve", "people.approve_hire", "payroll.approve",
   "auth.unlock_account", "auth.reset_two_factor",
+  // M15.2, decision B1: a Won deal the Director owns, and only such a deal (the server checks it)
+  "sales.won_confirm_director",
 ];
 
 /** L2 Director: the approver for everything and the org administrator, plus HR duty and sales-manager duty. Prepares no finance items. */
