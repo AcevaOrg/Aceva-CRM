@@ -631,3 +631,54 @@ describe('Module 6 event contracts', () => {
     expect(outboxEventSchema.safeParse({ ...created, payload: { ...created.payload, versionNo: 0 } }).success).toBe(false);
   });
 });
+
+describe('Module 15.1: leads and companies contracts', () => {
+  it('normalises emails and website domains for the duplicate check, without guessing', async () => {
+    const { normalizeEmail, websiteDomain } = await import('./sales');
+    expect(normalizeEmail('  Ayesha.Khan@Acme.COM ')).toBe('ayesha.khan@acme.com');
+    expect(normalizeEmail('a+b@x.io')).toBe('a+b@x.io'); // "+" and dots are kept: no rule says otherwise
+    expect(websiteDomain('https://www.Acme.com/about?x=1')).toBe('acme.com');
+    expect(websiteDomain('acme.com')).toBe('acme.com');
+    expect(websiteDomain('http://WWW.acme.co.uk.')).toBe('acme.co.uk');
+    expect(websiteDomain('shop.acme.com')).toBe('shop.acme.com'); // sub-domains are not merged
+    expect(websiteDomain('localhost')).toBeNull();
+    expect(websiteDomain('http://192.168.1.10')).toBeNull();
+    expect(websiteDomain('ftp://acme.com')).toBeNull();
+    expect(websiteDomain('not a website')).toBeNull();
+    expect(websiteDomain('   ')).toBeNull();
+  });
+
+  it('a lead needs a name and a source from the plan list; email, website and LinkedIn must be real addresses', async () => {
+    const { createSalesLeadSchema, SALES_LEAD_SOURCES } = await import('./sales');
+    expect([...SALES_LEAD_SOURCES]).toEqual(['apollo', 'fiverr', 'linkedin', 'referral', 'website', 'field', 'walk_in']);
+    const ok = createSalesLeadSchema.parse({ fullName: ' Ayesha Khan ', source: 'linkedin', email: 'ayesha@acme.com', company: { name: 'Acme', website: 'acme.com' } });
+    expect(ok.fullName).toBe('Ayesha Khan');
+    expect(createSalesLeadSchema.parse({ fullName: 'A', source: 'walk_in', email: '' }).email).toBeNull();
+    expect(createSalesLeadSchema.safeParse({ fullName: 'A', source: 'cold_call' }).success).toBe(false);
+    expect(createSalesLeadSchema.safeParse({ fullName: '  ', source: 'website' }).success).toBe(false);
+    expect(createSalesLeadSchema.safeParse({ fullName: 'A', source: 'website', email: 'not-an-email' }).success).toBe(false);
+    expect(createSalesLeadSchema.safeParse({ fullName: 'A', source: 'website', company: { name: 'X', website: 'nope' } }).success).toBe(false);
+    expect(createSalesLeadSchema.safeParse({ fullName: 'A', source: 'website', companyId: '00000000-0000-4000-8000-000000000000', company: { name: 'X' } }).success).toBe(false);
+    expect(createSalesLeadSchema.safeParse({ fullName: 'A', source: 'website', ownerEmpId: 'bob' }).success).toBe(false);
+  });
+
+  it('edits name the version they read and change something; reassigning needs a reason', async () => {
+    const { updateSalesLeadSchema, updateSalesCompanySchema, reassignSalesLeadSchema, salesDuplicateCheckSchema } = await import('./sales');
+    expect(updateSalesLeadSchema.safeParse({ notes: 'Called' }).success).toBe(false);
+    expect(updateSalesLeadSchema.safeParse({ version: 1 }).success).toBe(false);
+    expect(updateSalesLeadSchema.parse({ phone: null, version: 2 })).toMatchObject({ phone: null, version: 2 });
+    expect(updateSalesCompanySchema.safeParse({ version: 1 }).success).toBe(false);
+    expect(reassignSalesLeadSchema.safeParse({ toEmpId: 'ACV-0012', reason: 'ok', version: 1 }).success).toBe(false);
+    expect(reassignSalesLeadSchema.safeParse({ toEmpId: 'ACV-0012', reason: 'Taking over the account', version: 1 }).success).toBe(true);
+    expect(salesDuplicateCheckSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('the settings start with no shared domains (nothing invented); entries must be plain domains', async () => {
+    const { salesSettingsSchema, SALES_SETTINGS_DEFAULTS } = await import('./sales');
+    expect(SALES_SETTINGS_DEFAULTS).toEqual({ sharedWebsiteDomains: [] });
+    expect(salesSettingsSchema.parse({ sharedWebsiteDomains: ['Fiverr.com'] }).sharedWebsiteDomains).toEqual(['fiverr.com']);
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['https://fiverr.com'] }).success).toBe(false);
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['www.fiverr.com'] }).success).toBe(false);
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: ['a.com', 'a.com'] }).success).toBe(false);
+  });
+});

@@ -16,3 +16,4 @@ export * from './settings';
 export * from './billing';
 export * from './comms';
 export * from './realtime';
+export * from './sales';
