@@ -22,6 +22,8 @@ import {
   capScore, dataQuality, DEFAULT_SALES_WEIGHTS, domainOf, EMAIL_RE, emailsSentTotal, findDuplicate, isDueToday, isGenericDomain, isMissed, OPEN_STAGES,
   parseCsv, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, STAGES, targetsMet, toUsd,
 } from "./logic";
+import { isLive } from "@/lib/api/http";
+import { type LeadsApi, liveLeadsApi } from "./live-api";
 import type {
   CommissionLine, CommissionRule, Company, DailySalesSummary, DailyTargets, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, EmailCheck, FollowUp,
   ImportRow, Lead, LeadDetail, LeadSource, LeadStub, LogActivityInput, ManualDailyLog, MonthlyTargets, MySalesDay, NewDealInput, NewLeadInput,
@@ -234,7 +236,7 @@ function createLead(input: NewLeadInput, owner: string, manual: boolean): Lead {
 
 /* ---------------- Leads ---------------- */
 
-export const leadsApi = {
+const mockLeadsApi = {
   /** GET /leads */
   list: () =>
     mock<LeadRow[]>(() => {
@@ -402,6 +404,9 @@ export const leadsApi = {
       return res;
     }, { delay: 1200 }),
 };
+
+/** Leads: the real API when Module 15 is live (NEXT_PUBLIC_LIVE_MODULES contains m15), the in-browser demo data otherwise. */
+export const leadsApi: LeadsApi = isLive("m15") ? liveLeadsApi : mockLeadsApi;
 
 /* ---------------- Activities ---------------- */
 

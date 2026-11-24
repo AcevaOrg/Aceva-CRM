@@ -246,7 +246,7 @@ function LeadBody({ d }: { d: Detail }) {
             </CardContent>
           </Card>
 
-          <NotesCard leadId={lead.id} notes={lead.notes} editable={canWork} />
+          <NotesCard leadId={lead.id} notes={lead.notes} version={lead.version} editable={canWork} />
 
           {canReassign && (
             <Card>
@@ -262,7 +262,15 @@ function LeadBody({ d }: { d: Detail }) {
                 <EmployeeSelect
                   value={lead.ownerEmpId}
                   filter={(e) => e.role === "sales"}
-                  onChange={(empId) => empId && empId !== lead.ownerEmpId && reassign.mutate({ id: lead.id, empId }, { onSuccess: () => toast.success("Lead moved", { description: "Open deals moved with it." }) })}
+                  onChange={async (empId) => {
+                    if (!empId || empId === lead.ownerEmpId) return;
+                    const reason = await askReason({ title: "Move this lead", description: "The reason is saved with the change.", confirmLabel: "Move lead" });
+                    if (reason)
+                      reassign.mutate(
+                        { id: lead.id, empId, reason, version: lead.version },
+                        { onSuccess: () => toast.success("Lead moved", { description: "Open deals moved with it." }), onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't move the lead.") },
+                      );
+                  }}
                 />
               </CardContent>
             </Card>
@@ -277,7 +285,7 @@ function LeadBody({ d }: { d: Detail }) {
   );
 }
 
-function NotesCard({ leadId, notes, editable }: { leadId: string; notes?: string; editable: boolean }) {
+function NotesCard({ leadId, notes, version, editable }: { leadId: string; notes?: string; version?: number; editable: boolean }) {
   const [editing, setEditing] = React.useState(false);
   const [text, setText] = React.useState(notes ?? "");
   const update = useUpdateLead();
@@ -309,7 +317,7 @@ function NotesCard({ leadId, notes, editable }: { leadId: string; notes?: string
               <Button size="sm" variant="outline" onClick={() => { setText(notes ?? ""); setEditing(false); }}>
                 Cancel
               </Button>
-              <Button size="sm" loading={update.isPending} onClick={() => update.mutate({ id: leadId, notes: text }, { onSuccess: () => { setEditing(false); toast.success("Notes saved"); } })}>
+              <Button size="sm" loading={update.isPending} onClick={() => update.mutate({ id: leadId, notes: text, version }, { onSuccess: () => { setEditing(false); toast.success("Notes saved"); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save the notes.") })}>
                 Save
               </Button>
             </div>

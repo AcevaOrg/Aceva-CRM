@@ -79,6 +79,7 @@ export function AddLeadSheet({ open, onOpenChange }: { open: boolean; onOpenChan
         <form onSubmit={handleSubmit(onSubmit)} className="flex min-h-0 flex-1 flex-col">
           <SheetBody className="grid content-start gap-4">
             <DuplicateBanner checking={checkable && dup.isFetching} duplicate={duplicate} checked={checkable && !!dup.data && !dup.data.duplicate} />
+            {!duplicate && checkable && dup.data?.company && <CompanyKnown company={dup.data.company} />}
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Name" htmlFor="ld-name" required error={formState.errors.name?.message}>
                 <Input id="ld-name" autoFocus {...register("name")} aria-invalid={!!formState.errors.name} />
@@ -155,7 +156,7 @@ function DuplicateBanner({ checking, duplicate, checked }: { checking: boolean; 
           <TriangleAlert className="size-4 text-danger" /> This lead already exists.
         </p>
         <p className="text-[12.5px] text-muted-foreground">
-          {duplicate.leadName} at {duplicate.companyName} (matched on {duplicate.matchedOn === "email" ? "the email" : "the website domain"}). Leads belong to one owner.
+          {duplicate.leadName ? `${duplicate.leadName}${duplicate.companyName ? ` at ${duplicate.companyName}` : ""} ` : ""}(matched on {duplicate.matchedOn === "email" ? "the email" : "the website domain"}). Leads belong to one owner.
         </p>
         <div className="flex items-center gap-2 text-[12.5px]">
           <span className="text-muted-foreground">Owner:</span>
@@ -176,4 +177,22 @@ function DuplicateBanner({ checking, duplicate, checked }: { checking: boolean; 
       </p>
     );
   return null;
+}
+
+/** Live mode: the company is already in the CRM. Adding another person there is allowed; the people working on it are shown. */
+function CompanyKnown({ company }: { company: { name: string; ownerEmpIds: string[] } }) {
+  return (
+    <div role="status" className="grid gap-2 rounded-xl border border-warning/35 bg-warning/8 p-3">
+      <p className="text-[13px] font-semibold">{company.name} is already in the CRM.</p>
+      <p className="text-[12.5px] text-muted-foreground">The new lead is added to that company. Check with the people working on it first.</p>
+      {company.ownerEmpIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
+          <span className="text-muted-foreground">Leads there:</span>
+          {company.ownerEmpIds.map((id) => (
+            <EmpChip key={id} empId={id} size="sm" />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

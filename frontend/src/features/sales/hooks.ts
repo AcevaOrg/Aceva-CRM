@@ -115,12 +115,12 @@ export function useCreateLead() {
 
 export function useUpdateLead() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, notes }: { id: string; notes: string }) => leadsApi.update(id, { notes }), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, notes, version }: { id: string; notes: string; version?: number }) => leadsApi.update(id, { notes }, version), onSuccess: done });
 }
 
 export function useReassignLead() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, empId }: { id: string; empId: string }) => leadsApi.reassign(id, empId), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, empId, reason, version }: { id: string; empId: string; reason?: string; version?: number }) => leadsApi.reassign(id, empId, reason, version), onSuccess: done });
 }
 
 export function useMarkDnc() {

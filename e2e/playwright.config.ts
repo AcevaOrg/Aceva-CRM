@@ -73,7 +73,7 @@ export default defineConfig({
       env: {
         NODE_ENV: 'production', // Playwright sets NODE_ENV=test, which breaks next build
         NEXT_PUBLIC_API_MODE: 'mock',
-        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m5,m6,m7,m8,m9,m12,m13,m14',
+        NEXT_PUBLIC_LIVE_MODULES: 'm1,m2,m3,m5,m6,m7,m8,m9,m12,m13,m14,m15',
         NEXT_PUBLIC_API_URL: API,
       },
     },

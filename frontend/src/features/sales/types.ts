@@ -36,6 +36,8 @@ export interface Lead {
   lastActivityAt?: string;
   archived: boolean;
   createdAt: string;
+  /** Live mode: the version the server has (an edit names it, so a stale screen cannot overwrite a newer change). */
+  version?: number;
 }
 
 /** What a salesperson sees for a lead owned by someone else (plan §20: exists + owner only). */
@@ -279,6 +281,8 @@ export interface DuplicateResult {
   leadName?: string;
   companyName?: string;
   ownerEmpId?: string;
+  /** Live mode: a company with this website domain already exists, and who owns leads there (shown, not blocking). */
+  company?: { name: string; ownerEmpIds: string[] };
 }
 
 export interface ImportRow {
