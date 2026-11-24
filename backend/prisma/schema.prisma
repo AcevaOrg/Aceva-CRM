@@ -578,6 +578,9 @@ model Employee {
   messageTaskLinks        MessageTaskLink[]
   meetingTaskLinks        MeetingTaskLink[]
 
+  // Module 15 (back-relations only)
+  salesLeadsOwned         SalesLead[]               @relation("SalesLeadOwner")
+
   @@index([departmentId])
   @@index([officeId])
   @@index([levelId])
@@ -2295,6 +2298,7 @@ model Party {
   payments       Payment[]
   billingProfile BillingProfile?
   recurringRules RecurringBillingRule[]
+  salesCompanies SalesCompany[]
 
   @@index([kind, name])
   @@map("parties")
@@ -3579,4 +3583,99 @@ model MeetingTaskLink {
   @@id([meetingId, taskId])
   @@index([taskId])
   @@map("meeting_task_links")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15: sales and CRM (plan section 20). M15.1: leads and companies.
+// ---------------------------------------------------------------------------
+
+/// Where a lead came from (plan section 20). Always recorded.
+enum SalesLeadSource {
+  apollo
+  fiverr
+  linkedin
+  referral
+  website
+  field
+  walk_in
+
+  @@map("sales_lead_source")
+}
+
+/// The email check result. Module 16 (MillionVerifier) fills it in later; Module 15 only stores it ("unchecked").
+enum SalesEmailCheck {
+  unchecked
+  valid
+  invalid
+  catch_all
+  unknown
+
+  @@map("sales_email_check")
+}
+
+/// One record per company (plan section 20). `domain` is the normalised website domain: at most one company that is not
+/// archived per domain (partial unique index in the migration), so the same company is never entered twice.
+model SalesCompany {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  website    String?
+  /// The normalised website domain ("acme.com"): null when there is no website, or when the website's domain is a shared
+  /// one (a marketplace or social profile) listed in the sales settings.
+  domain     String?
+  country    String?
+  industry   String?
+  /// The Module 9 client, once the company is one (Won deal handover, M15.2). Read-only for Module 15.
+  partyId    String?   @map("party_id") @db.Uuid
+  /// Optimistic locking: an edit names the version it read.
+  version    Int       @default(1)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  party Party?      @relation(fields: [partyId], references: [id])
+  leads SalesLead[]
+
+  @@index([name])
+  @@map("sales_companies")
+}
+
+/// One record per person (plan section 20). Each lead has exactly one owner (a salesperson's Emp-ID). `emailNormalized`
+/// is unique among leads that are not archived (partial unique index in the migration): the database, not the screen,
+/// is what makes a second copy impossible.
+model SalesLead {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullName        String          @map("full_name")
+  jobTitle        String?         @map("job_title")
+  companyId       String?         @map("company_id") @db.Uuid
+  email           String?
+  /// Lower-case, trimmed email used for the duplicate check. Null exactly when `email` is null (CHECK in the migration).
+  emailNormalized String?         @map("email_normalized")
+  phone           String?
+  linkedinUrl     String?         @map("linkedin_url")
+  country         String?
+  industry        String?
+  source          SalesLeadSource
+  ownerId         String          @map("owner_id") @db.Uuid
+  emailCheck      SalesEmailCheck @default(unchecked) @map("email_check")
+  emailCheckedAt  DateTime?       @map("email_checked_at") @db.Timestamptz(3)
+  notes           String?
+  /// When the lead was added; logged contacts move it forward (M15.3). What counts as "activity" for the 12-month
+  /// archive rule is still a management decision (D-10).
+  lastActivityAt  DateTime        @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  version         Int             @default(1)
+  archivedAt      DateTime?       @map("archived_at") @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?         @map("created_by") @db.Uuid
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?         @map("updated_by") @db.Uuid
+
+  company SalesCompany? @relation(fields: [companyId], references: [id])
+  owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
+
+  @@index([ownerId])
+  @@index([companyId])
+  @@index([lastActivityAt])
+  @@map("sales_leads")
 }

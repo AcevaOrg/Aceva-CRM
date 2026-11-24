@@ -620,6 +620,46 @@ REST makes every change; the socket only delivers what is already saved. Contrac
 | Relay | Plain Redis Pub/Sub on the existing Redis, carrying pointers only (ids and numbers; never message text, cookies or tokens). Not durable: the database and catch-up are the truth; a new message, edit, deletion, removal, reaction or pin whose broadcast was lost is re-sent by the `comms-realtime` outbox reader (within about 10 seconds), rendered from the current database state; changes that went out are recognised by their outbox event id and skipped |
 
 
+## Module 15, part 1: leads and companies
+
+Plan section 20. Every route needs `sales.own` (the Sales role, the Director, the sales-manager duty; the CEO / Owner
+views); everyone else gets 403. What each person sees inside is decided on the server:
+
+- **Your own leads** in full.
+- **`sales.team`:** the leads of everyone in your reporting line.
+- **`sales.all`:** every lead.
+- **Someone else's lead:** only `{ restricted: true, fullName, companyName, owner }`, never the email, phone or notes.
+- **Moving leads and giving a new lead to someone else** is the sales manager's work. That is `sales.targets`, which
+  only the Director and the sales-manager duty hold. The CEO / Owner only views.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/leads?owner&source&country&companyId&q&status&page&pageSize` | `sales.own` | Leads you may see in full (`status`: `active` default, `archived`, `all`) |
+| `POST /sales/leads` | `sales.own` | Add a lead (`company` new, or `companyId`). The same email (trimmed, lower-case) on a lead that is not archived: 409 `duplicate_lead` with `existing.owner`. A new company whose website domain exists is that company. `ownerEmpId` only for the sales manager (an active salesperson in their reporting line) |
+| `POST /sales/leads/check-duplicate {email?, website?}` | `sales.own` | `{ email: {leadId, owner, mine, canOpen} \| null, domain, sharedDomain, company: {companyId, name, leadOwners} \| null }`. At most 30 a minute per person (429 `rate_limited`, logged) |
+| `GET /sales/leads/:id` | `sales.own` | The lead in full, or the restricted view |
+| `PATCH /sales/leads/:id {…, version}` | owner, or the sales manager for their team | 409 `stale_version`, `duplicate_lead`, `lead_archived`. The owner is never changed here |
+| `POST /sales/leads/:id/owner {toEmpId, reason, version}` | sales manager | Move a lead within the team. 409 `same_owner` / `stale_version`; 400 `owner_not_sales` / `owner_not_active` / `unknown_owner` |
+| `GET /sales/companies?q`, `GET /sales/companies/:id` | `sales.own` | Companies (name, website, domain, country, industry); a company's page lists only the leads there you may see in full, plus `otherLeads` |
+| `POST /sales/companies`, `PATCH /sales/companies/:id {…, version}` | `sales.own`; changing: the sales manager, whoever added it, or the owner of one of its leads | 409 `duplicate_company` (`existing`), `stale_version` |
+| `GET/PUT /settings/modules/sales` | view `sales.own`; change `settings.manage` | `sharedWebsiteDomains`: domains that never identify one company (marketplaces, social profiles). Empty until management fills it |
+
+**Duplicate rules:**
+- The database is the lock: partial unique indexes on the normalised email (leads) and the website domain (companies),
+  for rows that are not archived. Two people saving the same email or the same new company domain at the same moment
+  get one row.
+- Without a website, companies are never merged by name.
+- Sub-domains are not merged (`shop.acme.com` is not `acme.com`).
+- A domain match on a company does not block a new lead; it shows who works there (decision D-8 is still open).
+
+**Audit log:**
+- `sales.lead.created`, `sales.lead.updated` (before/after; notes only as `[text]`), `sales.lead.reassigned` (with the
+  reason)
+- `sales.company.created`, `sales.company.updated`
+- `sales.duplicate_check.limited`
+
+Leads and companies are never deleted (a database trigger).
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

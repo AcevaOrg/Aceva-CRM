@@ -21,6 +21,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ModuleSettingsModule } from './settings/module-settings.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SettingsModule } from './settings/settings.module';
+import { SalesModule } from './sales/sales.module';
 import { TasksModule } from './tasks/tasks.module';
 
 @Module({
@@ -47,6 +48,8 @@ import { TasksModule } from './tasks/tasks.module';
     NotificationsModule,
     BillingModule,
     CommsModule,
+    // Module 15 (sales and CRM).
+    SalesModule,
   ],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })
