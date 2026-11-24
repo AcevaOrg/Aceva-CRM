@@ -1,10 +1,11 @@
 import { existsSync, rmSync } from 'node:fs';
 import { defineConfig } from '@playwright/test';
+import { assertDisposableTestDatabase } from '../backend/test/helpers/db-guard';
 import { E2E_FILES } from './paths';
 
 /**
  * Browser tests for the screens that are connected to the real API (Module 1 now; M2 and M3 later).
- * They start the REAL backend against the aceva_test database (rebuilt and seeded first) and the real
+ * They start the REAL backend against the approved disposable test database (rebuilt and seeded first) and the real
  * Next.js frontend with Module 1 switched to "live". Run from the repository root:  npm run test:e2e
  *
   * People log in through the real login screen (Emp-ID, password, authenticator code) and the API sees their
@@ -13,9 +14,11 @@ import { E2E_FILES } from './paths';
 rmSync(E2E_FILES, { recursive: true, force: true }); // uploaded test files belong to one run
 if (existsSync('backend/.env')) process.loadEnvFile('backend/.env');
 const testDb = process.env.TEST_DATABASE_URL;
-if (!testDb || !new URL(testDb).pathname.includes('test')) {
-  throw new Error('TEST_DATABASE_URL (a database whose name contains "test") is required for the end-to-end tests');
+if (!testDb) {
+  throw new Error('TEST_DATABASE_URL (an approved disposable test database) is required for the end-to-end tests');
 }
+// The browser run rebuilds this database: only an approved disposable test database, never a fallback (db-guard.ts).
+assertDisposableTestDatabase(testDb);
 
 export const API = 'http://localhost:4100/api/v1';
 

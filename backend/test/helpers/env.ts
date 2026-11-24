@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs';
+import { assertDisposableTestDatabase } from './db-guard';
 
-/** Loads backend/.env (when present) and returns the database URL used by automated tests. */
+/**
+ * Loads backend/.env (when present) and returns the database URL used by automated tests.
+ * The URL must name an approved disposable test database (see db-guard.ts); there is no fallback to any other database.
+ */
 export function testDatabaseUrl(): string {
   // Works from backend/ (unit tests) and from the repository root (Playwright end-to-end tests).
   const envFile = ['.env', 'backend/.env'].find((f) => existsSync(f));
@@ -11,9 +15,6 @@ export function testDatabaseUrl(): string {
   if (!url) {
     throw new Error('TEST_DATABASE_URL is not set. Copy backend/.env.example to backend/.env and fill it in.');
   }
-  const dbName = new URL(url).pathname.replace('/', '');
-  if (!dbName.includes('test')) {
-    throw new Error(`Refusing to run tests against "${dbName}": the test database name must contain "test".`);
-  }
+  assertDisposableTestDatabase(url);
   return url;
 }

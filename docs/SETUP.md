@@ -74,7 +74,7 @@ Install the three services with your operating system's normal installer or pack
 | Rebuild your local database from scratch (deletes its data) | `npm run db:reset -w backend`, then `npm run db:seed` and the demo logins again |
 | Type check, lint | `npm run typecheck`, `npm run lint` |
 | Build the shared contracts (after pulling changes) | `npm run build -w @aceva/contracts`. Backend and frontend read `@aceva/contracts` from its git-ignored `dist` folder |
-| Unit and database tests (use `aceva_test`, rebuilt each run; need PostgreSQL and Redis) | `npm test` |
+| Unit and database tests (use the approved disposable test database in `TEST_DATABASE_URL`, rebuilt each run; need PostgreSQL and Redis; see "Test database guard" below) | `npm test` |
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
@@ -93,6 +93,18 @@ the "Department Head / Team Lead" role) is refused by `npm run db:seed` with a m
 The database tests (`aceva_test`) switch off the background work (the outbox dispatcher and the summary schedule) for every
 test file (`backend/test/global-setup.ts`, `switchOffBackgroundWork`), so no test finds background jobs or summary jobs
 left in `aceva_test`.
+
+**Test database guard.** The backend tests and the browser tests EMPTY AND REBUILD the database in `TEST_DATABASE_URL`
+(the whole `public` schema). `backend/test/helpers/db-guard.ts` refuses that before anything is touched unless:
+- the database name is **exactly** an approved disposable test database: `aceva_m15_test`, or a name listed in
+  `ACEVA_APPROVED_TEST_DATABASES` (comma-separated; CI lists its throw-away `aceva_test` container);
+- it is not `aceva_dev`, `aceva_shadow` or `aceva_realtime_dev` (always refused, even when listed);
+- the host is this computer (`localhost`, `127.0.0.1`, `::1`), and the database is not chosen in the query string.
+The reset checks a second time after connecting (`SELECT current_database()` must be the approved name). There is no
+fallback: a database that is not approved stops the run. Create the disposable database once, as the PostgreSQL
+superuser (the app user may not create databases):
+`createdb -h 127.0.0.1 -p 5432 -U postgres -O aceva_app aceva_m15_test`, then point `TEST_DATABASE_URL` in
+`backend/.env` at it. Optional: `TEST_REDIS_PREFIX=aceva:m15test:` keeps the run's Redis keys apart.
 
 Browser downloads for the tests go to Playwright's default folder. To keep them on another drive, set
 `PLAYWRIGHT_BROWSERS_PATH` to a folder of your choice before `npx playwright install chromium` and before the tests.
