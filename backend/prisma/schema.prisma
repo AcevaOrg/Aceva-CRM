@@ -585,6 +585,9 @@ model Employee {
   salesWonConfirmed       SalesDeal[]               @relation("SalesDealWonConfirmer")
   salesDealHistory        SalesDealHistory[]
   salesActivities         SalesActivity[]
+  salesDncEntries         SalesDncEntry[]
+  salesImportsMade        SalesImportBatch[]        @relation("SalesImportCreatedBy")
+  salesImportsOwned       SalesImportBatch[]        @relation("SalesImportOwner")
 
   @@index([departmentId])
   @@index([officeId])
@@ -3676,11 +3679,17 @@ model SalesLead {
   createdBy       String?         @map("created_by") @db.Uuid
   updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy       String?         @map("updated_by") @db.Uuid
+  /// M15.4: when a do-not-contact request was saved on the lead. Once set it never changes (a trigger checks it).
+  dncAt           DateTime?       @map("dnc_at") @db.Timestamptz(3)
+  /// M15.4: the import that added the lead (who imported it and when is on the batch).
+  importBatchId   String?         @map("import_batch_id") @db.Uuid
 
   company    SalesCompany?   @relation(fields: [companyId], references: [id])
   deals      SalesDeal[]
   activities SalesActivity[]
   owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
+  importBatch SalesImportBatch? @relation(fields: [importBatchId], references: [id])
+  dncEntries  SalesDncEntry[]
 
   @@index([ownerId])
   @@index([companyId])
@@ -3857,4 +3866,62 @@ model SalesActivity {
   @@index([dealId, occurredAt])
   @@index([actorId, occurredAt])
   @@map("sales_activities")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.4: the do-not-contact list and the lead import (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// The do-not-contact list. Insert-only (triggers): an entry is never changed or removed, also after its lead is archived.
+/// It keeps a keyed hash (HMAC-SHA256, its own secret) of the normalised email and a masked form, never the email.
+model SalesDncEntry {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// HMAC-SHA256 of the normalised email, hex (null for a lead marked while it had no email).
+  emailHmac   String?  @map("email_hmac")
+  /// Which key made the hash (SALES_DNC_HMAC_KEY_ID), so older entries still match after a key rotation.
+  keyId       String?  @map("key_id")
+  /// "a***@domain.com".
+  maskedEmail String?  @map("masked_email")
+  /// The lead it was marked on (null for an email added without a lead).
+  leadId      String?  @map("lead_id") @db.Uuid
+  reason      String
+  /// manual (a person in Aceva); apollo and mailbox are for unsubscribes reported by Module 16.
+  source      String   @default("manual")
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead    SalesLead? @relation(fields: [leadId], references: [id])
+  creator Employee?  @relation(fields: [createdBy], references: [id])
+
+  @@index([leadId])
+  @@index([createdAt])
+  @@map("sales_dnc_entries")
+}
+
+/// A lead import: the parsed rows wait here for 30 minutes between the preview and the commit (then they are cleared).
+/// It records who imported for whom, the file's SHA-256, and the result.
+model SalesImportBatch {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdBy   String          @map("created_by") @db.Uuid
+  ownerId     String          @map("owner_id") @db.Uuid
+  source      SalesLeadSource
+  fileName    String          @map("file_name")
+  fileSha256  String          @map("file_sha256")
+  rowCount    Int             @map("row_count")
+  /// The checked rows of the preview; emptied once the batch is committed or has expired.
+  rows        Json            @default("[]")
+  /// previewed, committed or expired.
+  status      String          @default("previewed")
+  expiresAt   DateTime        @map("expires_at") @db.Timestamptz(3)
+  committedAt DateTime?       @map("committed_at") @db.Timestamptz(3)
+  /// What the commit did: { created, skipped: [{line, status}] } (no personal data).
+  result      Json?
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  creator Employee    @relation("SalesImportCreatedBy", fields: [createdBy], references: [id])
+  owner   Employee    @relation("SalesImportOwner", fields: [ownerId], references: [id])
+  leads   SalesLead[]
+
+  @@index([createdBy, createdAt])
+  @@map("sales_import_batches")
 }

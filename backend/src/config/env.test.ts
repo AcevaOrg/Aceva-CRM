@@ -22,8 +22,23 @@ describe('environment validation', () => {
     expect(() => loadEnv({ DATABASE_URL: base.DATABASE_URL })).toThrow(/REDIS_URL/);
     expect(() => loadEnv({ DATABASE_URL: base.DATABASE_URL, REDIS_URL: base.REDIS_URL })).toThrow(/DATA_ENCRYPTION_KEY/);
     expect(() => loadEnv({ ...base, DATA_ENCRYPTION_KEY: 'too-short' })).toThrow(/32 bytes/);
-    expect(() => loadEnv({ ...base, NODE_ENV: 'production', COOKIE_SECURE: 'false' })).toThrow(/Secure/);
-    expect(loadEnv({ ...base, NODE_ENV: 'production' }).COOKIE_SECURE).toBeUndefined(); // defaults to Secure in production
+    // Production also needs the do-not-contact key (Module 15.4), so the production checks below include one.
+    const prod = { ...base, NODE_ENV: 'production', SALES_DNC_HMAC_KEY: Buffer.alloc(32, 2).toString('base64') };
+    expect(() => loadEnv({ ...prod, COOKIE_SECURE: 'false' })).toThrow(/Secure/);
+    expect(loadEnv(prod).COOKIE_SECURE).toBeUndefined(); // defaults to Secure in production
+  });
+
+  it('Module 15.4: the do-not-contact key is its own 32-byte key, required in production, with checked previous keys', () => {
+    const base = { DATABASE_URL: 'postgresql://u:p@localhost:5432/db', REDIS_URL: 'redis://127.0.0.1:6379', DATA_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64') };
+    const key = Buffer.alloc(32, 2).toString('base64');
+    const dev = loadEnv(base); // optional outside production (the list then refuses to work, 503)
+    expect(dev.SALES_DNC_HMAC_KEY).toBeUndefined();
+    expect(dev).toMatchObject({ SALES_DNC_HMAC_KEY_ID: 'v1', SALES_DNC_HMAC_PREVIOUS_KEYS: '' });
+    expect(() => loadEnv({ ...base, NODE_ENV: 'production' })).toThrow(/SALES_DNC_HMAC_KEY/);
+    expect(() => loadEnv({ ...base, SALES_DNC_HMAC_KEY: 'too-short' })).toThrow(/32 bytes/);
+    expect(loadEnv({ ...base, SALES_DNC_HMAC_KEY: key, SALES_DNC_HMAC_KEY_ID: 'v2', SALES_DNC_HMAC_PREVIOUS_KEYS: `v1:${Buffer.alloc(32, 3).toString('base64')}` }).SALES_DNC_HMAC_KEY_ID).toBe('v2');
+    expect(() => loadEnv({ ...base, SALES_DNC_HMAC_KEY: key, SALES_DNC_HMAC_PREVIOUS_KEYS: 'v1:short' })).toThrow(/SALES_DNC_HMAC_PREVIOUS_KEYS/);
+    expect(() => loadEnv({ ...base, SALES_DNC_HMAC_KEY: key, SALES_DNC_HMAC_PREVIOUS_KEYS: `v1:${key}` })).toThrow(/both current and previous/);
   });
 
   it('Module 4 settings: safe defaults, a checked local city list, the dispatcher interval and the nightly schedule', () => {

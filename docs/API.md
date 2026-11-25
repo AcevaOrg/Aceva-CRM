@@ -737,6 +737,48 @@ leaves no activity.
 
 **Audit actions:** `sales.deal.follow_up_done`, and `sales.deal.moved` for stage moves made by an activity.
 
+## Module 15, part 4: the lead import and the do-not-contact list
+
+Plan section 20: leads come in "by uploading the exported list. The system removes duplicates", and "an unsubscribe or 'do
+not contact' request is saved on the lead, and the system blocks that email from every future sequence". The rules are the
+approved M15.4 decisions 1 to 6.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /sales/leads/import/preview` (multipart: `file`, `source`, `ownerEmpId?`) | `sales.own`; `ownerEmpId` only the sales manager, for their team | Checks the CSV and saves nothing but the preview: each row `ok`, `duplicate` (with the owner), `repeated` (earlier in the file), `dnc` or `invalid` (each problem listed). The preview lasts 30 minutes |
+| `POST /sales/leads/import/:batchId/commit` | whoever made the preview (anyone else: 404) | Adds the rows that are still good, all or nothing. Every row is checked again under the email locks; a row that became a duplicate or do-not-contact meanwhile is skipped, never forced in. Once per preview: again returns the same result. 409 `import_expired`, `import_busy` |
+| `POST /sales/leads/:id/do-not-contact {reason}` | the lead's owner, or the sales manager for their team (not the CEO / Owner) | Saves the request on the lead (`doNotContact: true`). 409 `already_dnc`, `lead_archived` |
+| `GET /sales/do-not-contact?page` | `sales.team` or `sales.all` | The list, newest first, with masked emails (`a***@domain.com`); a lead's name only for who sees that lead in full |
+| `POST /sales/do-not-contact {email, reason}` | the sales manager only (`sales.targets`) | An email with no lead. A lead with that email, whoever owns it, is marked too. 409 `already_listed` |
+
+**The file:** CSV only (UTF-8), at most 2 MB and 5,000 rows, in the existing format: a header naming only the columns
+`name, email, company, website, country, title, source` (in any order; `name` required), or no header and that order.
+Each row follows the same rules as a lead added by hand. The uploader picks the source of the file; a valid `source` on a
+row overrides it (case, spaces and dashes ignored, e.g. `walk-in`); an unknown one makes the row invalid. Who imported it,
+when, for whom, and the file's SHA-256 are kept on the batch (`sales_import_batches`); each lead it added points to it.
+The preview's rows are cleared once it is committed or expires.
+
+**What do-not-contact blocks (server-side, email only):**
+- a lead with a listed email cannot be added, imported, or have its email changed to it (409 `do_not_contact`);
+- outgoing contact cannot be logged on a marked lead: call, email sent, LinkedIn, WhatsApp, meeting, proposal (409
+  `do_not_contact`). A reply, a note (and a Fiverr inquiry, which is incoming) can still be logged.
+
+**Privacy and permanence:** an entry keeps an HMAC-SHA256 of the normalised email (its own secret,
+`SALES_DNC_HMAC_KEY`, with its key id), a masked email, the reason, the source (`manual`; `apollo` and `mailbox` are for
+Module 16 unsubscribes), who added it and when; never the email. Entries are insert-only (database triggers), and a
+lead's `dnc_at` never changes once set, so the protection stays after the lead is archived and its contact details are
+removed (M15.5). A lead and a list entry for the same email are never saved at the same moment (per-email transaction
+lock).
+
+**Fail-safe and key rotation:** without `SALES_DNC_HMAC_KEY` (required in production) everything that must check the list
+is refused with 503 `dnc_unavailable`. Because the email is not stored, a key can never be dropped while entries made
+with it exist: to rotate, set the new key with a new `SALES_DNC_HMAC_KEY_ID` and move the old one to
+`SALES_DNC_HMAC_PREVIOUS_KEYS` (`id:key;id:key`). An entry whose key id is not configured stops every check (503
+`dnc_key_missing`) instead of quietly no longer matching.
+
+**Audit actions:** `sales.leads.import_previewed`, `sales.leads.imported`, `sales.lead.created` (with `importBatch`),
+`sales.lead.do_not_contact`, `sales.dnc.added`. Module 4 records each successful request as a Sales `create`.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

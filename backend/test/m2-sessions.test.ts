@@ -193,6 +193,8 @@ function baseEnvVars(): Record<string, string> {
     DATABASE_URL: 'postgresql://u:p@localhost:5432/aceva_unit',
     REDIS_URL: 'redis://127.0.0.1:6379',
     DATA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+    // Module 15.4: production also requires the do-not-contact key (test-only value).
+    SALES_DNC_HMAC_KEY: Buffer.alloc(32, 8).toString('base64'),
   };
 }
 

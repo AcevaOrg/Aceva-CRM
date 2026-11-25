@@ -10,7 +10,8 @@
 import type {
   CreateSalesDealRequest, CreateSalesLeadRequest, LogSalesActivityRequest, MoveSalesDealRequest, Page, SalesActivityResult, SalesActivityView, SalesCompanyView,
   SalesDealDetailView, SalesDealHistoryView, SalesDealResult, SalesFollowUpView,
-  SalesDealView, SalesDuplicateCheckView, SalesLeadResult, SalesLeadView, SalesPipelineSummaryView, UpdateSalesLeadRequest,
+  SalesDealView, SalesDncEntryView, SalesDuplicateCheckView, SalesImportPreviewView, SalesImportResultView, SalesImportRowView, SalesLeadResult, SalesLeadView,
+  SalesPipelineSummaryView, UpdateSalesLeadRequest,
 } from "@aceva/contracts";
 import { SALES_OPEN_STAGES } from "@aceva/contracts";
 import { http } from "@/lib/api/http";
@@ -19,8 +20,8 @@ import { isoDay, monthKey } from "@/lib/dates";
 import type { DealRow, LeadRow, MoveResult } from "./api";
 import { totalsByCurrency } from "./logic";
 import type {
-  Company, Deal, DealDetail, DealStage, DuplicateResult, FollowUp, Handover, ImportRow, Lead, LeadDetail, LeadStub, LogActivityInput, LoggedActivity, NewDealInput,
-  NewLeadInput,
+  Company, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, FollowUp, Handover, ImportPreview, ImportRow, Lead, LeadDetail, LeadSource, LeadStub,
+  LogActivityInput, LoggedActivity, NewDealInput, NewLeadInput,
   PipelineSummary, SalesActivity, StageChange, VerifyPreview, VerifyResult,
 } from "./types";
 
@@ -48,8 +49,7 @@ export function mapLead(v: SalesLeadView): Lead {
     ownerEmpId: v.owner.empId,
     emailCheck: v.emailCheck,
     checkedAt: opt(v.emailCheckedAt),
-    // The do-not-contact list arrives with M15.4.
-    doNotContact: false,
+    doNotContact: v.doNotContact,
     notes: opt(v.notes),
     lastActivityAt: v.lastActivityAt,
     archived: v.archived,
@@ -89,8 +89,8 @@ export interface LeadsApi {
   update(id: string, patch: Partial<Pick<Lead, "notes" | "phone" | "title" | "linkedinUrl">>, version?: number): Promise<void>;
   reassign(id: string, empId: string, reason?: string, version?: number): Promise<void>;
   markDoNotContact(id: string, reason: string): Promise<void>;
-  importPreview(csv: string): Promise<ImportRow[]>;
-  importCommit(rows: ImportRow[]): Promise<{ imported: number }>;
+  importPreview(csv: string, source: LeadSource): Promise<ImportPreview>;
+  importCommit(batchId: string, rows: ImportRow[]): Promise<{ imported: number; skipped: number }>;
   verifyPreview(): Promise<VerifyPreview>;
   verify(): Promise<VerifyResult>;
 }
@@ -158,9 +158,25 @@ export const liveLeadsApi: LeadsApi = {
     await http.post<SalesLeadView>(`/sales/leads/${id}/owner`, { toEmpId: empId, reason: reason.trim(), version: version ?? (await currentVersion(id)) });
   },
 
-  markDoNotContact: async () => notYet("The do-not-contact list"),
-  importPreview: async () => notYet("Importing leads"),
-  importCommit: async () => notYet("Importing leads"),
+  /** POST /sales/leads/:id/do-not-contact (the owner, or the sales manager). Never removed. */
+  async markDoNotContact(id, reason) {
+    await http.post<SalesLeadResult>(`/sales/leads/${id}/do-not-contact`, { reason });
+  },
+
+  /** POST /sales/leads/import/preview: the CSV is checked on the server; nothing is added yet. */
+  async importPreview(csv, source) {
+    const form = new FormData();
+    form.append("source", source);
+    form.append("file", new Blob([csv], { type: "text/csv" }), "leads.csv");
+    const v = await http.upload<SalesImportPreviewView>("/sales/leads/import/preview", form);
+    return { batchId: v.batchId, rows: v.rows.map(mapImportRow) };
+  },
+
+  /** POST /sales/leads/import/:batchId/commit: adds the rows that are still good (once). */
+  async importCommit(batchId) {
+    const r = await http.post<SalesImportResultView>(`/sales/leads/import/${batchId}/commit`);
+    return { imported: r.created, skipped: r.skipped.length };
+  },
   verifyPreview: async () => notYet("Checking emails (Module 16)"),
   verify: async () => notYet("Checking emails (Module 16)"),
 };
@@ -412,3 +428,43 @@ export async function liveFollowUps(ownerEmpId?: string): Promise<FollowUp[]> {
   const rows = await http.get<SalesFollowUpView[]>("/sales/follow-ups", ownerEmpId ? { scope: "team", owner: ownerEmpId } : { scope: "mine" });
   return rows.map(mapFollowUp);
 }
+
+/* ---------------- M15.4: the lead import and the do-not-contact list ---------------- */
+
+export function mapImportRow(v: SalesImportRowView): ImportRow {
+  return {
+    line: v.line,
+    name: v.name,
+    email: v.email ?? "",
+    companyName: v.companyName ?? "",
+    website: opt(v.website),
+    country: opt(v.country),
+    title: opt(v.title),
+    source: v.source ?? undefined,
+    status: v.status,
+    message: v.problems.length ? v.problems.join(" ") : undefined,
+    ownerEmpId: v.owner?.empId,
+  };
+}
+
+/** A list entry as the screens show it: the email stays masked ("a***@domain.com"); the list never has the real email. */
+export function mapDncEntry(v: SalesDncEntryView): DncEntry {
+  return { id: v.id, email: v.maskedEmail ?? "No email (marked on the lead)", leadId: v.lead?.id, reason: v.reason, addedBy: v.addedBy?.empId ?? "", at: v.addedAt };
+}
+
+export interface DncApi {
+  list(): Promise<DncEntry[]>;
+  add(email: string, reason: string): Promise<void>;
+}
+
+export const liveDncApi: DncApi = {
+  /** GET /sales/do-not-contact (the sales manager; the CEO / Owner views) */
+  async list() {
+    const page = await http.get<Page<SalesDncEntryView>>("/sales/do-not-contact", { page: 1, pageSize: PAGE });
+    return page.items.map(mapDncEntry);
+  },
+  /** POST /sales/do-not-contact (the sales manager only) */
+  async add(email, reason) {
+    await http.post<SalesDncEntryView>("/sales/do-not-contact", { email, reason });
+  },
+};

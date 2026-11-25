@@ -56,6 +56,7 @@ export function leadView(
     updatedAt: l.updatedAt.toISOString(),
     canEdit: extra.canEdit,
     canReassign: extra.canReassign,
+    doNotContact: l.dncAt !== null,
   };
 }
 

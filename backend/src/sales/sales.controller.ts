@@ -1,6 +1,11 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  addSalesDncEmailSchema,
+  markSalesLeadDncSchema,
+  salesDncListQuerySchema,
+  SALES_IMPORT_MAX_BYTES,
   completeSalesFollowUpSchema,
   createSalesCompanySchema,
   logSalesActivitySchema,
@@ -22,9 +27,12 @@ import {
 import type { Actor } from '../access/access.types';
 import { ClientInfo, CurrentActor, RequirePermission, type RequestInfo } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
+import type { UploadedFileData } from '../finance/finance-documents.service';
 import { ActivitiesService } from './activities.service';
 import { CompaniesService } from './companies.service';
 import { DealsService } from './deals.service';
+import { DncService } from './dnc.service';
+import { LeadImportService } from './lead-import.service';
 import { LeadsService } from './leads.service';
 import { SALES_OWN } from './sales-access.service';
 
@@ -39,6 +47,9 @@ class UpdateCompanyDto extends createZodDto(updateSalesCompanySchema) {}
 class LogActivityDto extends createZodDto(logSalesActivitySchema) {}
 class CompleteFollowUpDto extends createZodDto(completeSalesFollowUpSchema) {}
 class FollowUpListQueryDto extends createZodDto(salesFollowUpListQuerySchema) {}
+class MarkDncDto extends createZodDto(markSalesLeadDncSchema) {}
+class AddDncEmailDto extends createZodDto(addSalesDncEmailSchema) {}
+class DncListQueryDto extends createZodDto(salesDncListQuerySchema) {}
 
 /**
  * Module 15.1 leads (plan section 20). Every route needs sales.own; what each person sees and changes inside is decided
@@ -51,7 +62,35 @@ export class SalesLeadsController {
   constructor(
     private readonly leads: LeadsService,
     private readonly activities: ActivitiesService,
+    private readonly dnc: DncService,
+    private readonly imports: LeadImportService,
   ) {}
+
+  @Post('import/preview')
+  @RequirePermission(SALES_OWN)
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: SALES_IMPORT_MAX_BYTES + 1, files: 1, fields: 5 } }))
+  @ApiOperation({ summary: 'M15.4: check a CSV of leads (fields: file, source, ownerEmpId?). Nothing is added yet; the preview lasts 30 minutes' })
+  importPreview(@CurrentActor() actor: Actor, @UploadedFile() file: UploadedFileData | undefined, @Body() body: unknown, @ClientInfo() client: RequestInfo) {
+    return this.imports.preview(actor, file, body, client);
+  }
+
+  @Post('import/:batchId/commit')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'M15.4: add the rows of a preview that are still good (once; committing again returns the same result)' })
+  importCommit(@CurrentActor() actor: Actor, @Param('batchId', new ParseUUIDPipe()) batchId: string, @ClientInfo() client: RequestInfo) {
+    return this.imports.commit(actor, batchId, client);
+  }
+
+  @Post(':id/do-not-contact')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'M15.4: save a do-not-contact request on the lead (the owner, or the sales manager for their team). Never removed' })
+  async markDnc(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: MarkDncDto, @ClientInfo() client: RequestInfo) {
+    await this.dnc.markLead(actor, id, body, client);
+    return this.leads.get(actor, id);
+  }
 
   @Get(':id/activities')
   @RequirePermission(SALES_OWN)
@@ -109,6 +148,27 @@ export class SalesLeadsController {
   @ApiOperation({ summary: 'The sales manager moves a lead to another salesperson in their team (reason required, logged)' })
   reassign(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: ReassignLeadDto, @ClientInfo() client: RequestInfo) {
     return this.leads.reassign(actor, id, body, client);
+  }
+}
+
+/** M15.4: the do-not-contact list (plan section 20). Entries keep a keyed hash and a masked email, never the email. */
+@ApiTags('sales')
+@Controller('sales/do-not-contact')
+export class SalesDncController {
+  constructor(private readonly dnc: DncService) {}
+
+  @Get()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'The do-not-contact list, newest first (sales.team or sales.all). Emails are masked' })
+  list(@CurrentActor() actor: Actor, @Query() q: DncListQueryDto) {
+    return this.dnc.list(actor, q);
+  }
+
+  @Post()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Add an email to the do-not-contact list (the sales manager only). A lead with that email is marked too' })
+  add(@CurrentActor() actor: Actor, @Body() body: AddDncEmailDto, @ClientInfo() client: RequestInfo) {
+    return this.dnc.addEmail(actor, body, client);
   }
 }
 

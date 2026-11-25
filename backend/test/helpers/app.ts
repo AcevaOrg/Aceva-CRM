@@ -77,6 +77,9 @@ function clientWith(app: INestApplication, apply: (r: request.Test, method: stri
   };
 }
 
+/** Module 15.4: the do-not-contact key used by every automated test (32 bytes of 0x5a; test-only, not a secret). */
+export const TEST_DNC_HMAC_KEY = Buffer.alloc(32, 0x5a).toString('base64');
+
 /** Starts the real application (all modules) against the aceva_test database and Redis. */
 export async function createTestApp(
   options: { extraControllers?: Type[]; overrides?: Array<{ provide: unknown; useValue: unknown }> } = {},
@@ -94,6 +97,9 @@ export async function createTestApp(
   // The local city list for tests (documentation address ranges, never used by freshIp()): 192.0.2.x is "Karachi",
   // 198.51.100.x is "Lahore". No outside GeoIP service is ever called.
   process.env.GEOIP_RANGES = '192.0.2.0/24=Karachi; 198.51.100.0/24=Lahore';
+  // Module 15.4: a fixed, test-only key for the do-not-contact list's keyed hash (never a real secret).
+  process.env.SALES_DNC_HMAC_KEY = TEST_DNC_HMAC_KEY;
+  process.env.SALES_DNC_HMAC_KEY_ID = 'test';
 
   const clock = new FakeClock();
   const mailer = new MemoryMailer();

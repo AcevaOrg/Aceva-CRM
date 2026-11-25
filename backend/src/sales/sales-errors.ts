@@ -17,6 +17,10 @@ export function forbidden(code: string, message: string): never {
 export function notFound(what = 'Not found'): never {
   throw new NotFoundException({ statusCode: 404, code: 'not_found', message: what });
 }
+/** 503: a check the action depends on cannot be made right now, so the action is refused (never done unchecked). */
+export function serviceUnavailable(code: string, message: string): never {
+  throw new HttpException({ statusCode: 503, code, message }, HttpStatus.SERVICE_UNAVAILABLE);
+}
 export function tooManyRequests(message: string): never {
   throw new HttpException({ statusCode: 429, code: 'rate_limited', message }, HttpStatus.TOO_MANY_REQUESTS);
 }

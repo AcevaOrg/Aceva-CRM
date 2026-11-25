@@ -278,7 +278,7 @@ function LeadBody({ d }: { d: Detail }) {
         </div>
       </div>
 
-      {canWork && logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} />}
+      {canWork && logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} doNotContact={lead.doNotContact} />}
       <CreateDealSheet open={canWork && dealOpen} onOpenChange={setDealOpen} leadId={lead.id} leadName={lead.name} defaultCurrency={lead.country === "Pakistan" ? "PKR" : "USD"} />
       {canWork && verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
     </>

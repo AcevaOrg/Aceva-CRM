@@ -8,7 +8,8 @@ import { screenLoadsFromServer } from './live-screen';
  * that the lead exists and who owns it, and the Director (sales manager) moves the lead with a reason. Module 15.2: a deal
  * made and moved on the screen, Won asked for by the salesperson and confirmed by the Director (Billing makes one draft
  * invoice), and Lost with a reason from the settings. Module 15.3: a logged call moves a deal forward, a proposal link, and
- * a follow-up completed from My sales day.
+ * a follow-up completed from My sales day. Module 15.4: a CSV import with its preview, a lead marked do not contact on its
+ * page, and the Director adding an email to the do-not-contact list.
  */
 const HIRA = 'ACV-0009';
 const KAMRAN = 'ACV-0012';
@@ -309,5 +310,96 @@ test('My sales day lists today’s follow-up from the server; marking it done re
   expect((await dir.get('/sales/follow-ups?scope=team')).status()).toBe(200);
   const kamran = await apiAs(playwright, KAMRAN);
   expect((await kamran.get('/sales/follow-ups?scope=team')).status()).toBe(403);
+  await context.close();
+});
+
+// --------------------------------------------------------------------------------- M15.4: import and do not contact
+
+let gracesLead = '';
+
+test('import: the CSV is checked first (ready, duplicate, invalid), then only the good rows are added, with the chosen source', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, '/sales/leads', /\/api\/v1\/sales\/leads$/);
+  await page.getByRole('button', { name: 'Import CSV' }).click();
+  const dialog = page.getByRole('dialog');
+  const csv = [
+    'name,email,company,website,country,title,source',
+    `Grace Holloway,grace.${run}@kestrel-e2e.test,Kestrel Dental,kestrel-${run}.test,United Kingdom,Practice Manager,`,
+    `Daniel Price,dan.${run}@lakeview-e2e.test,Lakeview Realty,lakeview-${run}.test,United States,Broker,linkedin`,
+    `Tom Reeves,tom.reeves@,Reeves Plumbing,reeves-${run}.test,United Kingdom,Owner,`,
+    `Ayesha Again,${email},Acme E2E,,,,`,
+  ].join('\n');
+  await dialog.getByLabel('CSV rows').fill(csv);
+  await dialog.locator('#import-source').selectOption('referral');
+  const previewed = page.waitForResponse((r) => r.url().endsWith('/api/v1/sales/leads/import/preview'), { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Preview' }).click();
+  const pre = await previewed;
+  expect(pre.status(), await pre.text()).toBe(201);
+  expect((await pre.json()).counts).toMatchObject({ ok: 2, duplicate: 1, invalid: 1 });
+  await expect(dialog.getByText('2 ready')).toBeVisible();
+  await expect(dialog.getByText('1 duplicate')).toBeVisible();
+  await expect(dialog.getByText('1 invalid')).toBeVisible();
+  const committed = page.waitForResponse((r) => /\/api\/v1\/sales\/leads\/import\/[0-9a-f-]+\/commit$/.test(r.url()), { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Import 2 good rows' }).click();
+  const res = await committed;
+  expect(res.status(), await res.text()).toBe(200);
+  expect(await res.json()).toMatchObject({ created: 2, committedBy: { empId: HIRA } });
+  const api = await apiAs(playwright, HIRA);
+  const list = await (await api.get(`/sales/leads?q=${encodeURIComponent(`grace.${run}`)}`)).json();
+  expect(list.items).toHaveLength(1);
+  expect(list.items[0]).toMatchObject({ fullName: 'Grace Holloway', source: 'referral', owner: { empId: HIRA }, company: { name: 'Kestrel Dental' } });
+  gracesLead = list.items[0].id;
+  const dan = await (await api.get(`/sales/leads?q=${encodeURIComponent(`dan.${run}`)}`)).json();
+  expect(dan.items[0].source).toBe('linkedin'); // the row's own source wins
+  await context.close();
+});
+
+test('do not contact: the owner marks the lead on its page; afterwards only a reply or a note can be logged on it', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, `/sales/leads/${gracesLead}`, new RegExp(`/api/v1/sales/leads/${gracesLead}$`));
+  await page.getByRole('button', { name: 'Do not contact' }).click();
+  const marked = page.waitForResponse((r) => r.url().endsWith(`/api/v1/sales/leads/${gracesLead}/do-not-contact`), { timeout: 30_000 });
+  await page.getByRole('dialog').getByRole('button', { name: 'Mark do not contact' }).click();
+  const res = await marked;
+  expect(res.status(), await res.text()).toBe(200);
+  expect((await res.json()).doNotContact).toBe(true);
+  await expect(page.getByRole('button', { name: 'Do not contact' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Log activity' }).click();
+  const kinds = await page.getByRole('dialog').locator('#la-kind option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+  expect(kinds.sort()).toEqual(['fiverr', 'note', 'reply']);
+  await page.keyboard.press('Escape');
+  // the server refuses outgoing contact whatever the screen offers
+  const api = await apiAs(playwright, HIRA);
+  const call = await api.post(`/sales/leads/${gracesLead}/activities`, { kind: 'call', summary: 'Tried anyway' });
+  expect(call.status()).toBe(409);
+  expect((await call.json()).code).toBe('do_not_contact');
+  expect((await api.post(`/sales/leads/${gracesLead}/activities`, { kind: 'note', summary: 'Asked not to be contacted' })).status()).toBe(201);
+  await context.close();
+});
+
+test('do not contact: the Director adds an email without a lead; the list shows it masked; it can no longer become a lead', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const { page, context } = await openAs(browser, DIRECTOR, '/');
+  await screenLoadsFromServer(page, '/sales/targets?tab=dnc', /\/api\/v1\/sales\/do-not-contact$/);
+  await page.getByRole('button', { name: 'Add email' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('#dnc-email').fill(`Nobody.${run}@Globex-E2E.test`);
+  await dialog.locator('#dnc-reason').fill('Unsubscribed by reply');
+  const added = page.waitForResponse((r) => r.url().endsWith('/api/v1/sales/do-not-contact') && r.request().method() === 'POST', { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Add' }).click();
+  const res = await added;
+  expect(res.status(), await res.text()).toBe(201);
+  expect(await res.json()).toMatchObject({ maskedEmail: 'n***@globex-e2e.test', lead: null });
+  await expect(page.getByText('n***@globex-e2e.test').first()).toBeVisible();
+  expect(await page.getByText(`nobody.${run}@globex-e2e.test`, { exact: false }).count()).toBe(0);
+  const hira = await apiAs(playwright, HIRA);
+  const refused = await hira.post('/sales/leads', { fullName: 'Nobody', source: 'apollo', email: `nobody.${run}@globex-e2e.test` });
+  expect(refused.status()).toBe(409);
+  expect((await refused.json()).code).toBe('do_not_contact');
+  const kamran = await apiAs(playwright, KAMRAN);
+  expect((await kamran.get('/sales/do-not-contact')).status()).toBe(403);
+  expect((await kamran.post('/sales/do-not-contact', { email: `x.${run}@globex-e2e.test`, reason: 'Not allowed' })).status()).toBe(403);
   await context.close();
 });

@@ -290,3 +290,6 @@ export function activityLoggedMessage(
   if (result.stageNotChanged) return { tone: "info", title, description: `Stage not changed. ${STAGE_NOT_CHANGED_TEXT[result.stageNotChanged]}` };
   return { tone: "success", title };
 }
+
+/** M15.4 (approved decision 1): outgoing contact that cannot be logged on a do-not-contact lead. Replies and notes can. */
+export const DNC_BLOCKED_KINDS: readonly ActivityKind[] = ["call", "email_sent", "linkedin", "whatsapp", "meeting", "proposal"];

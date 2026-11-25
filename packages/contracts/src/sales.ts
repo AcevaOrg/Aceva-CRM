@@ -304,6 +304,8 @@ export interface SalesLeadView {
   updatedAt: string;
   canEdit: boolean;
   canReassign: boolean;
+  /** M15.4: a do-not-contact request is saved on the lead (it never goes away; outgoing contact is refused). */
+  doNotContact: boolean;
 }
 
 /** Someone else's lead: only that it exists and who owns it (plan section 20). */
@@ -636,4 +638,130 @@ export interface SalesFollowUpView {
   missed: boolean;
   /** The deal is waiting for its Won confirmation. */
   wonPending: boolean;
+}
+
+// =============================================================================================================== M15.4
+/*
+ * Module 15.4: the do-not-contact list and the lead import (plan section 20).
+ *
+ * "An unsubscribe or 'do not contact' request is saved on the lead, and the system blocks that email from every future
+ * sequence." Approved M15.4 rules (management decisions 1-6):
+ *  - a lead whose email is on the list cannot be added or imported; outgoing contact (call, email sent, LinkedIn, WhatsApp,
+ *    meeting, proposal) cannot be logged on a do-not-contact lead; replies and notes still can. Email only;
+ *  - entries are never changed or removed, and keep working after the lead is archived;
+ *  - the lead's owner or the sales manager marks a lead; only the sales manager adds an email that has no lead;
+ *  - the list keeps a keyed hash (HMAC) of the email and a masked form ("a***@domain.com"), never the email itself;
+ *  - the import is CSV only, in the existing column format, with a preview first; the uploader picks the source of the
+ *    file, a valid source on a row overrides it, an unknown one makes the row invalid; 2 MB, 5,000 rows, 30 minutes.
+ */
+
+// ------------------------------------------------------------------------------------------------- do-not-contact list
+
+/** Who put an email on the list: a person in Aceva ("manual"), or later an unsubscribe reported by a tool (Module 16). */
+export const SALES_DNC_SOURCES = ['manual', 'apollo', 'mailbox'] as const;
+export type SalesDncSource = (typeof SALES_DNC_SOURCES)[number];
+
+/** Outgoing contact that cannot be logged on a do-not-contact lead (approved decision 1). Replies and notes stay allowed. */
+export const SALES_DNC_BLOCKED_KINDS = ['call', 'email_sent', 'linkedin', 'whatsapp', 'meeting', 'proposal'] as const;
+
+const dncReasonSchema = z.string().trim().min(3, 'Please give a reason (at least 3 characters)').max(500);
+
+/** POST /sales/leads/:id/do-not-contact (the lead's owner, or the sales manager for their team). */
+export const markSalesLeadDncSchema = z.object({ reason: dncReasonSchema });
+export type MarkSalesLeadDncRequest = z.infer<typeof markSalesLeadDncSchema>;
+
+/** POST /sales/do-not-contact: an email that has no lead (the sales manager only). */
+export const addSalesDncEmailSchema = z.object({
+  email: z.string().trim().max(254).pipe(z.email('Enter a valid email address')),
+  reason: dncReasonSchema,
+});
+export type AddSalesDncEmailRequest = z.infer<typeof addSalesDncEmailSchema>;
+
+/** GET /sales/do-not-contact (sales.team or sales.all). */
+export const salesDncListQuerySchema = pageQuerySchema;
+export type SalesDncListQuery = z.infer<typeof salesDncListQuerySchema>;
+
+/** "a***@domain.com": the first character of the local part, then ***, then the domain. */
+export function maskEmail(email: string): string {
+  const e = normalizeEmail(email);
+  const at = e.lastIndexOf('@');
+  if (at < 1) return '***';
+  return `${e[0]}***${e.slice(at)}`;
+}
+
+export interface SalesDncEntryView {
+  id: string;
+  /** The masked email ("a***@domain.com"); null for a lead that had no email when it was marked. */
+  maskedEmail: string | null;
+  /** The lead it was marked on, only when the caller sees that lead in full. */
+  lead: { id: string; fullName: string } | null;
+  reason: string;
+  source: SalesDncSource;
+  addedBy: SalesPersonRef | null;
+  addedAt: string;
+}
+
+// ------------------------------------------------------------------------------------------------------------- import
+
+/** The existing CSV format (the import screen's sample): only these column names, in this order when there is no header. */
+export const SALES_IMPORT_COLUMNS = ['name', 'email', 'company', 'website', 'country', 'title', 'source'] as const;
+export type SalesImportColumn = (typeof SALES_IMPORT_COLUMNS)[number];
+export const SALES_IMPORT_MAX_BYTES = 2 * 1024 * 1024;
+export const SALES_IMPORT_MAX_ROWS = 5000;
+export const SALES_IMPORT_PREVIEW_MINUTES = 30;
+
+/** POST /sales/leads/import/preview: multipart, the CSV `file` plus these fields. */
+export const salesImportPreviewSchema = z.object({
+  /** The source of the whole file; a valid `source` on a row overrides it. */
+  source: salesLeadSourceSchema,
+  /** Only the sales manager may import leads for someone in their team; everyone else owns what they import. */
+  ownerEmpId: empIdSchema.optional(),
+});
+export type SalesImportPreviewRequest = z.infer<typeof salesImportPreviewSchema>;
+
+/**
+ * A row of the preview:
+ *  - ok: will be added;
+ *  - duplicate: a lead with this email already exists (its owner is shown, as everywhere in Module 15);
+ *  - repeated: the same email appears earlier in the file;
+ *  - dnc: the email is on the do-not-contact list;
+ *  - invalid: something on the row is wrong (each problem is listed).
+ */
+export const SALES_IMPORT_ROW_STATUSES = ['ok', 'duplicate', 'repeated', 'dnc', 'invalid'] as const;
+export type SalesImportRowStatus = (typeof SALES_IMPORT_ROW_STATUSES)[number];
+
+export interface SalesImportRowView {
+  /** The line in the file (the header is line 1). */
+  line: number;
+  name: string;
+  email: string | null;
+  companyName: string | null;
+  website: string | null;
+  country: string | null;
+  title: string | null;
+  source: SalesLeadSource | null;
+  status: SalesImportRowStatus;
+  problems: string[];
+  /** For a duplicate: who owns the existing lead. */
+  owner: SalesPersonRef | null;
+}
+
+export interface SalesImportPreviewView {
+  batchId: string;
+  fileName: string;
+  source: SalesLeadSource;
+  owner: SalesPersonRef;
+  expiresAt: string;
+  counts: Record<SalesImportRowStatus, number>;
+  rows: SalesImportRowView[];
+}
+
+/** POST /sales/leads/import/:batchId/commit. Committing the same preview again returns this same result. */
+export interface SalesImportResultView {
+  batchId: string;
+  created: number;
+  /** Rows not added. A row that became a duplicate (or do-not-contact) after the preview is skipped, never forced in. */
+  skipped: Array<{ line: number; status: Exclude<SalesImportRowStatus, 'ok'> }>;
+  committedAt: string;
+  committedBy: SalesPersonRef;
 }

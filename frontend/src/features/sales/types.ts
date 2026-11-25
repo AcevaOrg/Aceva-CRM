@@ -304,10 +304,17 @@ export interface ImportRow {
   website?: string;
   country?: string;
   title?: string;
-  source: LeadSource;
-  status: "ok" | "duplicate" | "invalid" | "repeated";
+  /** Missing when the row names a source that does not exist (the row is then invalid). */
+  source?: LeadSource;
+  status: "ok" | "duplicate" | "invalid" | "repeated" | "dnc";
   message?: string;
   ownerEmpId?: string;
+}
+
+/** M15.4: a checked import, waiting (30 minutes) to be committed. */
+export interface ImportPreview {
+  batchId: string;
+  rows: ImportRow[];
 }
 
 export interface VerifyPreview {

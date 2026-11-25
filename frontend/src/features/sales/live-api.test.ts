@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SalesDealDetailView, SalesDuplicateCheckView, SalesLeadView } from "@aceva/contracts";
-import { activityLoggedMessage, isWebLink, pipelineSummary, STAGE_NOT_CHANGED_TEXT, totalsByCurrency } from "./logic";
-import { mapActivity, mapDeal, mapDuplicate, mapFollowUp, mapLead, mapLoggedActivity } from "./live-api";
+import { activityLoggedMessage, DNC_BLOCKED_KINDS, isWebLink, pipelineSummary, STAGE_NOT_CHANGED_TEXT, totalsByCurrency } from "./logic";
+import { mapActivity, mapDeal, mapDncEntry, mapDuplicate, mapFollowUp, mapImportRow, mapLead, mapLoggedActivity } from "./live-api";
 
 const view: SalesLeadView = {
   restricted: false,
@@ -27,6 +27,7 @@ const view: SalesLeadView = {
   updatedAt: "2026-12-07T05:00:00.000Z",
   canEdit: true,
   canReassign: false,
+  doNotContact: false,
 };
 
 describe("M15.1 live mapping", () => {
@@ -170,5 +171,32 @@ describe("M15.3 after logging an activity: whether the deal moved, and why not",
       expect(m.description).not.toMatch(/moved to|deal_closed|won_pending|not_forward|needs_contacted|_/);
     }
     expect(Object.keys(STAGE_NOT_CHANGED_TEXT).sort()).toEqual(["deal_closed", "needs_contacted", "not_forward", "won_pending"]);
+  });
+});
+
+describe("M15.4 live import and do-not-contact", () => {
+  it("shows the server's do-not-contact flag on a lead", () => {
+    expect(mapLead({ ...view, doNotContact: true }).doNotContact).toBe(true);
+    expect(mapLead(view).doNotContact).toBe(false);
+  });
+
+  it("maps a preview row with its problems, and a row whose source is unknown has none", () => {
+    expect(mapImportRow({ line: 3, name: "Daniel", email: "dan@x.test", companyName: "Lakeview", website: null, country: "US", title: null, source: "linkedin", status: "ok", problems: [], owner: null }))
+      .toEqual({ line: 3, name: "Daniel", email: "dan@x.test", companyName: "Lakeview", website: undefined, country: "US", title: undefined, source: "linkedin", status: "ok", message: undefined, ownerEmpId: undefined });
+    expect(mapImportRow({ line: 4, name: "Sophie", email: null, companyName: null, website: null, country: null, title: null, source: null, status: "invalid", problems: ['Unknown source "newsletter".', "email: required"], owner: null }))
+      .toMatchObject({ source: undefined, email: "", status: "invalid", message: 'Unknown source "newsletter". email: required' });
+    expect(mapImportRow({ line: 5, name: "Omar", email: "omar@x.test", companyName: null, website: null, country: null, title: null, source: "apollo", status: "duplicate", problems: ["This lead already exists."], owner: { empId: "ACV-0012", name: "Kamran" } }).ownerEmpId).toBe("ACV-0012");
+  });
+
+  it("keeps the list masked: an entry never shows the real email", () => {
+    expect(mapDncEntry({ id: "d1", maskedEmail: "a***@northwind.test", lead: { id: "l1", fullName: "Ayesha" }, reason: "Unsubscribed", source: "manual", addedBy: { empId: "ACV-0003", name: "Bilal" }, addedAt: "2026-12-08T05:00:00.000Z" }))
+      .toEqual({ id: "d1", email: "a***@northwind.test", leadId: "l1", reason: "Unsubscribed", addedBy: "ACV-0003", at: "2026-12-08T05:00:00.000Z" });
+    expect(mapDncEntry({ id: "d2", maskedEmail: null, lead: null, reason: "Asked by phone", source: "manual", addedBy: null, addedAt: "2026-12-08T05:00:00.000Z" }))
+      .toMatchObject({ email: "No email (marked on the lead)", leadId: undefined, addedBy: "" });
+  });
+
+  it("blocks the same outgoing kinds as the server; replies, notes and Fiverr inquiries stay allowed", () => {
+    expect([...DNC_BLOCKED_KINDS].sort()).toEqual(["call", "email_sent", "linkedin", "meeting", "proposal", "whatsapp"]);
+    for (const k of ["reply", "note", "fiverr"] as const) expect(DNC_BLOCKED_KINDS.includes(k)).toBe(false);
   });
 });

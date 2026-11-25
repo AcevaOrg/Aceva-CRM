@@ -22,6 +22,7 @@ import { noteActivity } from '../common/request-context';
 import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompaniesService } from './companies.service';
+import { DncService } from './dnc.service';
 import { DuplicateCheckThrottle } from './duplicate-check-throttle';
 import { type SalesAccess, SalesAccessService } from './sales-access.service';
 import { conflict, forbidden, notFound, tooManyRequests } from './sales-errors';
@@ -48,6 +49,7 @@ export class LeadsService {
     private readonly companies: CompaniesService,
     private readonly audit: AuditService,
     private readonly throttle: DuplicateCheckThrottle,
+    private readonly dnc: DncService,
   ) {}
 
   // ------------------------------------------------------------------------------------------------------------ reads
@@ -123,6 +125,8 @@ export class LeadsService {
     let id: string;
     try {
       id = await this.prisma.$transaction(async (tx) => {
+        // M15.4: never a lead for an email on the do-not-contact list (checked under the email's lock).
+        if (emailNormalized) await this.dnc.guardEmail(tx, emailNormalized);
         const company = await this.companies.resolveForLead(tx, actor, { companyId: dto.companyId, company: dto.company }, client);
         const lead = await tx.salesLead.create({
           data: {
@@ -181,6 +185,8 @@ export class LeadsService {
     if (!Object.keys(data).length && !companyChange) return this.viewOf(a, id);
     try {
       await this.prisma.$transaction(async (tx) => {
+        // M15.4: a lead's email cannot be changed to one on the do-not-contact list.
+        if (emailNormalized && emailNormalized !== row.emailNormalized) await this.dnc.guardEmail(tx, emailNormalized);
         if (companyChange) {
           const company = await this.companies.resolveForLead(tx, actor, { companyId: dto.companyId, company: dto.company }, client);
           if ((company?.id ?? null) !== row.companyId) {

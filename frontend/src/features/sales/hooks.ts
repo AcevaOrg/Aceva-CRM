@@ -5,7 +5,7 @@ import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
 import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
 import { liveFollowUps } from "./live-api";
-import type { DailyTargets, DealStage, ImportRow, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
+import type { DailyTargets, DealStage, ImportRow, LeadSource, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
   all: ["sales"] as const,
@@ -138,12 +138,12 @@ export function useMarkDnc() {
 }
 
 export function useImportPreview() {
-  return useMutation({ mutationFn: (csv: string) => leadsApi.importPreview(csv) });
+  return useMutation({ mutationFn: ({ csv, source }: { csv: string; source: LeadSource }) => leadsApi.importPreview(csv, source) });
 }
 
 export function useImportCommit() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: (rows: ImportRow[]) => leadsApi.importCommit(rows), onSuccess: done });
+  return useMutation({ mutationFn: ({ batchId, rows }: { batchId: string; rows: ImportRow[] }) => leadsApi.importCommit(batchId, rows), onSuccess: done });
 }
 
 export function useVerifyEmails() {

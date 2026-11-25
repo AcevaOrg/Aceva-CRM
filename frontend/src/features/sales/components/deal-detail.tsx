@@ -345,7 +345,7 @@ function DealBody({ d }: { d: DealDetail }) {
         </div>
       </div>
 
-      {logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={[deal]} />}
+      {logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={[deal]} doNotContact={lead.doNotContact} />}
       {stepMode && (
         <FollowUpDialog open onOpenChange={(o) => !o && setStepMode(null)} dealId={deal.id} company={company.name} currentStep={deal.nextStep} currentDate={deal.nextStepDate} mode={stepMode} />
       )}

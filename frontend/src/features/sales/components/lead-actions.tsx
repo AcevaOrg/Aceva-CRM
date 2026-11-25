@@ -14,16 +14,30 @@ import { Input, Textarea } from "@/components/ui/input";
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { addWorkingDays, isoDay } from "@/lib/dates";
 import { useCreateDeal, useLogActivity } from "../hooks";
-import { ACTIVITY_LABEL, activityLoggedMessage, isWebLink, SERVICE_LABEL } from "../logic";
+import { ACTIVITY_LABEL, activityLoggedMessage, DNC_BLOCKED_KINDS, isWebLink, SERVICE_LABEL } from "../logic";
 import type { ActivityKind, Deal, DealService } from "../types";
 import { dayToIso } from "./follow-up-dialog";
 
 /** What a salesperson logs by hand (plan section 20; Fiverr inquiries by decision of the CTO). Tool entries come from Module 16. */
 const MANUAL_KINDS: ActivityKind[] = ["call", "email_sent", "reply", "meeting", "linkedin", "whatsapp", "fiverr", "proposal", "note"];
 
-export function LogActivityDialog({ open, onOpenChange, leadId, deals }: { open: boolean; onOpenChange: (o: boolean) => void; leadId: string; deals: Deal[] }) {
+export function LogActivityDialog({
+  open,
+  onOpenChange,
+  leadId,
+  deals,
+  doNotContact = false,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  leadId: string;
+  deals: Deal[];
+  /** M15.4: the lead asked not to be contacted, so only replies, notes and Fiverr inquiries are offered. */
+  doNotContact?: boolean;
+}) {
+  const kinds = doNotContact ? MANUAL_KINDS.filter((k) => !DNC_BLOCKED_KINDS.includes(k)) : MANUAL_KINDS;
   // The caller mounts this dialog only while it's open, so state starts fresh each time.
-  const [kind, setKind] = React.useState<ActivityKind>("call");
+  const [kind, setKind] = React.useState<ActivityKind>(kinds[0]);
   const [dealId, setDealId] = React.useState(() => deals.find((d) => !["won", "lost"].includes(d.stage))?.id ?? "");
   const [summary, setSummary] = React.useState("");
   const [day, setDay] = React.useState(() => isoDay(new Date()));
@@ -38,7 +52,11 @@ export function LogActivityDialog({ open, onOpenChange, leadId, deals }: { open:
       <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>Log activity</DialogTitle>
-          <DialogDescription>For contact outside the connected tools. It shows on the timeline as Manual.</DialogDescription>
+          <DialogDescription>
+            {doNotContact
+              ? "This lead asked not to be contacted: only a reply or a note can be logged."
+              : "For contact outside the connected tools. It shows on the timeline as Manual."}
+          </DialogDescription>
         </DialogHeader>
         <form
           className="grid gap-4"
@@ -70,7 +88,7 @@ export function LogActivityDialog({ open, onOpenChange, leadId, deals }: { open:
         >
           <Field label="What happened" htmlFor="la-kind">
             <NativeSelect id="la-kind" value={kind} onChange={(e) => setKind(e.target.value as ActivityKind)}>
-              {MANUAL_KINDS.map((k) => (
+              {kinds.map((k) => (
                 <option key={k} value={k}>
                   {ACTIVITY_LABEL[k]}
                 </option>

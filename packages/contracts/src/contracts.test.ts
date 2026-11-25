@@ -762,3 +762,37 @@ describe('Module 15.3: activities and follow-ups contracts', () => {
     expect(salesFollowUpListQuerySchema.safeParse({ scope: 'everyone' }).success).toBe(false);
   });
 });
+
+describe('Module 15.4: do-not-contact and import contracts', () => {
+  it('masks an email to its first character and domain, never more', async () => {
+    const { maskEmail } = await import('./sales');
+    expect(maskEmail(' Ayesha.Khan@Northwind.co.uk ')).toBe('a***@northwind.co.uk');
+    expect(maskEmail('x@y.test')).toBe('x***@y.test');
+    expect(maskEmail('not-an-email')).toBe('***');
+  });
+
+  it('a reason is required to mark a lead or add an email; the email must be a real address', async () => {
+    const { markSalesLeadDncSchema, addSalesDncEmailSchema } = await import('./sales');
+    expect(markSalesLeadDncSchema.safeParse({ reason: 'Asked us not to' }).success).toBe(true);
+    expect(markSalesLeadDncSchema.safeParse({ reason: ' x ' }).success).toBe(false);
+    expect(addSalesDncEmailSchema.safeParse({ email: ' a@b.test ', reason: 'Unsubscribed' }).success).toBe(true);
+    expect(addSalesDncEmailSchema.safeParse({ email: 'a@', reason: 'Unsubscribed' }).success).toBe(false);
+  });
+
+  it('blocks only the approved outgoing kinds; sources and limits are the approved ones', async () => {
+    const c = await import('./sales');
+    expect([...c.SALES_DNC_BLOCKED_KINDS]).toEqual(['call', 'email_sent', 'linkedin', 'whatsapp', 'meeting', 'proposal']);
+    expect([...c.SALES_DNC_SOURCES]).toEqual(['manual', 'apollo', 'mailbox']);
+    expect([...c.SALES_IMPORT_COLUMNS]).toEqual(['name', 'email', 'company', 'website', 'country', 'title', 'source']);
+    expect([c.SALES_IMPORT_MAX_BYTES, c.SALES_IMPORT_MAX_ROWS, c.SALES_IMPORT_PREVIEW_MINUTES]).toEqual([2 * 1024 * 1024, 5000, 30]);
+    expect([...c.SALES_IMPORT_ROW_STATUSES]).toEqual(['ok', 'duplicate', 'repeated', 'dnc', 'invalid']);
+  });
+
+  it('a preview names a valid source for the file; the owner is optional', async () => {
+    const { salesImportPreviewSchema } = await import('./sales');
+    expect(salesImportPreviewSchema.safeParse({ source: 'apollo' }).success).toBe(true);
+    expect(salesImportPreviewSchema.safeParse({ source: 'apollo', ownerEmpId: 'ACV-0009' }).success).toBe(true);
+    expect(salesImportPreviewSchema.safeParse({ source: 'newsletter' }).success).toBe(false);
+    expect(salesImportPreviewSchema.safeParse({}).success).toBe(false);
+  });
+});

@@ -62,6 +62,9 @@ export default defineConfig({
         TRUST_PROXY: '0',
         // Cycle 3 foundation: the outbox reader and the notification emails run on their own timers, as in production.
         BACKGROUND_WORKERS: 'on',
+        // Module 15.4: a fixed, test-only key for the do-not-contact list (32 bytes of 0x5a; never a real secret).
+        SALES_DNC_HMAC_KEY: Buffer.alloc(32, 0x5a).toString('base64'),
+        SALES_DNC_HMAC_KEY_ID: 'test',
       },
     },
     {

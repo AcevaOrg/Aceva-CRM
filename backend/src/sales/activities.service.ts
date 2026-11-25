@@ -3,6 +3,7 @@ import {
   type LogSalesActivityData,
   SALES_ACTIVITY_MOVES_FROM,
   SALES_ACTIVITY_STAGE,
+  SALES_DNC_BLOCKED_KINDS,
   SALES_DEAL_STAGES,
   type SalesActivityResult,
   type SalesActivitySource,
@@ -130,10 +131,12 @@ export class ActivitiesService {
     const deal = target.dealId ? await this.prisma.salesDeal.findUnique({ where: { id: target.dealId }, select: { id: true, number: true, leadId: true, archivedAt: true } }) : null;
     if (target.dealId && (!deal || deal.archivedAt)) notFound('Deal not found');
     const leadId = deal?.leadId ?? target.leadId!;
-    const lead = await this.prisma.salesLead.findUnique({ where: { id: leadId }, select: { id: true, fullName: true, ownerId: true, archivedAt: true } });
+    const lead = await this.prisma.salesLead.findUnique({ where: { id: leadId }, select: { id: true, fullName: true, ownerId: true, archivedAt: true, dncAt: true } });
     if (!lead) notFound('Lead not found');
     await this.requireWorker(a, lead.ownerId);
     if (lead.archivedAt) conflict('lead_archived', 'This lead is archived');
+    const outgoing = (SALES_DNC_BLOCKED_KINDS as readonly string[]).includes(dto.kind);
+    if (outgoing && lead.dncAt) refuseDnc();
 
     const now = this.clock.now();
     const at = dto.at ? new Date(dto.at) : now;
@@ -141,6 +144,11 @@ export class ActivitiesService {
     const target_stage = deal ? stageFor(dto) : null;
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // M15.4: outgoing contact waits for (or sees) a do-not-contact request saved on the lead at the same moment.
+      if (outgoing) {
+        const dnc = await tx.$queryRaw<Array<{ dnc_at: Date | null }>>`SELECT dnc_at FROM sales_leads WHERE id = ${leadId}::uuid FOR SHARE`;
+        if (dnc[0]?.dnc_at) refuseDnc();
+      }
       // Lock the deal first: a stage change made at the same moment waits for us (or we see its result).
       const locked = deal ? await this.lockDeal(tx, deal.id) : null;
       const row = await tx.salesActivity.create({
@@ -215,4 +223,9 @@ export class ActivitiesService {
     await this.audit.record({ actorId: actor.id, action: 'sales.deal.moved', targetType: 'sales_deal', targetId: deal.number, details: { from: deal.stage, to, by: 'activity' }, ...client }, tx);
     return { stageChange: { from: deal.stage, to }, stageNotChanged: null };
   }
+}
+
+/** M15.4 (approved decision 1): no outgoing contact on a do-not-contact lead; replies and notes are still logged. */
+function refuseDnc(): never {
+  conflict('do_not_contact', 'This lead asked not to be contacted. Outgoing contact cannot be logged; a reply or a note can');
 }
