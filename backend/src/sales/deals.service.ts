@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  type CompleteSalesFollowUpData,
   type CreateSalesDealData,
   isOpenDealStage,
   type MoveSalesDealData,
@@ -15,6 +16,8 @@ import {
   type SalesDealResult,
   type SalesDealStage,
   type SalesDealView,
+  type SalesFollowUpListQuery,
+  type SalesFollowUpView,
   type SalesPipelineSummaryView,
   type SalesSettings,
   type UpdateSalesDealData,
@@ -29,6 +32,7 @@ import { OutboxService } from '../events/outbox.service';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModuleSettingsService } from '../settings/module-settings.service';
+import { ActivitiesService } from './activities.service';
 import { type SalesAccess, SalesAccessService } from './sales-access.service';
 import { badRequest, conflict, forbidden, notFound } from './sales-errors';
 import { person } from './sales-views';
@@ -84,6 +88,7 @@ export class DealsService {
     private readonly outbox: OutboxService,
     private readonly settings: ModuleSettingsService,
     private readonly clock: Clock,
+    private readonly activities: ActivitiesService,
   ) {}
 
   private today(): string {
@@ -334,6 +339,80 @@ export class DealsService {
     return this.detail(a, row.id);
   }
 
+
+  // ------------------------------------------------------------------------------------------------------- follow-ups
+
+  /**
+   * GET /sales/follow-ups (M15.3): an open deal's next step is its follow-up (plan section 20, "every open deal must have a
+   * next step with a date"). Due = its date is today, missed = the date has passed (Pakistan time). "mine": the caller's
+   * deals; "team": everyone the caller sees (sales.team or sales.all), so the sales manager sees the missed ones.
+   */
+  async followUps(actor: Actor, q: SalesFollowUpListQuery): Promise<SalesFollowUpView[]> {
+    const a = await this.access.of(actor);
+    if (q.scope === 'team' && !a.team && !a.all) forbidden('not_allowed', "Only the sales manager sees the team's follow-ups");
+    const today = dbDate(this.today());
+    const when: Prisma.DateTimeNullableFilter = q.status === 'due' ? { equals: today } : q.status === 'missed' ? { lt: today } : { lte: today };
+    const rows = await this.prisma.salesDeal.findMany({
+      where: {
+        AND: [
+          q.scope === 'team' ? this.dealWhere(a) : { ownerId: actor.id },
+          { stage: { in: [...SALES_OPEN_STAGES] }, archivedAt: null, nextStepDate: when },
+          ...(q.owner ? [{ owner: { empId: q.owner } }] : []),
+        ],
+      },
+      include: { company: { select: { name: true } }, lead: { select: { id: true, fullName: true } }, owner: { select: { empId: true, fullName: true } } },
+      orderBy: [{ nextStepDate: 'asc' }, { number: 'asc' }],
+    });
+    return rows.map((d) => ({
+      dealId: d.id,
+      dealNumber: d.number,
+      companyName: d.company.name,
+      leadId: d.lead.id,
+      leadName: d.lead.fullName,
+      owner: person(d.owner),
+      nextStep: d.nextStep ?? '',
+      nextStepDate: dayOf(d.nextStepDate!),
+      missed: d.nextStepDate!.getTime() < today.getTime(),
+      wonPending: d.wonStatus === 'pending',
+    }));
+  }
+
+  /**
+   * POST /sales/deals/:id/follow-up (M15.3): the follow-up is done. In one transaction: a follow_up activity (what was done),
+   * the next step and its date, and the lead's last contact. The deal keeps its stage and owner; the version read is checked.
+   */
+  async completeFollowUp(actor: Actor, idOrNumber: string, dto: CompleteSalesFollowUpData, client: RequestInfo): Promise<SalesDealDetailView> {
+    const a = await this.access.of(actor);
+    const row = await this.workable(a, idOrNumber);
+    this.requireNextStepDate(dto.nextStepDate);
+    const now = this.clock.now();
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.salesDeal.updateMany({
+        where: { id: row.id, version: dto.version, stage: { in: [...SALES_OPEN_STAGES] }, wonStatus: 'none' },
+        data: { nextStep: dto.nextStep, nextStepDate: dbDate(dto.nextStepDate), version: { increment: 1 }, updatedBy: actor.id },
+      });
+      if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
+      await tx.salesActivity.create({
+        data: {
+          leadId: row.leadId,
+          dealId: row.id,
+          actorId: actor.id,
+          kind: 'follow_up',
+          source: 'manual',
+          occurredAt: now,
+          summary: dto.summary?.trim() || `Done: ${row.nextStep ?? 'follow-up'}`,
+        },
+      });
+      await this.activities.touchLead(tx, row.leadId, 'follow_up', now);
+      await this.audit.record(
+        { actorId: actor.id, action: 'sales.deal.follow_up_done', targetType: 'sales_deal', targetId: row.number, details: { done: row.nextStep, next: dto.nextStep, nextDate: dto.nextStepDate }, ...client },
+        tx,
+      );
+    });
+    noteActivity({ target: row.number, description: `Completed a follow-up on ${row.number}` });
+    return this.detail(a, row.id);
+  }
+
   // ---------------------------------------------------------------------------------------------------------- helpers
 
   /** Deals the caller sees in full: the same rule as leads (own; reporting line with sales.team; all with sales.all). */
@@ -426,6 +505,7 @@ export class DealsService {
         stage: r.stage,
         nextStep: r.nextStep,
         nextStepDate: r.nextStepDate ? dayOf(r.nextStepDate) : null,
+        proposalUrl: r.proposalUrl,
         lostReason: r.lostReason,
         lostNote: r.lostNote,
         recontactAfter: r.recontactAfter ? dayOf(r.recontactAfter) : null,

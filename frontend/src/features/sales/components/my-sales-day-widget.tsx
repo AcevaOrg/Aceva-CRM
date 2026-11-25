@@ -13,16 +13,19 @@ import { FreshnessStamp } from "@/components/shared/chips";
 import { ProgressRing } from "@/components/shared/metrics";
 import { useLookup } from "@/hooks/use-directory";
 import { useSession } from "@/lib/auth/session";
-import { useMySalesDay } from "../hooks";
+import { useLiveFollowUps, useMySalesDay } from "../hooks";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal } from "../logic";
 
 export function MySalesDayWidget({ className }: { className?: string }) {
   const q = useMySalesDay();
+  const live = useLiveFollowUps();
   const me = useSession((st) => st.empId);
   const lookup = useLookup();
   if (q.isPending) return <Skeleton className="h-64 rounded-xl" />;
   if (q.isError || !q.data) return null;
-  const { summary: s, targets: t, followUpsDue, newReplies, apolloLastSyncAt } = q.data;
+  const { summary: s, targets: t, followUpsDue: demoFollowUps, newReplies, apolloLastSyncAt } = q.data;
+  // Live (m15): the follow-ups come from the server.
+  const followUpsDue = live.data ?? demoFollowUps;
   const missed = followUpsDue.filter((f) => f.missed).length;
   const mine = q.data.empId === me;
   const href = mine ? "/sales" : `/sales?person=${q.data.empId}`;

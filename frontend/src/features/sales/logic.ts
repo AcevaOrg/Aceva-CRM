@@ -5,7 +5,8 @@ import type { BadgeTone } from "@/components/ui/badge";
 import { monthKey } from "@/lib/dates";
 import type { Money } from "@/types";
 import type {
-  ActivityKind, Company, DailySalesSummary, DailyTargets, Deal, DealService, DealStage, DuplicateResult, EmailCheck, Lead, LeadSource, PipelineSummary, SalesWeights,
+  ActivityKind, Company, DailySalesSummary, DailyTargets, Deal, DealService, DealStage, DuplicateResult, EmailCheck, Lead, LeadSource, LoggedActivity, PipelineSummary,
+  SalesWeights, StageNotChangedReason,
 } from "./types";
 
 /** Exchange rate saved in Settings (mock). Every entry keeps its own rate in the real system. */
@@ -254,4 +255,38 @@ export function totalsByCurrency(values: Money[]): Money[] {
   const cents = new Map<Money["currency"], number>();
   for (const v of values) cents.set(v.currency, (cents.get(v.currency) ?? 0) + Math.round(Number(v.amount) * 100));
   return [...cents.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([currency, c]) => ({ currency, amount: (c / 100).toFixed(2) }));
+}
+
+/** A proposal link: a web address (http or https) with a real host, at most 500 characters. The server checks the same. */
+export function isWebLink(value: string): boolean {
+  const v = value.trim();
+  if (!v || v.length > 500) return false;
+  try {
+    const u = new URL(v);
+    return (u.protocol === "https:" || u.protocol === "http:") && u.hostname.includes(".");
+  } catch {
+    return false;
+  }
+}
+
+/** Why the deal's stage stayed, in plain words (never the server's code). */
+export const STAGE_NOT_CHANGED_TEXT: Record<StageNotChangedReason, string> = {
+  deal_closed: "The deal is already closed (Won or Lost), so its stage stays as it is.",
+  won_pending: "The deal is waiting for its Won confirmation, so its stage stays as it is.",
+  not_forward: "The deal is already at this stage or further on, so its stage stays as it is. Stages only move forward.",
+  needs_contacted: "The deal is still New. Log the first contact (a call, email or message) to move it to Contacted; a reply then moves it to Replied.",
+};
+
+/**
+ * The message after an activity is saved: it always says the activity was logged, says the deal moved only when it did,
+ * and otherwise why the stage stayed. "info" (not "success") when a stage move was expected and did not happen.
+ */
+export function activityLoggedMessage(
+  kind: ActivityKind,
+  result: Pick<LoggedActivity, "stageChange" | "stageNotChanged">,
+): { tone: "success" | "info"; title: string; description?: string } {
+  const title = `${ACTIVITY_LABEL[kind]} logged`;
+  if (result.stageChange) return { tone: "success", title, description: `The deal moved to ${STAGE_META[result.stageChange.to].label}.` };
+  if (result.stageNotChanged) return { tone: "info", title, description: `Stage not changed. ${STAGE_NOT_CHANGED_TEXT[result.stageNotChanged]}` };
+  return { tone: "success", title };
 }

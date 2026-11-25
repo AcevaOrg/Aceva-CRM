@@ -697,6 +697,46 @@ USD apart) until management decides the reporting currency and the exchange-rate
 
 **Audit actions:** `sales.deal.created`, `.updated`, `.moved`, `.won_requested`, `.won_confirmed`, `.won_rejected`.
 
+## Module 15, part 3: activities, follow-ups and proposal links
+
+Plan section 20. The timeline of a lead and its deals: who did what, when, and whether it was typed in by hand
+(`source: manual`) or came from a tool (`apollo`, `millionverifier`, `mailbox`: written by Module 16 only, once per tool
+id). The timeline is insert-only (a database trigger). An activity on a deal is always on that deal's own lead (a database
+trigger).
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/leads/:id/activities` | who sees the lead in full | The lead's timeline, newest first |
+| `GET /sales/deals/:id/activities` | who sees the deal in full | The deal's entries, and the lead's general entries (no deal) when the caller also sees the lead in full (a Won or Lost deal keeps its former owner after the lead moves), newest first |
+| `POST /sales/leads/:id/activities {kind, summary, at?, meetingAt?, proposalUrl?}` | the lead's owner, or the sales manager for their team (not the CEO / Owner, who only views) | A general entry. 400 for an `at` in the future; 409 for an archived lead |
+| `POST /sales/deals/:id/activities {…same}` | as above | An entry on the deal. Returns `{activity, stageChange, stageNotChanged}` |
+| `GET /sales/follow-ups?scope=mine\|team&status=due\|missed\|all&owner?` | `sales.own`; `team` needs `sales.team` or `sales.all` (403 otherwise) | Open deals whose next step is due today (`due`) or overdue (`missed`), Pakistan time |
+| `POST /sales/deals/:id/follow-up {summary?, nextStep, nextStepDate, version}` | owner or sales manager | The follow-up is done: a `follow_up` activity and the new next step, in one transaction. The stage and the owner do not change. 409 `stale_version`, `deal_closed`, `won_pending`; 400 `next_step_in_past` |
+
+**Kinds logged by hand:** `call`, `email_sent`, `reply`, `meeting`, `linkedin`, `whatsapp`, `fiverr` (Fiverr inquiries,
+no integration), `proposal`, `note`. `meetingAt` only on a meeting; `proposalUrl` only on a proposal (http or https, at
+most 500 characters; also a database CHECK). `follow_up` is written by the follow-up route only.
+
+**Stage moves (forward only):** a contact (`call`, `email_sent`, `linkedin`, `whatsapp`, `fiverr`) moves New to Contacted;
+a `reply` moves Contacted to Replied (on a New deal it is kept and the stage stays New, `needs_contacted`); a `meeting` with `meetingAt` moves to Meeting booked; a `proposal` with `proposalUrl` moves to
+Proposal sent and becomes the deal's `proposalUrl`. A deal is never moved backwards, and never when it is Won, Lost or
+waiting for Won confirmation. The activity is always kept; `stageNotChanged` says why the stage stayed (`not_forward`,
+`deal_closed`, `won_pending`, `needs_contacted`). The move checks the deal's version under a row lock, so it never overwrites a manual change
+made at the same moment. The screens say in plain words whether the deal moved, or why its stage stayed. A move is in the deal's history ("Moved by a logged activity") and audited as `sales.deal.moved`
+with `{by: "activity"}`.
+
+**Last contact:** every logged contact (not a note) updates the lead's `lastActivityAt`, never backwards. Archiving
+inactive leads comes with M15.5.
+
+**Daily reminder:** at 09:00 Pakistan time (job `sales.follow_ups.daily`), the owner of each open deal due that day gets
+one `sales_follow_up` notification (not a deal waiting for its Won confirmation, whose follow-up cannot be completed until it is decided) (dedupe key `sales_follow_up:<deal>:<day>`; running a day again sends nothing).
+
+**Module 4:** each successful POST is recorded as a Sales `create` ("Logged a call on DL-…", "Completed a follow-up on
+DL-…"). The tool actions (`email_sent`, `reply`, `bounce`, `call`, `email_check`) are left to Module 16. A refused request
+leaves no activity.
+
+**Audit actions:** `sales.deal.follow_up_done`, and `sales.deal.moved` for stage moves made by an activity.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

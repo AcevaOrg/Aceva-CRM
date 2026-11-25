@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SalesDealDetailView, SalesDuplicateCheckView, SalesLeadView } from "@aceva/contracts";
-import { pipelineSummary, totalsByCurrency } from "./logic";
-import { mapDeal, mapDuplicate, mapLead } from "./live-api";
+import { activityLoggedMessage, isWebLink, pipelineSummary, STAGE_NOT_CHANGED_TEXT, totalsByCurrency } from "./logic";
+import { mapActivity, mapDeal, mapDuplicate, mapFollowUp, mapLead, mapLoggedActivity } from "./live-api";
 
 const view: SalesLeadView = {
   restricted: false,
@@ -59,6 +59,7 @@ const deal: SalesDealDetailView = {
   stage: "negotiation",
   nextStep: "Sign",
   nextStepDate: "2026-12-10",
+  proposalUrl: null,
   lostReason: null,
   lostNote: null,
   recontactAfter: null,
@@ -118,5 +119,56 @@ describe("M15.2 live totals: per original currency, never converted", () => {
       { amount: "1200.85", currency: "USD" },
     ]);
     expect(totalsByCurrency([])).toEqual([]);
+  });
+});
+
+describe("M15.3 live activities and follow-ups", () => {
+  it("keeps who did it, when and the source; a tool entry with no person shows no one", () => {
+    const base = { id: "a1", leadId: "l1", dealId: "d1", dealNumber: "DL-2026-0007", kind: "call" as const, source: "manual" as const, at: "2026-12-08T05:00:00.000Z", summary: "First call", meetingAt: null, proposalUrl: null, actor: { empId: "ACV-0009", name: "Hira Baig" }, externalId: null, createdAt: "2026-12-08T05:00:01.000Z" };
+    expect(mapActivity(base)).toEqual({ id: "a1", leadId: "l1", dealId: "d1", empId: "ACV-0009", kind: "call", at: "2026-12-08T05:00:00.000Z", source: "manual", externalId: undefined, summary: "First call" });
+    expect(mapActivity({ ...base, kind: "proposal", proposalUrl: "https://docs.example.com/p" }).summary).toBe("First call (https://docs.example.com/p)");
+    expect(mapActivity({ ...base, source: "apollo", actor: null, externalId: "ap-1" })).toMatchObject({ source: "apollo", empId: "", externalId: "ap-1" });
+  });
+
+  it("maps a follow-up with its missed flag and owner", () => {
+    expect(mapFollowUp({ dealId: "d1", dealNumber: "DL-2026-0007", companyName: "Acme", leadId: "l1", leadName: "Ayesha", owner: { empId: "ACV-0009", name: "Hira Baig" }, nextStep: "Call", nextStepDate: "2026-12-06", missed: true, wonPending: false }))
+      .toEqual({ dealId: "d1", dealNumber: "DL-2026-0007", companyName: "Acme", leadName: "Ayesha", nextStep: "Call", nextStepDate: "2026-12-06", missed: true, ownerEmpId: "ACV-0009" });
+  });
+
+  it("accepts only web links for proposals (the server checks the same)", () => {
+    expect(isWebLink("https://docs.example.com/proposal")).toBe(true);
+    expect(isWebLink("http://example.org/p.pdf")).toBe(true);
+    for (const bad of ["", "ftp://example.com/p", "javascript:alert(1)", "docs", "https://localhost/p", `https://x.com/${"a".repeat(500)}`]) expect(isWebLink(bad), bad).toBe(false);
+  });
+});
+
+describe("M15.3 after logging an activity: whether the deal moved, and why not", () => {
+  const entry = { id: "a1", leadId: "l1", dealId: "d1", dealNumber: "DL-2026-0007", kind: "reply" as const, source: "manual" as const, at: "2026-12-08T05:00:00.000Z", summary: "They answered", meetingAt: null, proposalUrl: null, actor: { empId: "ACV-0009", name: "Hira Baig" }, externalId: null, createdAt: "2026-12-08T05:00:01.000Z" };
+
+  it("keeps the server's stage result with the saved entry", () => {
+    expect(mapLoggedActivity({ activity: entry, stageChange: null, stageNotChanged: "needs_contacted" })).toMatchObject({ activity: { id: "a1", kind: "reply" }, stageChange: null, stageNotChanged: "needs_contacted" });
+  });
+
+  it("says the deal moved only when it did", () => {
+    expect(activityLoggedMessage("reply", { stageChange: { from: "contacted", to: "replied" }, stageNotChanged: null })).toEqual({ tone: "success", title: "Reply received logged", description: "The deal moved to Replied." });
+    expect(activityLoggedMessage("note", { stageChange: null, stageNotChanged: null })).toEqual({ tone: "success", title: "Note logged" });
+  });
+
+  it("explains each reason the stage stayed, in plain words, without the server's codes or a claim that it moved", () => {
+    const expected = {
+      deal_closed: /already closed/,
+      won_pending: /waiting for its Won confirmation/,
+      not_forward: /already at this stage or further on/,
+      needs_contacted: /still New.*first contact/,
+    } as const;
+    for (const reason of Object.keys(expected) as (keyof typeof expected)[]) {
+      const m = activityLoggedMessage("call", { stageChange: null, stageNotChanged: reason });
+      expect(m.tone, reason).toBe("info");
+      expect(m.title).toBe("Call logged"); // the activity is saved
+      expect(m.description).toMatch(/^Stage not changed\. /);
+      expect(m.description).toMatch(expected[reason]);
+      expect(m.description).not.toMatch(/moved to|deal_closed|won_pending|not_forward|needs_contacted|_/);
+    }
+    expect(Object.keys(STAGE_NOT_CHANGED_TEXT).sort()).toEqual(["deal_closed", "needs_contacted", "not_forward", "won_pending"]);
   });
 });

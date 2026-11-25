@@ -463,6 +463,8 @@ export interface SalesDealView {
   stage: SalesDealStage;
   nextStep: string | null;
   nextStepDate: string | null;
+  /** M15.3: the proposal's link (link only; no files). */
+  proposalUrl: string | null;
   lostReason: string | null;
   lostNote: string | null;
   recontactAfter: string | null;
@@ -501,4 +503,137 @@ export type SalesDealResult = SalesDealDetailView | SalesDealStubView;
 export interface SalesPipelineSummaryView {
   stages: Array<{ stage: SalesDealStage; count: number; totals: Array<{ currency: Currency; value: string }> }>;
   pendingWonCount: number;
+}
+
+// =============================================================================================================== M15.3
+// Activities, follow-ups and proposal links (plan section 20): every lead and deal shows every contact in time order (who,
+// when, typed in by hand or from a connected tool); every open deal's next step is its follow-up; "My follow-ups today";
+// a missed follow-up turns red and the sales manager sees it. Module 16 (Apollo, MillionVerifier, mailboxes) adds
+// tool-made activities later; Module 15 records manual ones only.
+
+/** What a salesperson logs by hand (plan section 20 "Activity timeline"; Fiverr inquiries by decision of the CTO). */
+export const SALES_MANUAL_ACTIVITY_KINDS = ['call', 'email_sent', 'reply', 'meeting', 'linkedin', 'whatsapp', 'fiverr', 'proposal', 'note'] as const;
+export const salesManualActivityKindSchema = z.enum(SALES_MANUAL_ACTIVITY_KINDS);
+export type SalesManualActivityKind = z.infer<typeof salesManualActivityKindSchema>;
+/** Every kind on the timeline: the manual ones and a completed follow-up (written by POST /sales/deals/:id/follow-up). */
+export const SALES_ACTIVITY_KINDS = [...SALES_MANUAL_ACTIVITY_KINDS, 'follow_up'] as const;
+export type SalesActivityKind = (typeof SALES_ACTIVITY_KINDS)[number];
+
+/** Where an activity came from: typed in by hand, or (Module 16, later) a connected tool. Shown on every entry. */
+export const SALES_ACTIVITY_SOURCES = ['manual', 'apollo', 'millionverifier', 'mailbox'] as const;
+export type SalesActivitySource = (typeof SALES_ACTIVITY_SOURCES)[number];
+
+/** A logged contact moves an open deal FORWARD to this stage (plan section 20, "The deal moves here when"). */
+export const SALES_ACTIVITY_STAGE: Partial<Record<SalesActivityKind, SalesDealStage>> = {
+  call: 'contacted',
+  email_sent: 'contacted',
+  linkedin: 'contacted',
+  whatsapp: 'contacted',
+  fiverr: 'contacted',
+  reply: 'replied',
+};
+/**
+ * The only stages an activity may move a deal FROM, where the plan's order requires it (approved M15.3 decision 2): a
+ * reply moves Contacted to Replied, never New straight to Replied (the first contact is logged first).
+ */
+export const SALES_ACTIVITY_MOVES_FROM: Partial<Record<SalesActivityKind, readonly SalesDealStage[]>> = {
+  reply: ['contacted'],
+};
+/** Why an activity left the stage alone (the activity is kept either way). */
+export const SALES_STAGE_NOT_CHANGED_REASONS = ['deal_closed', 'won_pending', 'not_forward', 'needs_contacted'] as const;
+export type SalesStageNotChangedReason = (typeof SALES_STAGE_NOT_CHANGED_REASONS)[number];
+/** A meeting moves the deal to Meeting booked only when its date is given; a proposal to Proposal sent only when linked. */
+
+const webLink = z
+  .string()
+  .trim()
+  .max(500)
+  .refine((v) => {
+    try {
+      const u = new URL(v);
+      return (u.protocol === 'https:' || u.protocol === 'http:') && u.hostname.includes('.');
+    } catch {
+      return false;
+    }
+  }, 'Enter the link as a web address starting with https://');
+
+/**
+ * POST /sales/leads/:id/activities and POST /sales/deals/:id/activities: a contact logged by hand. `at` is when it happened
+ * (default now; never in the future). meetingAt only for a meeting, proposalUrl only for a proposal.
+ */
+export const logSalesActivitySchema = z
+  .object({
+    kind: salesManualActivityKindSchema,
+    summary: z.string().trim().min(2, 'Say what happened').max(1000),
+    at: z.iso.datetime({ offset: true }).optional(),
+    meetingAt: z.iso.datetime({ offset: true }).optional(),
+    proposalUrl: webLink.optional(),
+  })
+  .refine((v) => v.meetingAt === undefined || v.kind === 'meeting', { message: 'A meeting date belongs to a meeting', path: ['meetingAt'] })
+  .refine((v) => v.proposalUrl === undefined || v.kind === 'proposal', { message: 'A proposal link belongs to a proposal', path: ['proposalUrl'] });
+export type LogSalesActivityRequest = z.input<typeof logSalesActivitySchema>;
+export type LogSalesActivityData = z.output<typeof logSalesActivitySchema>;
+
+/** POST /sales/deals/:id/follow-up: the follow-up is done (written as an activity) and the next one is set. */
+export const completeSalesFollowUpSchema = z.object({
+  summary: z.string().trim().max(1000).optional(),
+  nextStep: z.string().trim().min(2, 'Describe the next step').max(300),
+  nextStepDate: daySchema,
+  version: versionSchema,
+});
+export type CompleteSalesFollowUpRequest = z.input<typeof completeSalesFollowUpSchema>;
+export type CompleteSalesFollowUpData = z.output<typeof completeSalesFollowUpSchema>;
+
+/** GET /sales/follow-ups: mine, or the team's (sales.team); due today, missed (before today), or both. */
+export const salesFollowUpListQuerySchema = z.object({
+  scope: z.enum(['mine', 'team']).default('mine'),
+  status: z.enum(['due', 'missed', 'all']).default('all'),
+  owner: empIdSchema.optional(),
+});
+export type SalesFollowUpListQuery = z.infer<typeof salesFollowUpListQuerySchema>;
+
+export interface SalesActivityView {
+  id: string;
+  leadId: string;
+  dealId: string | null;
+  dealNumber: string | null;
+  kind: SalesActivityKind;
+  source: SalesActivitySource;
+  /** When it happened. */
+  at: string;
+  summary: string;
+  meetingAt: string | null;
+  proposalUrl: string | null;
+  /** Who did it (null only for a tool activity not linked to anyone, Module 16). */
+  actor: SalesPersonRef | null;
+  /** The tool's own id (Module 16), so a sync never counts the same item twice. Null for manual entries. */
+  externalId: string | null;
+  createdAt: string;
+}
+
+/** The answer to logging an activity: the entry, and what it did to the deal's stage. */
+export interface SalesActivityResult {
+  activity: SalesActivityView;
+  /** The deal moved forward because of this activity. */
+  stageChange: { from: SalesDealStage; to: SalesDealStage } | null;
+  /**
+   * Why a stage change this activity would bring did not happen (the activity is kept either way): the deal is Won or
+   * Lost, waits for Won confirmation, is already at or past that stage, or (a reply on a New deal) was not contacted yet.
+   */
+  stageNotChanged: SalesStageNotChangedReason | null;
+}
+
+export interface SalesFollowUpView {
+  dealId: string;
+  dealNumber: string;
+  companyName: string;
+  leadId: string;
+  leadName: string;
+  owner: SalesPersonRef;
+  nextStep: string;
+  nextStepDate: string;
+  /** The date has passed (Pakistan time): shown red, and to the sales manager. */
+  missed: boolean;
+  /** The deal is waiting for its Won confirmation. */
+  wonPending: boolean;
 }

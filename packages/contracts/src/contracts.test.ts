@@ -724,3 +724,41 @@ describe('Module 15.2: deals and pipeline contracts', () => {
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], lostReasons: ['Price'], recontactMonths: 0 }).success).toBe(false);
   });
 });
+
+describe('Module 15.3: activities and follow-ups contracts', () => {
+  it('the manual kinds of the plan (and Fiverr), a follow-up kind, and the sources; contacts move a deal forward', async () => {
+    const { SALES_MANUAL_ACTIVITY_KINDS, SALES_ACTIVITY_KINDS, SALES_ACTIVITY_SOURCES, SALES_ACTIVITY_STAGE } = await import('./sales');
+    expect([...SALES_MANUAL_ACTIVITY_KINDS]).toEqual(['call', 'email_sent', 'reply', 'meeting', 'linkedin', 'whatsapp', 'fiverr', 'proposal', 'note']);
+    expect(SALES_ACTIVITY_KINDS).toContain('follow_up');
+    expect([...SALES_ACTIVITY_SOURCES]).toEqual(['manual', 'apollo', 'millionverifier', 'mailbox']);
+    expect(SALES_ACTIVITY_STAGE).toEqual({ call: 'contacted', email_sent: 'contacted', linkedin: 'contacted', whatsapp: 'contacted', fiverr: 'contacted', reply: 'replied' });
+  });
+
+  it('a reply moves a deal only from Contacted (never New straight to Replied); the reasons a stage stays are named', async () => {
+    const { SALES_ACTIVITY_MOVES_FROM, SALES_STAGE_NOT_CHANGED_REASONS } = await import('./sales');
+    expect(SALES_ACTIVITY_MOVES_FROM).toEqual({ reply: ['contacted'] });
+    expect([...SALES_STAGE_NOT_CHANGED_REASONS]).toEqual(['deal_closed', 'won_pending', 'not_forward', 'needs_contacted']);
+  });
+
+  it('a logged activity: a manual kind and a summary; a meeting date only on a meeting; a web link only on a proposal', async () => {
+    const { logSalesActivitySchema } = await import('./sales');
+    expect(logSalesActivitySchema.safeParse({ kind: 'call', summary: 'Called' }).success).toBe(true);
+    expect(logSalesActivitySchema.safeParse({ kind: 'follow_up', summary: 'Done' }).success).toBe(false); // written by the follow-up route only
+    expect(logSalesActivitySchema.safeParse({ kind: 'bounce', summary: 'x' }).success).toBe(false); // Module 16
+    expect(logSalesActivitySchema.safeParse({ kind: 'call', summary: ' ' }).success).toBe(false);
+    expect(logSalesActivitySchema.safeParse({ kind: 'meeting', summary: 'Booked', meetingAt: '2026-12-10T10:00:00+05:00' }).success).toBe(true);
+    expect(logSalesActivitySchema.safeParse({ kind: 'call', summary: 'x x', meetingAt: '2026-12-10T10:00:00Z' }).success).toBe(false);
+    expect(logSalesActivitySchema.safeParse({ kind: 'proposal', summary: 'Sent', proposalUrl: 'https://docs.example.com/p' }).success).toBe(true);
+    expect(logSalesActivitySchema.safeParse({ kind: 'proposal', summary: 'Sent', proposalUrl: 'ftp://docs.example.com/p' }).success).toBe(false);
+    expect(logSalesActivitySchema.safeParse({ kind: 'note', summary: 'x x', proposalUrl: 'https://docs.example.com/p' }).success).toBe(false);
+    expect(logSalesActivitySchema.safeParse({ kind: 'call', summary: 'x x', at: 'yesterday' }).success).toBe(false);
+  });
+
+  it('completing a follow-up names the next step, its date and the version; the list query has safe defaults', async () => {
+    const { completeSalesFollowUpSchema, salesFollowUpListQuerySchema } = await import('./sales');
+    expect(completeSalesFollowUpSchema.safeParse({ nextStep: 'Send scope', nextStepDate: '2026-12-10', version: 3 }).success).toBe(true);
+    expect(completeSalesFollowUpSchema.safeParse({ nextStep: 'Send scope', nextStepDate: '2026-12-10' }).success).toBe(false);
+    expect(salesFollowUpListQuerySchema.parse({})).toEqual({ scope: 'mine', status: 'all' });
+    expect(salesFollowUpListQuerySchema.safeParse({ scope: 'everyone' }).success).toBe(false);
+  });
+});

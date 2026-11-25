@@ -341,6 +341,10 @@ export interface LogActivityInput {
   kind: ActivityKind;
   summary: string;
   at?: string;
+  /** A meeting's date and time (it moves the deal to Meeting booked). */
+  meetingAt?: string;
+  /** A proposal's link (it moves the deal to Proposal sent). Links only, no files. */
+  proposalUrl?: string;
 }
 
 export interface LeadDetail {
@@ -356,4 +360,14 @@ export interface DealDetail {
   company: Company;
   activities: SalesActivity[];
   commission?: CommissionLine;
+}
+
+/** Why a logged activity left the deal's stage alone (the activity is saved either way). */
+export type StageNotChangedReason = "deal_closed" | "won_pending" | "not_forward" | "needs_contacted";
+
+/** A logged activity and what it did to the deal's stage (M15.3). */
+export interface LoggedActivity {
+  activity: SalesActivity;
+  stageChange: { from: DealStage; to: DealStage } | null;
+  stageNotChanged: StageNotChangedReason | null;
 }

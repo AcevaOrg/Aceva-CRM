@@ -23,7 +23,7 @@ import {
   parseCsv, pipelineSummary, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, targetsMet, toUsd,
 } from "./logic";
 import { isLive } from "@/lib/api/http";
-import { type DealsApi, type LeadsApi, liveDealsApi, liveLeadsApi } from "./live-api";
+import { type ActivitiesApi, type DealsApi, type LeadsApi, liveActivitiesApi, liveDealsApi, liveLeadsApi } from "./live-api";
 import type {
   CommissionLine, CommissionRule, Company, DailySalesSummary, DailyTargets, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, EmailCheck, FollowUp,
   ImportRow, Lead, LeadDetail, LeadSource, LeadStub, LogActivityInput, ManualDailyLog, MonthlyTargets, MySalesDay, NewDealInput, NewLeadInput,
@@ -410,7 +410,7 @@ export const leadsApi: LeadsApi = isLive("m15") ? liveLeadsApi : mockLeadsApi;
 
 /* ---------------- Activities ---------------- */
 
-export const activitiesApi = {
+const mockActivitiesApi = {
   /** POST /leads/:id/activities */
   log: (input: LogActivityInput) =>
     mock(() => {
@@ -421,9 +421,13 @@ export const activitiesApi = {
       const at = input.at ?? new Date().toISOString();
       const a = addActivity({ leadId: l.id, dealId: input.dealId, empId: v.employee.empId, kind: input.kind, source: "manual", at, summary: input.summary });
       if (input.kind === "meeting" && isoDay(at) === today()) summaryFor(l.ownerEmpId).meetings += 1;
-      return a;
+      // The demo data does not move stages from activities (the live server does).
+      return { activity: a, stageChange: null, stageNotChanged: null };
     }),
 };
+
+/** Activities: the real API when Module 15 is live, the in-browser demo data otherwise. */
+export const activitiesApi: ActivitiesApi = isLive("m15") ? liveActivitiesApi : mockActivitiesApi;
 
 /* ---------------- Deals ---------------- */
 

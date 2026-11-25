@@ -7,7 +7,8 @@ import { screenLoadsFromServer } from './live-screen';
  * screen (with the duplicate check as they type), another salesperson is stopped by the duplicate check and sees only
  * that the lead exists and who owns it, and the Director (sales manager) moves the lead with a reason. Module 15.2: a deal
  * made and moved on the screen, Won asked for by the salesperson and confirmed by the Director (Billing makes one draft
- * invoice), and Lost with a reason from the settings.
+ * invoice), and Lost with a reason from the settings. Module 15.3: a logged call moves a deal forward, a proposal link, and
+ * a follow-up completed from My sales day.
  */
 const HIRA = 'ACV-0009';
 const KAMRAN = 'ACV-0012';
@@ -228,5 +229,85 @@ test('Lost: the reason comes from the settings, and the lead may be contacted ag
   const lost = await (await hira.get(`/sales/deals/${lostId}`)).json();
   expect(lost).toMatchObject({ stage: 'lost', lostReason: 'No reply' });
   expect(lost.recontactAfter).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  await context.close();
+});
+
+// --------------------------------------------------------------------------------- M15.3: activities and follow-ups
+
+const today = () => new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10); // Pakistan day
+let actDeal = '';
+
+test('logging a call on the deal page moves the deal forward and shows on the timeline as Manual', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const hira = await apiAs(playwright, HIRA);
+  const lead = await hira.post('/sales/leads', { fullName: 'Sara Ali', source: 'referral', email: `sara.${run}@tailspin-e2e.test`, company: { name: 'Tailspin E2E', website: `tailspin-${run}.test` } });
+  const leadId3 = (await lead.json()).id;
+  const close = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const made = await hira.post('/sales/deals', { leadId: leadId3, service: 'ai_automation', value: '3000.00', currency: 'USD', expectedClose: close, nextStep: 'Call to qualify', nextStepDate: today() });
+  expect(made.status(), await made.text()).toBe(201);
+  actDeal = (await made.json()).id;
+
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, `/sales/deals/${actDeal}`, new RegExp(`/api/v1/sales/deals/${actDeal}$`));
+  await page.getByRole('button', { name: 'Log activity' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('#la-kind').selectOption('call');
+  await dialog.locator('#la-summary').fill('Qualification call, budget confirmed');
+  const posted = page.waitForResponse((r) => r.url().endsWith(`/api/v1/sales/deals/${actDeal}/activities`) && r.request().method() === 'POST', { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Log activity' }).click();
+  const res = await posted;
+  expect(res.status(), await res.text()).toBe(201);
+  expect(await res.json()).toMatchObject({ activity: { kind: 'call', source: 'manual', actor: { empId: HIRA } }, stageChange: { from: 'new', to: 'contacted' } });
+  await expect(page.getByText('The deal moved to Contacted.')).toBeVisible(); // the message says the deal moved
+  await expect(page.getByText('Qualification call, budget confirmed')).toBeVisible();
+  const deal = await (await hira.get(`/sales/deals/${actDeal}`)).json();
+  expect(deal.stage).toBe('contacted');
+  const timeline = await (await hira.get(`/sales/deals/${actDeal}/activities`)).json();
+  expect(timeline[0]).toMatchObject({ kind: 'call', source: 'manual', summary: 'Qualification call, budget confirmed' });
+  await context.close();
+});
+
+test('a proposal is a checked link only: a bad link cannot be sent; a good one is shown and moves the deal to Proposal sent', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, `/sales/deals/${actDeal}`, new RegExp(`/api/v1/sales/deals/${actDeal}$`));
+  const input = page.getByLabel('Proposal link');
+  await input.fill('ftp://files.example.com/proposal.pdf');
+  await expect(page.getByRole('button', { name: 'Link' })).toBeDisabled();
+  await input.fill(`https://docs.example.com/proposal-${run}`);
+  const linked = page.waitForResponse((r) => r.url().endsWith(`/api/v1/sales/deals/${actDeal}/activities`) && r.request().method() === 'POST', { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Link' }).click();
+  expect((await linked).status()).toBe(201);
+  await expect(page.getByRole('link', { name: new RegExp(`proposal-${run}`) })).toBeVisible();
+  const hira = await apiAs(playwright, HIRA);
+  expect(await (await hira.get(`/sales/deals/${actDeal}`)).json()).toMatchObject({ stage: 'proposal_sent', proposalUrl: `https://docs.example.com/proposal-${run}` });
+  await context.close();
+});
+
+test('My sales day lists today’s follow-up from the server; marking it done records it and sets the next one', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, '/sales', /\/api\/v1\/sales\/follow-ups$/);
+  const row = page.locator('li', { hasText: 'Tailspin E2E' });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Done' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.locator('#fu-summary').fill('Called, they want the revised scope');
+  await dialog.locator('#fu-next').fill('Send the revised scope');
+  const later = new Date(Date.now() + 5 * 3_600_000 + 3 * 86_400_000).toISOString().slice(0, 10);
+  await dialog.locator('#fu-date').fill(later);
+  const done = page.waitForResponse((r) => r.url().endsWith(`/api/v1/sales/deals/${actDeal}/follow-up`), { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  expect((await done).status()).toBe(200);
+  const hira = await apiAs(playwright, HIRA);
+  const deal = await (await hira.get(`/sales/deals/${actDeal}`)).json();
+  expect(deal).toMatchObject({ nextStep: 'Send the revised scope', nextStepDate: later, stage: 'proposal_sent', owner: { empId: HIRA } });
+  const timeline = await (await hira.get(`/sales/deals/${actDeal}/activities`)).json();
+  expect(timeline.some((a: { kind: string; summary: string }) => a.kind === 'follow_up' && a.summary === 'Called, they want the revised scope')).toBe(true);
+  // the sales manager sees the team's follow-ups; another salesperson cannot ask for them
+  const dir = await apiAs(playwright, DIRECTOR);
+  expect((await dir.get('/sales/follow-ups?scope=team')).status()).toBe(200);
+  const kamran = await apiAs(playwright, KAMRAN);
+  expect((await kamran.get('/sales/follow-ups?scope=team')).status()).toBe(403);
   await context.close();
 });

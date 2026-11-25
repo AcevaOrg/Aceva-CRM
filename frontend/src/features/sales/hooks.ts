@@ -4,6 +4,7 @@ import { http, isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
 import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
+import { liveFollowUps } from "./live-api";
 import type { DailyTargets, DealStage, ImportRow, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
@@ -238,4 +239,14 @@ export function useLostReasons() {
     queryFn: async () => (isLive("m15") ? (await http.get<{ value: { lostReasons: string[]; recontactMonths: number | null } }>("/settings/modules/sales")).value : { lostReasons: LOST_REASONS, recontactMonths: RECONTACT_MONTHS }),
     staleTime: 60_000,
   });
+}
+
+/**
+ * Live mode (m15): the follow-ups due today and missed, from the server (mine, or one team member's for the sales manager).
+ * Mock mode: undefined, and the screens keep the demo "sales day".
+ */
+export function useLiveFollowUps(ownerEmpId?: string) {
+  const viewer = useSession((s) => s.empId);
+  const own = !ownerEmpId || ownerEmpId === viewer;
+  return useQuery({ queryKey: ["sales", "follow-ups", viewer, own ? null : ownerEmpId], queryFn: () => liveFollowUps(own ? undefined : ownerEmpId), enabled: !!viewer && isLive("m15") });
 }

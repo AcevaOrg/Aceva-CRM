@@ -1,7 +1,10 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
+  completeSalesFollowUpSchema,
   createSalesCompanySchema,
+  logSalesActivitySchema,
+  salesFollowUpListQuerySchema,
   createSalesDealSchema,
   moveSalesDealSchema,
   rejectSalesWonSchema,
@@ -19,6 +22,7 @@ import {
 import type { Actor } from '../access/access.types';
 import { ClientInfo, CurrentActor, RequirePermission, type RequestInfo } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
+import { ActivitiesService } from './activities.service';
 import { CompaniesService } from './companies.service';
 import { DealsService } from './deals.service';
 import { LeadsService } from './leads.service';
@@ -32,6 +36,9 @@ class DuplicateCheckDto extends createZodDto(salesDuplicateCheckSchema) {}
 class CompanyListQueryDto extends createZodDto(salesCompanyListQuerySchema) {}
 class CreateCompanyDto extends createZodDto(createSalesCompanySchema) {}
 class UpdateCompanyDto extends createZodDto(updateSalesCompanySchema) {}
+class LogActivityDto extends createZodDto(logSalesActivitySchema) {}
+class CompleteFollowUpDto extends createZodDto(completeSalesFollowUpSchema) {}
+class FollowUpListQueryDto extends createZodDto(salesFollowUpListQuerySchema) {}
 
 /**
  * Module 15.1 leads (plan section 20). Every route needs sales.own; what each person sees and changes inside is decided
@@ -41,7 +48,24 @@ class UpdateCompanyDto extends createZodDto(updateSalesCompanySchema) {}
 @ApiTags('sales')
 @Controller('sales/leads')
 export class SalesLeadsController {
-  constructor(private readonly leads: LeadsService) {}
+  constructor(
+    private readonly leads: LeadsService,
+    private readonly activities: ActivitiesService,
+  ) {}
+
+  @Get(':id/activities')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: "The lead's timeline (its deals' entries too), newest first. Only for whoever sees the lead in full" })
+  timeline(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.activities.forLead(actor, id);
+  }
+
+  @Post(':id/activities')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Log a contact by hand on the lead (the owner, or the sales manager for their team)' })
+  logActivity(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: LogActivityDto, @ClientInfo() client: RequestInfo) {
+    return this.activities.log(actor, { leadId: id }, body, client);
+  }
 
   @Get()
   @RequirePermission(SALES_OWN)
@@ -137,7 +161,32 @@ class RejectWonDto extends createZodDto(rejectSalesWonSchema) {}
 @ApiTags('sales')
 @Controller('sales/deals')
 export class SalesDealsController {
-  constructor(private readonly deals: DealsService) {}
+  constructor(
+    private readonly deals: DealsService,
+    private readonly activities: ActivitiesService,
+  ) {}
+
+  @Get(':id/activities')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: "The deal's timeline (and its lead's entries about no deal), newest first" })
+  timeline(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string) {
+    return this.activities.forDeal(actor, id);
+  }
+
+  @Post(':id/activities')
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Log a contact on the deal; it moves the deal forward only (never a Won, Lost or pending-Won deal)' })
+  logActivity(@CurrentActor() actor: Actor, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: LogActivityDto, @ClientInfo() client: RequestInfo) {
+    return this.activities.log(actor, { dealId: id }, body, client);
+  }
+
+  @Post(':id/follow-up')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'The follow-up is done (a follow_up activity) and the next step is set. Name the version you read' })
+  completeFollowUp(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: CompleteFollowUpDto, @ClientInfo() client: RequestInfo) {
+    return this.deals.completeFollowUp(actor, id, body, client);
+  }
 
   @Get()
   @RequirePermission(SALES_OWN)
@@ -204,5 +253,19 @@ export class SalesDealsController {
   @ApiOperation({ summary: 'The sales manager sends a Won request back with a reason; the deal stays open' })
   rejectWon(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: RejectWonDto, @ClientInfo() client: RequestInfo) {
     return this.deals.rejectWon(actor, id, body, client);
+  }
+}
+
+/** M15.3: an open deal's next step is its follow-up. Due today, or missed (its date has passed, Pakistan time). */
+@ApiTags('sales')
+@Controller('sales/follow-ups')
+export class SalesFollowUpsController {
+  constructor(private readonly deals: DealsService) {}
+
+  @Get()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: "Follow-ups: ?scope=mine|team (team: the sales manager's team) &status=due|missed|all &owner" })
+  list(@CurrentActor() actor: Actor, @Query() q: FollowUpListQueryDto) {
+    return this.deals.followUps(actor, q);
   }
 }

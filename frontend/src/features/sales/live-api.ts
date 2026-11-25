@@ -3,12 +3,13 @@
  * mock in api.ts, so the screens keep working. The server decides everything: who sees a lead in full (own; the team for
  * the sales manager; all), the duplicate check (email; the company's website domain) and who may change or move a lead.
  *
- * M15.1 makes leads and companies live, M15.2 deals and the pipeline. Activities, follow-ups, the import, do-not-contact
- * and email checks arrive with the later parts of Module 15 (and Module 16 for email checks): in live mode those calls say
- * so instead of using demo data.
+ * M15.1 makes leads and companies live, M15.2 deals and the pipeline, M15.3 activities, follow-ups and proposal links. The
+ * import, do-not-contact and email checks arrive with the later parts of Module 15 (and Module 16 for email checks): in live
+ * mode those calls say so instead of using demo data.
  */
 import type {
-  CreateSalesDealRequest, CreateSalesLeadRequest, MoveSalesDealRequest, Page, SalesCompanyView, SalesDealDetailView, SalesDealHistoryView, SalesDealResult,
+  CreateSalesDealRequest, CreateSalesLeadRequest, LogSalesActivityRequest, MoveSalesDealRequest, Page, SalesActivityResult, SalesActivityView, SalesCompanyView,
+  SalesDealDetailView, SalesDealHistoryView, SalesDealResult, SalesFollowUpView,
   SalesDealView, SalesDuplicateCheckView, SalesLeadResult, SalesLeadView, SalesPipelineSummaryView, UpdateSalesLeadRequest,
 } from "@aceva/contracts";
 import { SALES_OPEN_STAGES } from "@aceva/contracts";
@@ -18,8 +19,9 @@ import { isoDay, monthKey } from "@/lib/dates";
 import type { DealRow, LeadRow, MoveResult } from "./api";
 import { totalsByCurrency } from "./logic";
 import type {
-  Company, Deal, DealDetail, DealStage, DuplicateResult, Handover, ImportRow, Lead, LeadDetail, LeadStub, NewDealInput, NewLeadInput, PipelineSummary, StageChange,
-  VerifyPreview, VerifyResult,
+  Company, Deal, DealDetail, DealStage, DuplicateResult, FollowUp, Handover, ImportRow, Lead, LeadDetail, LeadStub, LogActivityInput, LoggedActivity, NewDealInput,
+  NewLeadInput,
+  PipelineSummary, SalesActivity, StageChange, VerifyPreview, VerifyResult,
 } from "./types";
 
 const opt = (v: string | null | undefined) => v ?? undefined;
@@ -112,9 +114,8 @@ export const liveLeadsApi: LeadsApi = {
   async get(id: string): Promise<LeadDetail | LeadStub> {
     const v = await http.get<SalesLeadResult>(`/sales/leads/${id}`);
     if (v.restricted) return { id: v.id, name: v.fullName, companyName: v.companyName ?? "—", ownerEmpId: v.owner.empId, restricted: true };
-    // Activities arrive with M15.3.
-    const deals = await allDeals({ leadId: v.id });
-    return { lead: mapLead(v), company: v.company ? mapCompany(v.company) : NO_COMPANY, activities: [], deals: deals.map(mapDeal) };
+    const [deals, activities] = await Promise.all([allDeals({ leadId: v.id }), http.get<SalesActivityView[]>(`/sales/leads/${v.id}/activities`)]);
+    return { lead: mapLead(v), company: v.company ? mapCompany(v.company) : NO_COMPANY, activities: activities.map(mapActivity), deals: deals.map(mapDeal) };
   },
 
   /** POST /sales/leads/check-duplicate */
@@ -219,6 +220,7 @@ export function mapDeal(v: SalesDealView | SalesDealDetailView): Deal {
     nextStep: opt(v.nextStep),
     nextStepDate: opt(v.nextStepDate),
     ownerEmpId: v.owner.empId,
+    proposalUrl: opt(v.proposalUrl),
     lostReason: opt(v.lostReason),
     recontactAfter: opt(v.recontactAfter),
     wonStatus: v.wonStatus === "none" ? undefined : v.wonStatus,
@@ -264,16 +266,16 @@ export const liveDealsApi: DealsApi = {
     return (await allDeals()).map(toDealRow);
   },
 
-  /** GET /sales/deals/:id, with its lead (activities arrive with M15.3; commission with M15.7) */
+  /** GET /sales/deals/:id, with its lead and its timeline (commission arrives with M15.7) */
   async get(id) {
     const v = await http.get<SalesDealResult>(`/sales/deals/${id}`);
     if (v.restricted) throw new ApiError("not_found", "This deal belongs to someone else.", 404);
-    const lead = await http.get<SalesLeadResult>(`/sales/leads/${v.leadId}`);
+    const [lead, activities] = await Promise.all([http.get<SalesLeadResult>(`/sales/leads/${v.leadId}`), http.get<SalesActivityView[]>(`/sales/deals/${v.id}/activities`)]);
     const company: Company = lead.restricted || !lead.company ? { id: v.company.id, name: v.company.name } : mapCompany(lead.company);
     const leadView: Lead = lead.restricted
       ? { id: lead.id, name: lead.fullName, companyId: v.company.id, source: "referral", ownerEmpId: lead.owner.empId, emailCheck: "unchecked", doNotContact: false, archived: false, createdAt: v.createdAt }
       : mapLead(lead);
-    return { deal: mapDeal(v), lead: leadView, company, activities: [] };
+    return { deal: mapDeal(v), lead: leadView, company, activities: activities.map(mapActivity) };
   },
 
   /** POST /sales/deals (it starts in New, with its next step) */
@@ -321,8 +323,18 @@ export const liveDealsApi: DealsApi = {
     await http.patch<SalesDealDetailView>(`/sales/deals/${id}`, { nextStep, nextStepDate: toDay(nextStepDate), version: await dealVersion(id) });
   },
 
-  setProposal: async () => notYet("Linking a proposal"),
-  followUpDone: async () => notYet("Recording follow-ups"),
+  /** A proposal link is a proposal activity on the deal: it becomes the deal's link and moves it to Proposal sent (forward only). */
+  async setProposal(id, url) {
+    const d = await http.get<SalesDealResult>(`/sales/deals/${id}`);
+    if (d.restricted) throw new ApiError("forbidden", "Only the owner or the sales manager works on this deal.", 403);
+    const body: LogSalesActivityRequest = { kind: "proposal", summary: "Proposal linked", proposalUrl: url.trim() };
+    await http.post<SalesActivityResult>(`/sales/deals/${id}/activities`, body);
+  },
+
+  /** POST /sales/deals/:id/follow-up: the follow-up is done (an activity) and the next step is set. */
+  async followUpDone(id, summary, nextStep, nextStepDate) {
+    await http.post<SalesDealDetailView>(`/sales/deals/${id}/follow-up`, { summary: summary.trim() || undefined, nextStep, nextStepDate: toDay(nextStepDate), version: await dealVersion(id) });
+  },
 
   /**
    * The server's summary (GET /sales/deals/summary) is the authority for each stage's count and totals, per original
@@ -349,3 +361,54 @@ export const liveDealsApi: DealsApi = {
     };
   },
 };
+
+/* ---------------- M15.3: activities and follow-ups ---------------- */
+
+/** A server activity in the screens' shape (who did it, when, and whether it was typed in by hand or came from a tool). */
+export function mapActivity(v: SalesActivityView): SalesActivity {
+  return {
+    id: v.id,
+    leadId: v.leadId,
+    dealId: opt(v.dealId),
+    empId: v.actor?.empId ?? "",
+    kind: v.kind,
+    at: v.at,
+    source: v.source,
+    externalId: opt(v.externalId),
+    summary: v.proposalUrl ? `${v.summary} (${v.proposalUrl})` : v.meetingAt ? `${v.summary} (meeting on ${new Date(v.meetingAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })})` : v.summary,
+  };
+}
+
+export function mapFollowUp(v: SalesFollowUpView): FollowUp {
+  return { dealId: v.dealId, dealNumber: v.dealNumber, companyName: v.companyName, leadName: v.leadName, nextStep: v.nextStep, nextStepDate: v.nextStepDate, missed: v.missed, ownerEmpId: v.owner.empId };
+}
+
+export interface ActivitiesApi {
+  log(input: LogActivityInput): Promise<LoggedActivity>;
+}
+
+/** The server's answer to a logged activity: the entry, and what it did (or why it did not) to the deal's stage. */
+export function mapLoggedActivity(r: SalesActivityResult): LoggedActivity {
+  return { activity: mapActivity(r.activity), stageChange: r.stageChange, stageNotChanged: r.stageNotChanged };
+}
+
+export const liveActivitiesApi: ActivitiesApi = {
+  /** POST /sales/deals/:id/activities or /sales/leads/:id/activities (a contact on a deal moves it forward only) */
+  async log(input) {
+    const body: LogSalesActivityRequest = {
+      kind: input.kind as LogSalesActivityRequest["kind"],
+      summary: input.summary,
+      at: input.at,
+      ...(input.kind === "meeting" && input.meetingAt ? { meetingAt: input.meetingAt } : {}),
+      ...(input.kind === "proposal" && input.proposalUrl ? { proposalUrl: input.proposalUrl.trim() } : {}),
+    };
+    const path = input.dealId ? `/sales/deals/${input.dealId}/activities` : `/sales/leads/${input.leadId}/activities`;
+    return mapLoggedActivity(await http.post<SalesActivityResult>(path, body));
+  },
+};
+
+/** GET /sales/follow-ups: the caller's due and missed follow-ups, or one team member's (sales manager). */
+export async function liveFollowUps(ownerEmpId?: string): Promise<FollowUp[]> {
+  const rows = await http.get<SalesFollowUpView[]>("/sales/follow-ups", ownerEmpId ? { scope: "team", owner: ownerEmpId } : { scope: "mine" });
+  return rows.map(mapFollowUp);
+}

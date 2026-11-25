@@ -26,7 +26,7 @@ import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils";
 import { canConfirmWon, canWorkOn, isSalesManager, wonConfirmerOf } from "../api";
 import { useConfirmWon, useDeal, useLostReasons, useMoveDeal, useRejectWon, useSetProposal } from "../hooks";
-import { OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
+import { isWebLink, OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
 import type { DealDetail, DealStage } from "../types";
 import { FollowUpDialog } from "./follow-up-dialog";
 import { LogActivityDialog } from "./lead-actions";
@@ -421,12 +421,12 @@ function ProposalCard({ dealId, url, editable }: { dealId: string; url?: string;
             className="flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              if (value.trim().length < 8) return;
-              save.mutate({ id: dealId, url: value.trim() }, { onSuccess: () => { setValue(""); toast.success("Proposal linked"); } });
+              if (!isWebLink(value)) return;
+              save.mutate({ id: dealId, url: value.trim() }, { onSuccess: () => { setValue(""); toast.success("Proposal linked"); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't link the proposal.") });
             }}
           >
             <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Paste a link to the proposal" aria-label="Proposal link" />
-            <Button type="submit" variant="outline" loading={save.isPending} disabled={value.trim().length < 8}>
+            <Button type="submit" variant="outline" loading={save.isPending} disabled={!isWebLink(value)}>
               {url ? "Replace" : "Link"}
             </Button>
           </form>

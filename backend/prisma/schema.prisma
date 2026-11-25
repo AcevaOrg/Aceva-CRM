@@ -584,6 +584,7 @@ model Employee {
   salesWonRequested       SalesDeal[]               @relation("SalesDealWonRequester")
   salesWonConfirmed       SalesDeal[]               @relation("SalesDealWonConfirmer")
   salesDealHistory        SalesDealHistory[]
+  salesActivities         SalesActivity[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -3676,8 +3677,9 @@ model SalesLead {
   updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy       String?         @map("updated_by") @db.Uuid
 
-  company SalesCompany? @relation(fields: [companyId], references: [id])
-  deals   SalesDeal[]
+  company    SalesCompany?   @relation(fields: [companyId], references: [id])
+  deals      SalesDeal[]
+  activities SalesActivity[]
   owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
 
   @@index([ownerId])
@@ -3753,6 +3755,8 @@ model SalesDeal {
   stage            SalesDealStage   @default(new)
   nextStep         String?          @map("next_step")
   nextStepDate     DateTime?        @map("next_step_date") @db.Date
+  /// M15.3: the proposal's link (link only; files would need the Module 14 safety pipeline).
+  proposalUrl      String?          @map("proposal_url")
   lostReason       String?          @map("lost_reason")
   lostNote         String?          @map("lost_note")
   recontactAfter   DateTime?        @map("recontact_after") @db.Date
@@ -3776,6 +3780,7 @@ model SalesDeal {
   wonRequestedBy Employee?          @relation("SalesDealWonRequester", fields: [wonRequestedById], references: [id])
   wonConfirmedBy Employee?          @relation("SalesDealWonConfirmer", fields: [wonConfirmedById], references: [id])
   history        SalesDealHistory[]
+  activities     SalesActivity[]
 
   @@index([ownerId, stage])
   @@index([leadId])
@@ -3802,4 +3807,54 @@ model SalesDealHistory {
 
   @@index([dealId, at])
   @@map("sales_deal_history")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.3: activities and follow-ups (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// What an activity on the timeline is. follow_up = a deal's next step was done (POST /sales/deals/:id/follow-up).
+enum SalesActivityKind {
+  call
+  email_sent
+  reply
+  meeting
+  linkedin
+  whatsapp
+  fiverr
+  proposal
+  note
+  follow_up
+
+  @@map("sales_activity_kind")
+}
+
+/// One contact on a lead's (and optionally a deal's) timeline. Insert-only: a mistake is corrected by a new entry.
+/// source = manual for entries typed in by hand; Module 16 writes tool entries (apollo, millionverifier, mailbox) with
+/// the tool's own id in externalId, unique per tool, so a sync never counts the same item twice.
+model SalesActivity {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId      String            @map("lead_id") @db.Uuid
+  /// The deal it is about, when there is one (always a deal of the same lead: a trigger checks it).
+  dealId      String?           @map("deal_id") @db.Uuid
+  /// Who did it (null only for a tool activity not linked to an employee, Module 16).
+  actorId     String?           @map("actor_id") @db.Uuid
+  kind        SalesActivityKind
+  source      String            @default("manual")
+  /// When it happened (it can be earlier than when it was typed in).
+  occurredAt  DateTime          @map("occurred_at") @db.Timestamptz(3)
+  summary     String
+  meetingAt   DateTime?         @map("meeting_at") @db.Timestamptz(3)
+  proposalUrl String?           @map("proposal_url")
+  externalId  String?           @map("external_id")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead  SalesLead  @relation(fields: [leadId], references: [id])
+  deal  SalesDeal? @relation(fields: [dealId], references: [id])
+  actor Employee?  @relation(fields: [actorId], references: [id])
+
+  @@index([leadId, occurredAt])
+  @@index([dealId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@map("sales_activities")
 }

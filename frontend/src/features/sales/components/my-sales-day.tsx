@@ -18,7 +18,8 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative, formatWeekdayLong } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { canWorkOn } from "../api";
-import { useMySalesDay, useSalesPeople } from "../hooks";
+import { useLiveFollowUps, useMySalesDay, useSalesPeople } from "../hooks";
+import { isLive } from "@/lib/api/http";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal, selfReportedTotal, STAGE_META, targetsMet } from "../logic";
 import type { FollowUp, MySalesDay as Day } from "../types";
 import { DailyLogSheet } from "./daily-log-sheet";
@@ -98,6 +99,9 @@ function DaySkeleton() {
 }
 
 function DayBody({ day, canLog, canWork, onLog }: { day: Day; canLog: boolean; canWork: boolean; onLog: () => void }) {
+  // Live (m15): the follow-ups come from the server (the rest of the day arrives with the targets and reports, M15.6).
+  const live = useLiveFollowUps(day.empId);
+  const liveFollowUps = isLive("m15") ? (live.data ?? []) : undefined;
   const s = day.summary;
   const t = day.targets;
   const met = targetsMet(s, t);
@@ -179,7 +183,7 @@ function DayBody({ day, canLog, canWork, onLog }: { day: Day; canLog: boolean; c
       </div>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <FollowUps items={day.followUpsDue} canWork={canWork} />
+        <FollowUps items={liveFollowUps ?? day.followUpsDue} canWork={canWork} />
         <Card>
           <CardHeader>
             <div>

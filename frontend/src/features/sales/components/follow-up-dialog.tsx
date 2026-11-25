@@ -51,8 +51,9 @@ export function FollowUpDialog({
       toast.success(mode === "done" ? "Follow-up done" : "Next step saved", { description: `${company}: next step on ${new Date(nextStepDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}.` });
       onOpenChange(false);
     };
-    if (mode === "done") done.mutate({ id: dealId, summary: summary.trim(), nextStep: nextStep.trim(), nextStepDate }, { onSuccess });
-    else edit.mutate({ id: dealId, nextStep: nextStep.trim(), nextStepDate }, { onSuccess });
+    const onError = (e: unknown) => toast.error(e instanceof Error ? e.message : "Couldn't save the follow-up.");
+    if (mode === "done") done.mutate({ id: dealId, summary: summary.trim(), nextStep: nextStep.trim(), nextStepDate }, { onSuccess, onError });
+    else edit.mutate({ id: dealId, nextStep: nextStep.trim(), nextStepDate }, { onSuccess, onError });
   };
 
   return (
