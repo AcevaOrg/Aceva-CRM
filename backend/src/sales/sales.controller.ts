@@ -3,6 +3,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import {
   addSalesDncEmailSchema,
+  decideSalesWonExceptionSchema,
   markSalesLeadDncSchema,
   salesDncListQuerySchema,
   SALES_IMPORT_MAX_BYTES,
@@ -25,7 +26,7 @@ import {
   updateSalesLeadSchema,
 } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
-import { ClientInfo, CurrentActor, RequirePermission, type RequestInfo } from '../access/decorators';
+import { ClientInfo, CurrentActor, CurrentSessionId, RequirePermission, type RequestInfo } from '../access/decorators';
 import { createZodDto } from '../common/zod-validation.pipe';
 import type { UploadedFileData } from '../finance/finance-documents.service';
 import { ActivitiesService } from './activities.service';
@@ -35,6 +36,8 @@ import { DncService } from './dnc.service';
 import { LeadImportService } from './lead-import.service';
 import { LeadsService } from './leads.service';
 import { SALES_OWN } from './sales-access.service';
+import { SalesOffboardingService } from './sales-offboarding.service';
+import { WonExceptionService } from './won-exception.service';
 
 class LeadListQueryDto extends createZodDto(salesLeadListQuerySchema) {}
 class CreateLeadDto extends createZodDto(createSalesLeadSchema) {}
@@ -50,6 +53,7 @@ class FollowUpListQueryDto extends createZodDto(salesFollowUpListQuerySchema) {}
 class MarkDncDto extends createZodDto(markSalesLeadDncSchema) {}
 class AddDncEmailDto extends createZodDto(addSalesDncEmailSchema) {}
 class DncListQueryDto extends createZodDto(salesDncListQuerySchema) {}
+class WonExceptionDto extends createZodDto(decideSalesWonExceptionSchema) {}
 
 /**
  * Module 15.1 leads (plan section 20). Every route needs sales.own; what each person sees and changes inside is decided
@@ -224,6 +228,7 @@ export class SalesDealsController {
   constructor(
     private readonly deals: DealsService,
     private readonly activities: ActivitiesService,
+    private readonly wonException: WonExceptionService,
   ) {}
 
   @Get(':id/activities')
@@ -314,6 +319,17 @@ export class SalesDealsController {
   rejectWon(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: RejectWonDto, @ClientInfo() client: RequestInfo) {
     return this.deals.rejectWon(actor, id, body, client);
   }
+
+  @Post(':id/won-exception')
+  @HttpCode(200)
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({
+    summary:
+      'M15.5 exception (sales.won_decide_exception, the Owner role only): confirm or send back a pending Won request whose requester has left and that no sales manager can decide. Reason and step-up required; 409 exception_not_applicable otherwise',
+  })
+  decideWonException(@CurrentActor() actor: Actor, @CurrentSessionId() sessionId: string | null, @Param('id') id: string, @Body() body: WonExceptionDto, @ClientInfo() client: RequestInfo) {
+    return this.wonException.decide(actor, id, body, sessionId, client);
+  }
 }
 
 /** M15.3: an open deal's next step is its follow-up. Due today, or missed (its date has passed, Pakistan time). */
@@ -327,5 +343,19 @@ export class SalesFollowUpsController {
   @ApiOperation({ summary: "Follow-ups: ?scope=mine|team (team: the sales manager's team) &status=due|missed|all &owner" })
   list(@CurrentActor() actor: Actor, @Query() q: FollowUpListQueryDto) {
     return this.deals.followUps(actor, q);
+  }
+}
+
+/** M15.5: leavers whose leads and deals could not be moved (no single sales manager, and no manager able to receive them). */
+@ApiTags('sales')
+@Controller('sales/reassignment-issues')
+export class SalesReassignmentIssuesController {
+  constructor(private readonly offboarding: SalesOffboardingService) {}
+
+  @Get()
+  @RequirePermission(SALES_OWN)
+  @ApiOperation({ summary: 'Leavers whose leads and deals are waiting for an owner, with what they still own (sales.team or sales.all)' })
+  list(@CurrentActor() actor: Actor) {
+    return this.offboarding.issues(actor);
   }
 }

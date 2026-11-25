@@ -69,14 +69,19 @@ activity record (activity belongs to a person); Module 2's `login_attempts` keep
 
 | Event | Intended consumer | Payload |
 |---|---|---|
-| `employee.offboarded` | M8, M12 (no consumer yet) | `empId`, `lastWorkingDay`, `managerEmpId` |
+| `employee.offboarded` | M15 sales (`sales-offboarding`, consumed now: Module 15.5); M8, M12 (no consumer yet) | `empId`, `lastWorkingDay`, `managerEmpId` |
 | `task.transfer.requested` | M5 task management (`tasks.handover`, consumed now) | `fromEmpId`, `toEmpId`, `reason: "employee_left"` |
 | `payroll.final_settlement.requested` | M8 payroll (no consumer yet) | `empId`, `lastWorkingDay` |
 
 `employee.offboarded`, `task.transfer.requested` and `payroll.final_settlement.requested` are written to the outbox when an
 employee's last working day is processed (`backend/src/people/offboarding.service.ts`). `task.transfer.requested` is consumed
-by Module 5 (see below): it moves the leaver's open work tasks and active repeating series to the manager. The other two
-wait in `outbox_events` (unprocessed) until their consumers are registered (Module 8, Module 12).
+by Module 5 (see below): it moves the leaver's open work tasks and active repeating series to the manager. Module 15.5
+reads `employee.offboarded` (reader `sales-offboarding`): it moves the leaver's leads that are not archived and their open
+deals (a pending Won request included, kept as it is) to the one active holder of the `sales_manager` duty, otherwise to
+`managerEmpId` when that person is active, holds `sales.own` and `sales.targets` and is not the CEO / Owner, otherwise to
+nobody (a case for management, `GET
+/sales/reassignment-issues`). A nightly check (02:00 Pakistan time) covers events that failed or came before the reader
+existed. `payroll.final_settlement.requested` waits in `outbox_events` until Module 8 registers its consumer.
 
 ## Module 5 (tasks, size and deadline), version 1
 

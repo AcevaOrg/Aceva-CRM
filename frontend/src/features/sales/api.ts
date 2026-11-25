@@ -594,6 +594,10 @@ const mockDealsApi = {
       pushHistory(d, d.stage, `Won not confirmed: ${reason}`);
     }),
 
+  /** POST /deals/:id/won-exception: only on the live system (it depends on Module 3 offboarding). */
+  decideWonException: () =>
+    mock<void>(() => forbidden("The exceptional Won decision exists only on the live system.")),
+
   /** PATCH /deals/:id { nextStep, nextStepDate } */
   setNextStep: (id: string, nextStep: string, nextStepDate: string) =>
     mock(() => {

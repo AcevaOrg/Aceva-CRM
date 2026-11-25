@@ -77,7 +77,8 @@ function LeadBody({ d }: { d: Detail }) {
   // Moving a lead between salespeople is the sales manager's job: the Director.
   const canReassign = !!viewer && isSalesManager(viewer);
   // The owner and the Director work the lead; the CEO / Founder / Owner only views it.
-  const canWork = !!viewer && canWorkOn(viewer, lead.ownerEmpId);
+  // An archived lead is read-only for everyone (the server refuses changes too).
+  const canWork = !!viewer && canWorkOn(viewer, lead.ownerEmpId) && !lead.archived;
   const [logOpen, setLogOpen] = React.useState(false);
   const [dealOpen, setDealOpen] = React.useState(false);
   const [verifyOpen, setVerifyOpen] = React.useState(false);
@@ -140,10 +141,22 @@ function LeadBody({ d }: { d: Detail }) {
         }
       />
 
-      {!canWork && (
+      {lead.archived ? (
         <div className="mb-5">
-          <MakerCheckerNote reason="View only. The salesperson who owns this lead works it; the Director (sales manager) can move it." />
+          <MakerCheckerNote
+            reason={
+              lead.archiveInfo
+                ? `Archived on ${formatDate(lead.archiveInfo.at)}${lead.archiveInfo.byJob ? " by the nightly check" : ""}: no activity for ${lead.archiveInfo.inactiveMonths} months. Email, phone and LinkedIn were removed; the notes and the timeline are kept. Read only.`
+                : "Archived. Read only."
+            }
+          />
         </div>
+      ) : (
+        !canWork && (
+          <div className="mb-5">
+            <MakerCheckerNote reason="View only. The salesperson who owns this lead works it; the Director (sales manager) can move it." />
+          </div>
+        )
       )}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">

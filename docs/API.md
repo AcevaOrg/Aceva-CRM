@@ -779,6 +779,80 @@ with it exist: to rotate, set the new key with a new `SALES_DNC_HMAC_KEY_ID` and
 **Audit actions:** `sales.leads.import_previewed`, `sales.leads.imported`, `sales.lead.created` (with `importBatch`),
 `sales.lead.do_not_contact`, `sales.dnc.added`. Module 4 records each successful request as a Sales `create`.
 
+## Module 15, part 5: leavers' leads and deals, and archiving inactive leads
+
+Plan section 20: "Leads belong to Aceva, not to the salesperson. When someone leaves, their leads and deals move to the
+sales manager on their last working day (Module 3)", and "Leads with no activity for 12 months are archived and their
+contact details removed. The period is a setting." The rules are the approved M15.5 decisions 7 to 9.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/reassignment-issues` | `sales.team` or `sales.all` (the sales manager; the CEO / Owner views) | Leavers whose leads and deals could not be moved, with what they still own and why nobody could receive them |
+| `PUT /settings/modules/sales {value: {..., archiveMonths}}` | `settings.manage` | The archive period, 1 to 120 months (12 until management changes it) |
+
+There is no route that archives or moves on demand: both happen on their own (below). A lead's view carries `archive`
+(`at`, `reason: inactive`, `inactiveMonths`, `lastActivityAt`, `by`: null for the nightly job, `clearedFields`) while it is
+archived.
+
+**When a salesperson leaves** (Module 3 decides when: 00:00 Pakistan time after the last working day; it ends their duties
+and emits `employee.offboarded`): the reader `sales-offboarding` moves every lead of theirs that is not archived and every
+open deal of theirs, including a deal waiting for its Won confirmation (the request, its requester and the history stay
+exactly as they were; the B1 rule then applies to the new owner unchanged). Won and Lost deals keep their owner (final).
+- The receiver is the one active holder of the `sales_manager` duty. With none, or more than one, it is the event's
+  `managerEmpId`, but only if that person is active, owns and manages sales leads (`sales.own` and `sales.targets`) and
+  is not the CEO / Owner, who only views sales and is never given leads automatically. Otherwise nothing moves and a case
+  is opened for management (one per leaver; `sales.offboarding.no_recipient`), never an arbitrary person.
+- Each move: the deal history (`owner_changed`, no person, reason `employee_left`), an audit entry per lead
+  (`sales.lead.reassigned`, `by: offboarding`) and a summary (`sales.offboarding.reassigned`).
+- Safe to repeat: a per-leaver lock, and only rows the leaver still owns move. A nightly check (02:00 Pakistan time) finds
+  anyone who has left and still owns leads or open deals (a failed or lost event, or someone who left before this
+  existed) and retries open cases; a case closes (`resolvedAt`, `resolvedTo`) once there is nothing left to move.
+
+**Archiving** (the same nightly job, after the leaver check): a lead whose last activity (when it was added, then every
+logged contact; a note is not one) is before the start of the day `archiveMonths` months ago (Pakistan time) is archived:
+`archived_at` is set and email, phone and LinkedIn are removed. The name, company, source, owner, notes, the timeline and
+the audit trail stay, and an insert-only archive record keeps the reason, the period, the last activity, the details
+removed and the job run (`sales.lead.archived`, no person).
+- Never archived: a lead with an open deal (a pending Won request is open), a lead with a Won deal, a lead at a client
+  company (a Won deal at the company, or the company already a Module 13 client).
+- A do-not-contact lead is archived too and stays blocked: the list keeps its keyed hash (M15.4). A changed email on a
+  do-not-contact lead is added to the list as well; a do-not-contact lead whose email the list cannot match is not
+  archived (logged) rather than lose its protection.
+- An archived lead is read-only: it cannot be edited, contacted (also through its old deals), marked, moved or given a
+  deal (409 `lead_archived`). Each contact and each new deal takes the lead's row lock and checks again, so a contact at
+  the same moment as the night run either wins (the lead stays) or is refused.
+- Its email no longer counts as a duplicate: the person can be added or imported again as a new lead, unless the email is
+  on the do-not-contact list.
+- Running the night again changes nothing.
+
+## Module 15, part 5 follow-up: the exceptional Won decision
+
+Approved management decision. When the person who asked for Won has left and Module 15.5 moved the deal to someone else,
+the request can be stranded: B1 lets the CEO / Owner confirm only a deal a Director owns, nobody decides their own deal,
+and there may be no sales manager above the new owner.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /sales/deals/:id/won-exception {decision: confirm\|send_back, reason, version}` | `sales.won_decide_exception` (the Owner role only), with a fresh step-up (as for the Owner's payroll approval, D26) | Confirms the deal as Won or sends the request back. 400 for a reason outside 5 to 500 characters; 403 `not_allowed`, `self_approval`, `step_up_required`; 409 `exception_not_applicable`, `stale_version` |
+
+**When it applies** (all checked again in the transaction under the deal's row lock; otherwise 409
+`exception_not_applicable` with the reason): the deal is open and its Won request pending; the decider is neither the
+current owner nor the person who asked; the person who asked has left; the deal is not one a Director owns (B1 decides
+those, unchanged); the deal was moved by Module 15.5 offboarding after the request (`owner_changed`, `employee_left`);
+and no active holder of `sales.targets` other than the owner and the requester has the current owner in their reporting
+line. Nothing is decided automatically. The deal view's `wonExceptionEligible` is true only for the permission holder and
+only while every condition holds.
+
+**What it does:** in one transaction, an insert-only record (`sales_won_exceptions`: decision, reason, basis, decider,
+the original requester and request time, the owner when it was asked, the current owner, what was checked), then exactly
+the normal confirmation (Won with the Owner as confirmer, history, audit `sales.deal.won_confirmed_exception`, the
+`sales.deal.won_confirmed` event once, so Module 13 makes one draft invoice) or the normal sending back (the deal stays
+open with its owner; history and audit `sales.deal.won_rejected_exception` keep the reason). Earlier history is never
+changed. The database lets a Level 1 confirmer confirm a deal a Director does not own only when a matching "confirm"
+record for that deal, that confirmer and its current owner was written in the same transaction; every other Level 1
+confirmation is still refused (`owner_confirms_director_deals_only`). The usual confirm-won, reject-won and B1 routes
+are unchanged.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

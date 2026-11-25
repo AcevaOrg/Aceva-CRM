@@ -25,6 +25,11 @@ export const SALES_MANAGE = 'sales.targets';
  * owner's level; a database trigger refuses a Level 1 confirmation of any other deal.
  */
 export const SALES_CONFIRM_DIRECTOR_WON = 'sales.won_confirm_director';
+/**
+ * M15.5 follow-up (approved management decision): the Owner role may confirm or send back a pending Won request whose
+ * requester has left and that no sales manager can decide (WonExceptionService). Not a general right to decide Won deals.
+ */
+export const SALES_WON_EXCEPTION = 'sales.won_decide_exception';
 
 /** What the caller may do in Module 15, read from their role and duties for this request. */
 export interface SalesAccess {
@@ -35,6 +40,8 @@ export interface SalesAccess {
   manage: boolean;
   /** May confirm a Won deal the Director (Level 2) owns, and only such a deal. */
   confirmDirectorDeals: boolean;
+  /** M15.5 follow-up: may make the exceptional Won decision (sales.won_decide_exception). */
+  decideWonException: boolean;
 }
 
 /**
@@ -63,6 +70,7 @@ export class SalesAccessService {
       all: permissions.has(SALES_ALL),
       manage: permissions.has(SALES_MANAGE),
       confirmDirectorDeals: permissions.has(SALES_CONFIRM_DIRECTOR_WON),
+      decideWonException: permissions.has(SALES_WON_EXCEPTION),
     };
   }
 

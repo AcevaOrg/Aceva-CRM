@@ -24,6 +24,8 @@ export const PERMISSIONS = [
   "approval.approve", "duty.assign", "auth.set_temporary_password", "auth.reset_two_factor",
   // M15.2, decision B1: the Owner confirms a Won deal the Director owns, and only such a deal
   "sales.won_confirm_director",
+  // M15.5 follow-up: the Owner's exceptional decision on a Won request stranded by a leaver (the server checks when)
+  "sales.won_decide_exception",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -78,6 +80,8 @@ const OWNER: Permission[] = [
   "auth.unlock_account", "auth.reset_two_factor",
   // M15.2, decision B1: a Won deal the Director owns, and only such a deal (the server checks it)
   "sales.won_confirm_director",
+  // M15.5 follow-up: the exceptional Won decision, only when the requester has left and nobody else can decide
+  "sales.won_decide_exception",
 ];
 
 /** L2 Director: the approver for everything and the org administrator, plus HR duty and sales-manager duty. Prepares no finance items. */

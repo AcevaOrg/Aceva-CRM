@@ -1,4 +1,4 @@
-import type { SalesCompanyView, SalesLeadStubView, SalesLeadView, SalesPersonRef } from '@aceva/contracts';
+import type { SalesArchiveReason, SalesCompanyView, SalesLeadArchiveView, SalesLeadStubView, SalesLeadView, SalesPersonRef } from '@aceva/contracts';
 import type { Prisma } from '../generated/prisma/client';
 
 export const companyInclude = {} satisfies Prisma.SalesCompanyInclude;
@@ -7,6 +7,8 @@ export type CompanyRow = Prisma.SalesCompanyGetPayload<{ include: typeof company
 export const leadInclude = {
   company: true,
   owner: { select: { id: true, empId: true, fullName: true } },
+  // M15.5: why and when it was archived (the latest record).
+  archives: { orderBy: { archivedAt: 'desc' }, take: 1, include: { archiver: { select: { empId: true, fullName: true } } } },
 } satisfies Prisma.SalesLeadInclude;
 export type LeadRow = Prisma.SalesLeadGetPayload<{ include: typeof leadInclude }>;
 
@@ -57,7 +59,15 @@ export function leadView(
     canEdit: extra.canEdit,
     canReassign: extra.canReassign,
     doNotContact: l.dncAt !== null,
+    archive: archiveView(l),
   };
+}
+
+/** M15.5: the lead's archive record, only while it is archived. */
+function archiveView(l: LeadRow): SalesLeadArchiveView | null {
+  const r = l.archivedAt ? l.archives[0] : undefined;
+  if (!r) return null;
+  return { at: r.archivedAt.toISOString(), reason: r.reason as SalesArchiveReason, inactiveMonths: r.inactiveMonths, lastActivityAt: r.lastActivityAt.toISOString(), by: r.archiver ? person(r.archiver) : null, clearedFields: r.clearedFields };
 }
 
 /** Someone else's lead: only that it exists and who owns it. Never the email, phone, notes or anything else. */

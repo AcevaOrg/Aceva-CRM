@@ -38,6 +38,8 @@ export const PERMISSION_KEYS: string[] = [
   'auth.set_temporary_password', 'auth.reset_two_factor',
   // M15.2, decision B1: confirm a Won deal the Director owns, and only such a deal (the Director cannot confirm their own)
   'sales.won_confirm_director',
+  // M15.5 follow-up: the exceptional Won decision on a request stranded by a leaver (WonExceptionService decides when)
+  'sales.won_decide_exception',
 ];
 
 export interface RoleSeed {
@@ -84,6 +86,8 @@ const OWNER: string[] = [
   'auth.unlock_account', 'auth.reset_two_factor',
   // M15.2, decision B1: a Won deal the Director owns (the service and a database trigger allow nothing else)
   'sales.won_confirm_director',
+  // M15.5 follow-up (approved): the exceptional Won decision, only when the requester has left and nobody else can decide
+  'sales.won_decide_exception',
 ];
 
 /**

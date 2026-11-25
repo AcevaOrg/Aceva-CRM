@@ -588,6 +588,13 @@ model Employee {
   salesDncEntries         SalesDncEntry[]
   salesImportsMade        SalesImportBatch[]        @relation("SalesImportCreatedBy")
   salesImportsOwned       SalesImportBatch[]        @relation("SalesImportOwner")
+  salesLeadsArchived      SalesLeadArchive[]
+  salesReassignIssues     SalesReassignmentIssue[]  @relation("SalesReassignLeaver")
+  salesReassignResolved   SalesReassignmentIssue[]  @relation("SalesReassignResolvedTo")
+  salesWonExceptionsMade  SalesWonException[]       @relation("SalesWonExceptionDecider")
+  salesWonExceptionsAsked SalesWonException[]       @relation("SalesWonExceptionRequester")
+  salesWonExceptionsWas   SalesWonException[]       @relation("SalesWonExceptionOwnerAtRequest")
+  salesWonExceptionsOwner SalesWonException[]       @relation("SalesWonExceptionCurrentOwner")
 
   @@index([departmentId])
   @@index([officeId])
@@ -3690,6 +3697,7 @@ model SalesLead {
   owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
   importBatch SalesImportBatch? @relation(fields: [importBatchId], references: [id])
   dncEntries  SalesDncEntry[]
+  archives    SalesLeadArchive[]
 
   @@index([ownerId])
   @@index([companyId])
@@ -3790,6 +3798,7 @@ model SalesDeal {
   wonConfirmedBy Employee?          @relation("SalesDealWonConfirmer", fields: [wonConfirmedById], references: [id])
   history        SalesDealHistory[]
   activities     SalesActivity[]
+  wonExceptions  SalesWonException[]
 
   @@index([ownerId, stage])
   @@index([leadId])
@@ -3924,4 +3933,80 @@ model SalesImportBatch {
 
   @@index([createdBy, createdAt])
   @@map("sales_import_batches")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.5: leads and deals when a salesperson leaves, and archiving inactive leads (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// Why and when a lead was archived, and which contact details were removed. Insert-only (triggers).
+model SalesLeadArchive {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  archivedAt     DateTime @map("archived_at") @db.Timestamptz(3)
+  /// inactive: no activity for the set number of months.
+  reason         String
+  inactiveMonths Int      @map("inactive_months")
+  lastActivityAt DateTime @map("last_activity_at") @db.Timestamptz(3)
+  clearedFields  String[] @map("cleared_fields")
+  /// Who archived it; null when the nightly job did (then `job` names the run).
+  archivedBy     String?  @map("archived_by") @db.Uuid
+  job            String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead     SalesLead @relation(fields: [leadId], references: [id])
+  archiver Employee? @relation(fields: [archivedBy], references: [id])
+
+  @@index([leadId, archivedAt])
+  @@map("sales_lead_archives")
+}
+
+/// A leaver whose leads and deals could not be moved (no single sales manager, and their manager cannot receive them).
+/// It waits for management; a later run that moves them (or finds nothing left) marks it resolved.
+model SalesReassignmentIssue {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId   String    @map("employee_id") @db.Uuid
+  /// The employee.offboarded event, when it came from one (null when the nightly check found it).
+  eventId      String?   @map("event_id") @db.Uuid
+  /// no_recipient
+  reason       String
+  details      Json
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedToId String?   @map("resolved_to_id") @db.Uuid
+
+  employee   Employee  @relation("SalesReassignLeaver", fields: [employeeId], references: [id])
+  resolvedTo Employee? @relation("SalesReassignResolvedTo", fields: [resolvedToId], references: [id])
+
+  @@index([employeeId])
+  @@map("sales_reassignment_issues")
+}
+
+/// M15.5 follow-up: an exceptional Won decision (confirm or send back) on a request whose requester has left and that nobody
+/// else could decide. Insert-only (triggers). It keeps the original request (who asked, when, who owned the deal then).
+model SalesWonException {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId           String   @map("deal_id") @db.Uuid
+  /// confirm or send_back
+  decision         String
+  reason           String
+  /// requester_left_no_confirmer
+  basis            String
+  decidedById      String   @map("decided_by_id") @db.Uuid
+  requesterId      String   @map("requester_id") @db.Uuid
+  requestedAt      DateTime @map("requested_at") @db.Timestamptz(3)
+  ownerAtRequestId String   @map("owner_at_request_id") @db.Uuid
+  currentOwnerId   String   @map("current_owner_id") @db.Uuid
+  /// What was checked: the moves after the request, and that no sales manager could decide.
+  details          Json
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  deal           SalesDeal @relation(fields: [dealId], references: [id])
+  decidedBy      Employee  @relation("SalesWonExceptionDecider", fields: [decidedById], references: [id])
+  requester      Employee  @relation("SalesWonExceptionRequester", fields: [requesterId], references: [id])
+  ownerAtRequest Employee  @relation("SalesWonExceptionOwnerAtRequest", fields: [ownerAtRequestId], references: [id])
+  currentOwner   Employee  @relation("SalesWonExceptionCurrentOwner", fields: [currentOwnerId], references: [id])
+
+  @@index([dealId, createdAt])
+  @@map("sales_won_exceptions")
 }

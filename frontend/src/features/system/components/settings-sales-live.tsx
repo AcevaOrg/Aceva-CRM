@@ -45,16 +45,19 @@ function SalesSettingsForm({ view }: { view: ModuleSettingsView }) {
   // Empty means "not set" (null on the server); never a made-up number.
   const [months, setMonths] = React.useState<string>(saved.recontactMonths === null ? "" : String(saved.recontactMonths));
   const [shared, setShared] = React.useState<string[]>(saved.sharedWebsiteDomains);
+  // M15.5: months without activity before a lead is archived (the plan's 12 until management changes it).
+  const [archive, setArchive] = React.useState<string>(String(saved.archiveMonths));
   const [busy, setBusy] = React.useState(false);
 
   const next = {
     sharedWebsiteDomains: shared,
     lostReasons,
     recontactMonths: months.trim() === "" ? null : Number(months),
+    archiveMonths: Number(archive),
   };
   const check = salesSettingsSchema.safeParse(next);
   const problem = check.success ? null : check.error.issues[0]?.message ?? "Check the values";
-  const changed = JSON.stringify(next) !== JSON.stringify({ sharedWebsiteDomains: saved.sharedWebsiteDomains, lostReasons: saved.lostReasons, recontactMonths: saved.recontactMonths });
+  const changed = JSON.stringify(next) !== JSON.stringify({ sharedWebsiteDomains: saved.sharedWebsiteDomains, lostReasons: saved.lostReasons, recontactMonths: saved.recontactMonths, archiveMonths: saved.archiveMonths });
   const lostReady = saved.lostReasons.length > 0 && saved.recontactMonths !== null;
 
   const save = async () => {
@@ -87,6 +90,12 @@ function SalesSettingsForm({ view }: { view: ModuleSettingsView }) {
         <SettingRow label="Lost leads can be contacted again after" htmlFor="ss-months" hint="Months, 1 to 60. Empty = not set yet.">
           <div className="flex items-center gap-2">
             <Input id="ss-months" inputMode="numeric" value={months} onChange={(e) => setMonths(e.target.value.replace(/[^0-9]/g, ""))} disabled={!can || busy} className="w-24 font-mono" placeholder="Not set" aria-invalid={!check.success && months !== "" ? true : undefined} />
+            <span className="text-[13px] text-muted-foreground">months</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="Archive leads with no activity for" htmlFor="ss-archive" hint="Months, 1 to 120 (12 by default). Archiving removes email, phone and LinkedIn; notes and the timeline stay.">
+          <div className="flex items-center gap-2">
+            <Input id="ss-archive" inputMode="numeric" value={archive} onChange={(e) => setArchive(e.target.value.replace(/[^0-9]/g, ""))} disabled={!can || busy} className="w-24 font-mono" aria-invalid={!check.success && archive !== "" ? true : undefined} />
             <span className="text-[13px] text-muted-foreground">months</span>
           </div>
         </SettingRow>

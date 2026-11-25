@@ -181,6 +181,19 @@ export class DncService {
     return (await this.views(a, [row]))[0];
   }
 
+  /**
+   * M15.5: a do-not-contact lead whose email changes keeps its protection: the new email is hashed onto the list too (inside
+   * the caller's transaction, under the email's lock), so archiving can never remove an email the list cannot match.
+   */
+  async protectLeadEmail(tx: Tx, actorId: string, leadId: string, emailNormalized: string): Promise<void> {
+    const key = this.requireKey();
+    await this.lockEmails(tx, [emailNormalized]);
+    if ((await this.listed(tx, [emailNormalized])).size) return;
+    await tx.salesDncEntry.create({
+      data: { emailHmac: this.hash(key.key, emailNormalized), keyId: key.id, maskedEmail: maskEmail(emailNormalized), leadId, reason: 'New email of a do-not-contact lead', source: 'manual', createdBy: actorId },
+    });
+  }
+
   // ----------------------------------------------------------------------------------------------------------- reads
 
   /** GET /sales/do-not-contact: sales.team or sales.all (the sales manager; the CEO / Owner views). Newest first. */

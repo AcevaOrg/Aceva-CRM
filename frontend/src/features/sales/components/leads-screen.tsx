@@ -16,7 +16,7 @@ import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatRelative } from "@/lib/dates";
 import { canDoSalesWork, ownsSalesWork, type LeadRow } from "../api";
-import { useLeads } from "../hooks";
+import { useLeads, useReassignmentIssues } from "../hooks";
 import { CHECK_META, SOURCE_LABEL, STAGE_META } from "../logic";
 import type { EmailCheck, LeadSource } from "../types";
 import { AddLeadSheet } from "./add-lead-sheet";
@@ -141,6 +141,8 @@ function LeadsInner() {
         </div>
       )}
 
+      <WaitingForOwner enabled={!!viewer?.can(["sales.team", "sales.all"])} />
+
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Leads" value={all.length} hint={team ? "in the team" : "owned by you"} icon={<Users />} accent="var(--zone-sales)" />
         <StatCard label="Not checked yet" value={unchecked} hint="need MillionVerifier" icon={<MailQuestion />} onClick={() => setCheck("unchecked")} />
@@ -239,5 +241,23 @@ function LeadsInner() {
       {canAdd && importOpen && <ImportLeadsDialog open onOpenChange={setImportOpen} />}
       {canWork && verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
     </>
+  );
+}
+
+/** M15.5: someone left and nobody could receive their leads automatically; the sales manager decides (moves them). */
+function WaitingForOwner({ enabled }: { enabled: boolean }) {
+  const q = useReassignmentIssues(enabled);
+  if (!q.data?.length) return null;
+  return (
+    <div className="mb-5 grid gap-2" role="alert" aria-label="Leads waiting for an owner">
+      {q.data.map((i) => (
+        <div key={i.id} className="rounded-xl border border-border bg-muted/60 px-4 py-3 text-[13px]">
+          <p className="font-medium">
+            {i.name} ({i.empId}) has left: {i.openLeads} {i.openLeads === 1 ? "lead" : "leads"} and {i.openDeals} open {i.openDeals === 1 ? "deal" : "deals"} are waiting for an owner.
+          </p>
+          <p className="text-muted-foreground">{i.detail}. Move them to a salesperson from each lead, or give someone the sales manager duty: the next nightly check then moves them.</p>
+        </div>
+      ))}
+    </div>
   );
 }

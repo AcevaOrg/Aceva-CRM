@@ -11,7 +11,7 @@ import type {
   CreateSalesDealRequest, CreateSalesLeadRequest, LogSalesActivityRequest, MoveSalesDealRequest, Page, SalesActivityResult, SalesActivityView, SalesCompanyView,
   SalesDealDetailView, SalesDealHistoryView, SalesDealResult, SalesFollowUpView,
   SalesDealView, SalesDncEntryView, SalesDuplicateCheckView, SalesImportPreviewView, SalesImportResultView, SalesImportRowView, SalesLeadResult, SalesLeadView,
-  SalesPipelineSummaryView, UpdateSalesLeadRequest,
+  SalesPipelineSummaryView, SalesReassignmentIssueView, UpdateSalesLeadRequest,
 } from "@aceva/contracts";
 import { SALES_OPEN_STAGES } from "@aceva/contracts";
 import { http } from "@/lib/api/http";
@@ -21,7 +21,7 @@ import type { DealRow, LeadRow, MoveResult } from "./api";
 import { totalsByCurrency } from "./logic";
 import type {
   Company, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, FollowUp, Handover, ImportPreview, ImportRow, Lead, LeadDetail, LeadSource, LeadStub,
-  LogActivityInput, LoggedActivity, NewDealInput, NewLeadInput,
+  LogActivityInput, LoggedActivity, NewDealInput, NewLeadInput, ReassignmentIssue,
   PipelineSummary, SalesActivity, StageChange, VerifyPreview, VerifyResult,
 } from "./types";
 
@@ -53,6 +53,7 @@ export function mapLead(v: SalesLeadView): Lead {
     notes: opt(v.notes),
     lastActivityAt: v.lastActivityAt,
     archived: v.archived,
+    archiveInfo: v.archive ? { at: v.archive.at, inactiveMonths: v.archive.inactiveMonths, lastActivityAt: v.archive.lastActivityAt, byJob: v.archive.by === null } : undefined,
     createdAt: v.createdAt,
     version: v.version,
   };
@@ -191,6 +192,7 @@ export interface DealsApi {
   move(id: string, stage: DealStage, reason?: string, version?: number): Promise<MoveResult>;
   confirmWon(id: string): Promise<Handover>;
   rejectWon(id: string, reason: string): Promise<void>;
+  decideWonException(id: string, decision: "confirm" | "send_back", reason: string): Promise<void>;
   setNextStep(id: string, nextStep: string, nextStepDate: string): Promise<void>;
   setProposal(id: string, url: string): Promise<void>;
   followUpDone(id: string, summary: string, nextStep: string, nextStepDate: string): Promise<void>;
@@ -291,7 +293,7 @@ export const liveDealsApi: DealsApi = {
     const leadView: Lead = lead.restricted
       ? { id: lead.id, name: lead.fullName, companyId: v.company.id, source: "referral", ownerEmpId: lead.owner.empId, emailCheck: "unchecked", doNotContact: false, archived: false, createdAt: v.createdAt }
       : mapLead(lead);
-    return { deal: mapDeal(v), lead: leadView, company, activities: activities.map(mapActivity) };
+    return { deal: { ...mapDeal(v), wonExceptionEligible: v.wonExceptionEligible }, lead: leadView, company, activities: activities.map(mapActivity) };
   },
 
   /** POST /sales/deals (it starts in New, with its next step) */
@@ -332,6 +334,11 @@ export const liveDealsApi: DealsApi = {
   /** POST /sales/deals/:id/reject-won */
   async rejectWon(id, reason) {
     await http.post<SalesDealDetailView>(`/sales/deals/${id}/reject-won`, { reason, version: await dealVersion(id) });
+  },
+
+  /** POST /sales/deals/:id/won-exception (the Owner; a reason and a fresh step-up are required) */
+  async decideWonException(id, decision, reason) {
+    await http.post<SalesDealDetailView>(`/sales/deals/${id}/won-exception`, { decision, reason, version: await dealVersion(id) });
   },
 
   /** PATCH /sales/deals/:id */
@@ -468,3 +475,14 @@ export const liveDncApi: DncApi = {
     await http.post<SalesDncEntryView>("/sales/do-not-contact", { email, reason });
   },
 };
+
+/* ---------------- M15.5: leavers' leads waiting for an owner ---------------- */
+
+export function mapReassignmentIssue(v: SalesReassignmentIssueView): ReassignmentIssue {
+  return { id: v.id, empId: v.employee.empId, name: v.employee.name, detail: v.detail, openLeads: v.openLeads, openDeals: v.openDeals, since: v.createdAt };
+}
+
+/** GET /sales/reassignment-issues (the sales manager; the CEO / Owner views). */
+export async function liveReassignmentIssues(): Promise<ReassignmentIssue[]> {
+  return (await http.get<SalesReassignmentIssueView[]>("/sales/reassignment-issues")).map(mapReassignmentIssue);
+}

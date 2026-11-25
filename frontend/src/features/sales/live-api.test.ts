@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SalesDealDetailView, SalesDuplicateCheckView, SalesLeadView } from "@aceva/contracts";
 import { activityLoggedMessage, DNC_BLOCKED_KINDS, isWebLink, pipelineSummary, STAGE_NOT_CHANGED_TEXT, totalsByCurrency } from "./logic";
-import { mapActivity, mapDeal, mapDncEntry, mapDuplicate, mapFollowUp, mapImportRow, mapLead, mapLoggedActivity } from "./live-api";
+import { mapActivity, mapDeal, mapDncEntry, mapDuplicate, mapFollowUp, mapImportRow, mapLead, mapLoggedActivity, mapReassignmentIssue } from "./live-api";
 
 const view: SalesLeadView = {
   restricted: false,
@@ -28,6 +28,7 @@ const view: SalesLeadView = {
   canEdit: true,
   canReassign: false,
   doNotContact: false,
+  archive: null,
 };
 
 describe("M15.1 live mapping", () => {
@@ -81,6 +82,7 @@ const deal: SalesDealDetailView = {
     { event: "won_requested", fromStage: "negotiation", toStage: "negotiation", by: { empId: "ACV-0009", name: "Hira Baig" }, at: "2026-12-08T05:00:00.000Z", reason: null, note: null },
   ],
   handover: null,
+  wonExceptionEligible: false,
 };
 
 describe("M15.2 live deal mapping", () => {
@@ -198,5 +200,18 @@ describe("M15.4 live import and do-not-contact", () => {
   it("blocks the same outgoing kinds as the server; replies, notes and Fiverr inquiries stay allowed", () => {
     expect([...DNC_BLOCKED_KINDS].sort()).toEqual(["call", "email_sent", "linkedin", "meeting", "proposal", "whatsapp"]);
     for (const k of ["reply", "note", "fiverr"] as const) expect(DNC_BLOCKED_KINDS.includes(k)).toBe(false);
+  });
+});
+
+describe("M15.5 archived leads and leavers' leads", () => {
+  it("shows why and when a lead was archived, and that the nightly check did it", () => {
+    const archived = mapLead({ ...view, archived: true, email: null, phone: null, linkedinUrl: null, archive: { at: "2027-12-09T21:00:00.000Z", reason: "inactive", inactiveMonths: 12, lastActivityAt: "2026-12-01T10:00:00.000Z", by: null, clearedFields: ["email", "phone", "linkedinUrl"] } });
+    expect(archived).toMatchObject({ archived: true, email: undefined, archiveInfo: { at: "2027-12-09T21:00:00.000Z", inactiveMonths: 12, lastActivityAt: "2026-12-01T10:00:00.000Z", byJob: true } });
+    expect(mapLead(view).archiveInfo).toBeUndefined();
+  });
+
+  it("maps a leaver whose leads wait for an owner", () => {
+    expect(mapReassignmentIssue({ id: "i1", employee: { empId: "ACV-0012", name: "Kamran Javed" }, reason: "no_recipient", detail: "Nobody holds the sales manager duty", openLeads: 4, openDeals: 1, createdAt: "2026-12-09T19:00:00.000Z" }))
+      .toEqual({ id: "i1", empId: "ACV-0012", name: "Kamran Javed", detail: "Nobody holds the sales manager duty", openLeads: 4, openDeals: 1, since: "2026-12-09T19:00:00.000Z" });
   });
 });

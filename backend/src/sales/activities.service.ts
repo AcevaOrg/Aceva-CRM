@@ -144,6 +144,9 @@ export class ActivitiesService {
     const target_stage = deal ? stageFor(dto) : null;
 
     const result = await this.prisma.$transaction(async (tx) => {
+      // M15.5: the lead's row lock, then "not archived" again: the nightly archiving at the same moment waits, or wins.
+      const live = await tx.$queryRaw<Array<{ archived_at: Date | null }>>`SELECT archived_at FROM sales_leads WHERE id = ${leadId}::uuid FOR SHARE`;
+      if (live[0]?.archived_at) conflict('lead_archived', 'This lead is archived');
       // M15.4: outgoing contact waits for (or sees) a do-not-contact request saved on the lead at the same moment.
       if (outgoing) {
         const dnc = await tx.$queryRaw<Array<{ dnc_at: Date | null }>>`SELECT dnc_at FROM sales_leads WHERE id = ${leadId}::uuid FOR SHARE`;

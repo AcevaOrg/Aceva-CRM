@@ -9,7 +9,8 @@ import { screenLoadsFromServer } from './live-screen';
  * made and moved on the screen, Won asked for by the salesperson and confirmed by the Director (Billing makes one draft
  * invoice), and Lost with a reason from the settings. Module 15.3: a logged call moves a deal forward, a proposal link, and
  * a follow-up completed from My sales day. Module 15.4: a CSV import with its preview, a lead marked do not contact on its
- * page, and the Director adding an email to the do-not-contact list.
+ * page, and the Director adding an email to the do-not-contact list. Module 15.5: the archive period in Settings > Sales,
+ * and the leavers' leads waiting for an owner (sales manager only).
  */
 const HIRA = 'ACV-0009';
 const KAMRAN = 'ACV-0012';
@@ -402,4 +403,30 @@ test('do not contact: the Director adds an email without a lead; the list shows 
   expect((await kamran.get('/sales/do-not-contact')).status()).toBe(403);
   expect((await kamran.post('/sales/do-not-contact', { email: `x.${run}@globex-e2e.test`, reason: 'Not allowed' })).status()).toBe(403);
   await context.close();
+});
+
+// --------------------------------------------------------------------------------- M15.5: archiving and leavers
+
+test('the Director sets the archive period in Settings > Sales (12 months until changed); other settings stay as they were', async ({ browser, playwright }) => {
+  test.setTimeout(150_000);
+  const dir = await apiAs(playwright, DIRECTOR);
+  const before = (await (await dir.get('/settings/modules/sales')).json()).value;
+  expect(before.archiveMonths).toBe(12);
+  const { page, context } = await openAs(browser, DIRECTOR, '/');
+  await screenLoadsFromServer(page, '/settings?section=sales', /\/api\/v1\/settings\/modules\/sales$/);
+  await expect(page.locator('#ss-archive')).toHaveValue('12');
+  await page.locator('#ss-archive').fill('18');
+  await page.getByRole('button', { name: 'Save' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox').fill('Management chose 18 months');
+  const saved = page.waitForResponse((r) => r.url().endsWith('/api/v1/settings/modules/sales') && r.request().method() === 'PUT', { timeout: 30_000 });
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  expect((await saved).status()).toBe(200);
+  await context.close();
+  const after = (await (await dir.get('/settings/modules/sales')).json()).value;
+  expect(after).toEqual({ ...before, archiveMonths: 18 }); // the lost reasons and the re-contact period are untouched
+  // leads waiting for an owner: the sales manager sees the (empty) list; a salesperson may not
+  expect(await (await dir.get('/sales/reassignment-issues')).json()).toEqual([]);
+  const hira = await apiAs(playwright, HIRA);
+  expect((await hira.get('/sales/reassignment-issues')).status()).toBe(403);
 });

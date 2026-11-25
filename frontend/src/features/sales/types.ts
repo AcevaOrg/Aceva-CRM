@@ -35,6 +35,8 @@ export interface Lead {
   notes?: string;
   lastActivityAt?: string;
   archived: boolean;
+  /** M15.5: why and when it was archived (contact details removed after the set months without activity). */
+  archiveInfo?: { at: string; inactiveMonths: number; lastActivityAt: string; byJob: boolean };
   createdAt: string;
   /** Live mode: the version the server has (an edit names it, so a stale screen cannot overwrite a newer change). */
   version?: number;
@@ -95,6 +97,8 @@ export interface Deal {
   version?: number;
   /** Live mode: the server says whether the viewer may confirm or send back the Won request. */
   canDecideWon?: boolean;
+  /** M15.5 follow-up: the Owner may make the exceptional Won decision (the requester left; nobody else can decide). */
+  wonExceptionEligible?: boolean;
 }
 
 export type ActivityKind =
@@ -377,4 +381,15 @@ export interface LoggedActivity {
   activity: SalesActivity;
   stageChange: { from: DealStage; to: DealStage } | null;
   stageNotChanged: StageNotChangedReason | null;
+}
+
+/** M15.5: a leaver whose leads and deals wait for an owner (nobody could receive them automatically). */
+export interface ReassignmentIssue {
+  id: string;
+  empId: string;
+  name: string;
+  detail: string;
+  openLeads: number;
+  openDeals: number;
+  since: string;
 }

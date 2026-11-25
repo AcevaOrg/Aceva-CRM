@@ -187,6 +187,8 @@ export class LeadsService {
       await this.prisma.$transaction(async (tx) => {
         // M15.4: a lead's email cannot be changed to one on the do-not-contact list.
         if (emailNormalized && emailNormalized !== row.emailNormalized) await this.dnc.guardEmail(tx, emailNormalized);
+        // M15.5: a do-not-contact lead's new email goes on the list as well (its protection must survive archiving).
+        if (row.dncAt && emailNormalized && emailNormalized !== row.emailNormalized) await this.dnc.protectLeadEmail(tx, actor.id, id, emailNormalized);
         if (companyChange) {
           const company = await this.companies.resolveForLead(tx, actor, { companyId: dto.companyId, company: dto.company }, client);
           if ((company?.id ?? null) !== row.companyId) {

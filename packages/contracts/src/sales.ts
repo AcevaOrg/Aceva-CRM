@@ -245,9 +245,14 @@ export const salesSettingsSchema = z.object({
    * Null until management sets it; until then no deal can be marked Lost.
    */
   recontactMonths: z.number().int().min(1).max(60).nullable().default(null),
+  /**
+   * M15.5: a lead with no activity for this many months is archived and its contact details removed (plan section 20:
+   * "Leads with no activity for 12 months are archived ... The period is a setting"; approved default 12).
+   */
+  archiveMonths: z.number().int().min(1).max(120).default(12),
 });
 export type SalesSettings = z.infer<typeof salesSettingsSchema>;
-export const SALES_SETTINGS_DEFAULTS: SalesSettings = { sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null };
+export const SALES_SETTINGS_DEFAULTS: SalesSettings = { sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null, archiveMonths: 12 };
 
 // -------------------------------------------------------------------------------------------------------------- views
 
@@ -306,6 +311,8 @@ export interface SalesLeadView {
   canReassign: boolean;
   /** M15.4: a do-not-contact request is saved on the lead (it never goes away; outgoing contact is refused). */
   doNotContact: boolean;
+  /** M15.5: why and when the lead was archived (null while it is not archived). */
+  archive: SalesLeadArchiveView | null;
 }
 
 /** Someone else's lead: only that it exists and who owns it (plan section 20). */
@@ -488,6 +495,11 @@ export interface SalesDealDetailView extends SalesDealView {
   history: SalesDealHistoryView[];
   /** Module 13: the draft invoice made from this Won deal, once the billing reader has handled it. */
   handover: { status: 'drafted' | 'needs_client'; invoiceId: string | null } | null;
+  /**
+   * M15.5 follow-up: true only for someone who may make the exceptional Won decision (sales.won_decide_exception), and only
+   * while every condition holds (the person who asked has left, the deal was moved when they left, nobody else can decide).
+   */
+  wonExceptionEligible: boolean;
 }
 
 /** Someone else's deal: only that it exists and who owns it (no value, no notes). */
@@ -765,3 +777,79 @@ export interface SalesImportResultView {
   committedAt: string;
   committedBy: SalesPersonRef;
 }
+
+// =============================================================================================================== M15.5
+/*
+ * Module 15.5: leads and deals when a salesperson leaves, and archiving inactive leads (plan section 20).
+ *
+ * "Leads belong to Aceva, not to the salesperson. When someone leaves, their leads and deals move to the sales manager on
+ * their last working day (Module 3)." and "Leads with no activity for 12 months are archived and their contact details
+ * removed. The period is a setting." Approved M15.5 rules (decisions 7-9):
+ *  - the receiver is the one active holder of the sales_manager duty; when there is none or more than one, the leaver's
+ *    manager from the event only if active, owning and managing sales leads (sales.own and sales.targets) and not the
+ *    CEO / Owner (view-only); otherwise nothing is moved and the case waits for management (SalesReassignmentIssueView);
+ *  - the leaver's leads that are not archived and their open deals move, a deal waiting for its Won confirmation too, with
+ *    the request kept; Won and Lost deals keep their owner;
+ *  - archiving clears email, phone and LinkedIn and keeps notes, the timeline and the audit trail; never a lead with an
+ *    open deal (a deal waiting for its Won confirmation is open), a Won client's lead, or a lead at a client company; a
+ *    do-not-contact lead may be archived and stays blocked (the list keeps the hash).
+ */
+
+/** Why a lead was archived. M15.5 has one reason: no activity for the set number of months. */
+export const SALES_ARCHIVE_REASONS = ['inactive'] as const;
+export type SalesArchiveReason = (typeof SALES_ARCHIVE_REASONS)[number];
+
+/** The contact details archiving removes (approved decision 9). Notes and the timeline are kept. */
+export const SALES_ARCHIVE_CLEARED_FIELDS = ['email', 'phone', 'linkedinUrl'] as const;
+
+export interface SalesLeadArchiveView {
+  at: string;
+  reason: SalesArchiveReason;
+  /** The archive period in force (months without activity). */
+  inactiveMonths: number;
+  /** The lead's last activity when it was archived. */
+  lastActivityAt: string;
+  /** Who archived it; null when the nightly job did. */
+  by: SalesPersonRef | null;
+  clearedFields: string[];
+}
+
+/** Why a leaver's leads could not be moved. */
+export const SALES_REASSIGNMENT_ISSUE_REASONS = ['no_recipient'] as const;
+export type SalesReassignmentIssueReason = (typeof SALES_REASSIGNMENT_ISSUE_REASONS)[number];
+
+/** GET /sales/reassignment-issues (sales.team or sales.all): leavers whose leads and deals are waiting for an owner. */
+export interface SalesReassignmentIssueView {
+  id: string;
+  employee: SalesPersonRef;
+  reason: SalesReassignmentIssueReason;
+  /** Plain words: how many sales managers were found, and why the leaver's manager could not receive them. */
+  detail: string;
+  /** Still owned by the leaver now (not archived). */
+  openLeads: number;
+  openDeals: number;
+  createdAt: string;
+}
+
+// ===================================================================================================== M15.5 follow-up
+/*
+ * The exceptional Won decision (approved management decision, M15.5 follow-up). When the person who asked for Won has left
+ * and Module 15.5 moved the deal to someone else, the request can be stranded: B1 lets the CEO / Owner confirm only a deal a
+ * Director owns, the new owner never decides their own deal, and there may be no sales manager above them. The holder of
+ * sales.won_decide_exception (the Owner role only) may then confirm it or send it back, with a reason and step-up
+ * re-authentication, on POST /sales/deals/:id/won-exception, only while every condition holds:
+ *  - the deal is open and its Won request pending;
+ *  - the person who asked has left (Module 3 offboarding) and the deal was moved to someone else after the request;
+ *  - the deal is not one a Director owns (B1 applies to those), and no sales manager can decide it the normal way;
+ *  - the decider is neither the current owner nor the person who asked.
+ * Nothing is decided automatically. Each decision is kept in an insert-only record with the original request.
+ */
+export const SALES_WON_EXCEPTION_DECISIONS = ['confirm', 'send_back'] as const;
+export type SalesWonExceptionDecision = (typeof SALES_WON_EXCEPTION_DECISIONS)[number];
+
+export const decideSalesWonExceptionSchema = z.object({
+  decision: z.enum(SALES_WON_EXCEPTION_DECISIONS),
+  reason: decisionReasonSchema,
+  version: versionSchema,
+});
+export type DecideSalesWonExceptionRequest = z.infer<typeof decideSalesWonExceptionSchema>;

@@ -33,9 +33,11 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ModuleSettingsService } from '../settings/module-settings.service';
 import { ActivitiesService } from './activities.service';
+import { ScopeService } from '../access/scope.service';
 import { type SalesAccess, SalesAccessService } from './sales-access.service';
 import { badRequest, conflict, forbidden, notFound } from './sales-errors';
 import { person } from './sales-views';
+import { checkWonException } from './won-exception-rules';
 
 type Tx = Prisma.TransactionClient;
 
@@ -89,6 +91,7 @@ export class DealsService {
     private readonly settings: ModuleSettingsService,
     private readonly clock: Clock,
     private readonly activities: ActivitiesService,
+    private readonly scope: ScopeService,
   ) {}
 
   private today(): string {
@@ -162,6 +165,9 @@ export class DealsService {
       conflict('recontact_later', `Deal ${waiting.number} was lost: this lead may be contacted again from ${after}`, { recontactAfter: after });
     }
     const id = await this.prisma.$transaction(async (tx) => {
+      // M15.5: the lead's row lock, then "not archived" again (the nightly archiving at the same moment waits, or wins).
+      const live = await tx.$queryRaw<Array<{ archived_at: Date | null }>>`SELECT archived_at FROM sales_leads WHERE id = ${lead.id}::uuid FOR SHARE`;
+      if (live[0]?.archived_at) conflict('lead_archived', 'This lead is archived');
       const deal = await tx.salesDeal.create({
         data: {
           leadId: lead.id,
@@ -288,32 +294,7 @@ export class DealsService {
   async confirmWon(actor: Actor, idOrNumber: string, version: number, client: RequestInfo): Promise<SalesDealDetailView> {
     const a = await this.access.of(actor);
     const row = await this.decidable(a, idOrNumber);
-    const now = this.clock.now();
-    await this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.salesDeal.updateMany({
-        where: { id: row.id, version, wonStatus: 'pending' },
-        data: { stage: 'won', wonStatus: 'confirmed', wonConfirmedAt: now, wonConfirmedById: actor.id, closedAt: now, version: { increment: 1 }, updatedBy: actor.id },
-      });
-      if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
-      await tx.salesDealHistory.create({ data: { dealId: row.id, event: 'won_confirmed', fromStage: row.stage, toStage: 'won', actorId: actor.id } });
-      await this.audit.record({ actorId: actor.id, action: 'sales.deal.won_confirmed', targetType: 'sales_deal', targetId: row.number, details: { owner: row.owner.empId, value: row.value.toFixed(2), currency: row.currency }, ...client }, tx);
-      await this.outbox.emit(
-        {
-          type: 'sales.deal.won_confirmed',
-          actor: actor.empId,
-          payload: {
-            dealNumber: row.number,
-            ownerEmpId: row.owner.empId,
-            confirmedByEmpId: actor.empId,
-            client: { partyId: row.company.partyId, name: row.company.name, email: row.lead.email, country: row.company.country ?? row.lead.country },
-            service: SALES_DEAL_SERVICE_LABEL[row.service],
-            value: row.value.toFixed(2),
-            currency: row.currency,
-          },
-        },
-        tx,
-      );
-    });
+    await this.prisma.$transaction((tx) => this.applyConfirm(tx, row, actor, version, client));
     noteActivity({ target: row.number, description: `Confirmed the deal ${row.number} as Won` });
     return this.detail(a, row.id);
   }
@@ -326,15 +307,7 @@ export class DealsService {
     const a = await this.access.of(actor);
     const pending = await this.find(idOrNumber);
     const row = pending.wonStatus === 'pending' && pending.wonRequestedById === actor.id ? pending : await this.decidable(a, idOrNumber);
-    await this.prisma.$transaction(async (tx) => {
-      const { count } = await tx.salesDeal.updateMany({
-        where: { id: row.id, version: dto.version, wonStatus: 'pending' },
-        data: { wonStatus: 'none', wonRequestedAt: null, wonRequestedById: null, version: { increment: 1 }, updatedBy: actor.id },
-      });
-      if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
-      await tx.salesDealHistory.create({ data: { dealId: row.id, event: 'won_rejected', fromStage: row.stage, toStage: row.stage, actorId: actor.id, reason: dto.reason } });
-      await this.audit.record({ actorId: actor.id, action: 'sales.deal.won_rejected', targetType: 'sales_deal', targetId: row.number, reason: dto.reason, ...client }, tx);
-    });
+    await this.prisma.$transaction((tx) => this.applyReject(tx, row, actor, dto.reason, dto.version, client));
     noteActivity({ target: row.number, description: `Sent back the Won request of ${row.number}` });
     return this.detail(a, row.id);
   }
@@ -451,6 +424,67 @@ export class DealsService {
     return row;
   }
 
+
+  /**
+   * The confirmation itself, inside the caller's transaction: the deal becomes Won (only while its version and pending
+   * request are unchanged), the history row, the audit entry and sales.deal.won_confirmed for Module 13. Used by the
+   * normal confirmation and (M15.5 follow-up) by the exceptional decision, which adds its reason and note.
+   */
+  async applyConfirm(tx: Tx, row: DealRow, actor: Actor, version: number, client: RequestInfo, exception?: { reason: string; note: string }): Promise<void> {
+    const now = this.clock.now();
+    const { count } = await tx.salesDeal.updateMany({
+      where: { id: row.id, version, wonStatus: 'pending' },
+      data: { stage: 'won', wonStatus: 'confirmed', wonConfirmedAt: now, wonConfirmedById: actor.id, closedAt: now, version: { increment: 1 }, updatedBy: actor.id },
+    });
+    if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
+    await tx.salesDealHistory.create({ data: { dealId: row.id, event: 'won_confirmed', fromStage: row.stage, toStage: 'won', actorId: actor.id, reason: exception?.reason, note: exception?.note } });
+    await this.audit.record(
+      {
+        actorId: actor.id,
+        action: exception ? 'sales.deal.won_confirmed_exception' : 'sales.deal.won_confirmed',
+        targetType: 'sales_deal',
+        targetId: row.number,
+        reason: exception?.reason,
+        details: { owner: row.owner.empId, value: row.value.toFixed(2), currency: row.currency, ...(exception ? { exception: true, note: exception.note } : {}) },
+        ...client,
+      },
+      tx,
+    );
+    await this.outbox.emit(
+      {
+        type: 'sales.deal.won_confirmed',
+        actor: actor.empId,
+        payload: {
+          dealNumber: row.number,
+          ownerEmpId: row.owner.empId,
+          confirmedByEmpId: actor.empId,
+          client: { partyId: row.company.partyId, name: row.company.name, email: row.lead.email, country: row.company.country ?? row.lead.country },
+          service: SALES_DEAL_SERVICE_LABEL[row.service],
+          value: row.value.toFixed(2),
+          currency: row.currency,
+        },
+      },
+      tx,
+    );
+  }
+
+  /**
+   * Sending a Won request back, inside the caller's transaction: the deal stays open, the request is cleared, the history row
+   * and the audit entry keep the reason. Used by the normal route and (M15.5 follow-up) by the exceptional decision.
+   */
+  async applyReject(tx: Tx, row: DealRow, actor: Actor, reason: string, version: number, client: RequestInfo, exception?: { note: string }): Promise<void> {
+    const { count } = await tx.salesDeal.updateMany({
+      where: { id: row.id, version, wonStatus: 'pending' },
+      data: { wonStatus: 'none', wonRequestedAt: null, wonRequestedById: null, version: { increment: 1 }, updatedBy: actor.id },
+    });
+    if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
+    await tx.salesDealHistory.create({ data: { dealId: row.id, event: 'won_rejected', fromStage: row.stage, toStage: row.stage, actorId: actor.id, reason, note: exception?.note } });
+    await this.audit.record(
+      { actorId: actor.id, action: exception ? 'sales.deal.won_rejected_exception' : 'sales.deal.won_rejected', targetType: 'sales_deal', targetId: row.number, reason, ...(exception ? { details: { exception: true, note: exception.note } } : {}), ...client },
+      tx,
+    );
+  }
+
   /** The deal, when the caller may decide its pending Won request. */
   private async decidable(a: SalesAccess, idOrNumber: string): Promise<DealRow> {
     const row = await this.find(idOrNumber);
@@ -482,6 +516,8 @@ export class DealsService {
         (h): SalesDealHistoryView => ({ event: h.event, fromStage: h.fromStage, toStage: h.toStage, by: h.actor ? person(h.actor) : null, at: h.at.toISOString(), reason: h.reason, note: h.note }),
       ),
       handover: handover ? { status: handover.status, invoiceId: handover.invoiceId } : null,
+      // M15.5 follow-up: only for the holder of sales.won_decide_exception, and only while every condition holds.
+      wonExceptionEligible: a.decideWonException && row.wonStatus === 'pending' ? (await checkWonException(db, this.scope, row, a.actor.id)).ok : false,
     };
   }
 

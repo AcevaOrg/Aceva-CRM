@@ -4,7 +4,7 @@ import { http, isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
 import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
-import { liveFollowUps } from "./live-api";
+import { liveFollowUps, liveReassignmentIssues } from "./live-api";
 import type { DailyTargets, DealStage, ImportRow, LeadSource, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
@@ -176,6 +176,15 @@ export function useRejectWon() {
   return useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dealsApi.rejectWon(id, reason), onSuccess: done });
 }
 
+/** M15.5 follow-up: the Owner's exceptional Won decision (confirm or send back), with a reason. */
+export function useWonException() {
+  const done = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, decision, reason }: { id: string; decision: "confirm" | "send_back"; reason: string }) => dealsApi.decideWonException(id, decision, reason),
+    onSuccess: done,
+  });
+}
+
 export function useSetNextStep() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ id, nextStep, nextStepDate }: { id: string; nextStep: string; nextStepDate: string }) => dealsApi.setNextStep(id, nextStep, nextStepDate), onSuccess: done });
@@ -249,4 +258,12 @@ export function useLiveFollowUps(ownerEmpId?: string) {
   const viewer = useSession((s) => s.empId);
   const own = !ownerEmpId || ownerEmpId === viewer;
   return useQuery({ queryKey: ["sales", "follow-ups", viewer, own ? null : ownerEmpId], queryFn: () => liveFollowUps(own ? undefined : ownerEmpId), enabled: !!viewer && isLive("m15") });
+}
+
+/**
+ * M15.5 (live mode only): leavers whose leads and deals are waiting for an owner, for the sales manager and the CEO / Owner.
+ * Mock mode: none.
+ */
+export function useReassignmentIssues(enabled: boolean) {
+  return useQuery({ queryKey: ["sales", "reassignment-issues"], queryFn: liveReassignmentIssues, enabled: enabled && isLive("m15") });
 }

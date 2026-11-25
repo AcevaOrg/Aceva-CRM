@@ -13,7 +13,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { MakerCheckerNote } from "@/components/shared/approval-relay";
 import { RequireAccess } from "@/components/shared/can";
 import { StatusBadge } from "@/components/shared/chips";
-import { useReason } from "@/components/shared/dialogs";
+import { useReason, useStepUp } from "@/components/shared/dialogs";
 import { EmpChip } from "@/components/shared/emp-chip";
 import { Money } from "@/components/shared/money";
 import { DetailList } from "@/components/shared/pickers";
@@ -25,7 +25,7 @@ import { formatDate, formatDateTime, formatMonthKey } from "@/lib/dates";
 import { ROLE_LABEL } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils";
 import { canConfirmWon, canWorkOn, isSalesManager, wonConfirmerOf } from "../api";
-import { useConfirmWon, useDeal, useLostReasons, useMoveDeal, useRejectWon, useSetProposal } from "../hooks";
+import { useConfirmWon, useDeal, useLostReasons, useMoveDeal, useRejectWon, useSetProposal, useWonException } from "../hooks";
 import { isWebLink, OPEN_STAGES, SERVICE_LABEL, STAGE_META } from "../logic";
 import type { DealDetail, DealStage } from "../types";
 import { FollowUpDialog } from "./follow-up-dialog";
@@ -208,6 +208,8 @@ function DealBody({ d }: { d: DealDetail }) {
                 <Check /> Confirm won
               </Button>
             </div>
+          ) : deal.wonExceptionEligible ? (
+            <WonExceptionActions dealId={deal.id} number={deal.number} />
           ) : isOwner && viewer && isSalesManager(viewer) ? (
             <MakerCheckerNote reason="You own this deal, so you can't confirm it. Nobody approves their own request." />
           ) : !isOwner ? (
@@ -433,5 +435,44 @@ function ProposalCard({ dealId, url, editable }: { dealId: string; url?: string;
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * M15.5 follow-up: the person who asked for Won has left and nobody else can decide, so the CEO / Owner may confirm the deal
+ * or send it back as an exception: a reason and a fresh password check are required; the server checks every condition.
+ */
+function WonExceptionActions({ dealId, number }: { dealId: string; number: string }) {
+  const askReason = useReason();
+  const stepUp = useStepUp();
+  const decide = useWonException();
+  const run = async (decision: "confirm" | "send_back") => {
+    const reason = await askReason({
+      title: decision === "confirm" ? "Confirm Won as an exception" : "Send back as an exception",
+      description: "The person who asked has left and no sales manager can decide this deal. Your reason is kept with the decision and in the audit log.",
+      confirmLabel: decision === "confirm" ? "Confirm won" : "Send back",
+    });
+    if (!reason) return;
+    if (!(await stepUp({ action: `${decision === "confirm" ? "Confirm" : "Send back"} ${number} (exceptional decision)` }))) return;
+    decide.mutate(
+      { id: dealId, decision, reason },
+      {
+        onSuccess: () => toast.success(decision === "confirm" ? "Won confirmed (exceptional decision)" : "Sent back (exceptional decision)"),
+        onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't record the decision."),
+      },
+    );
+  };
+  return (
+    <div className="grid gap-2">
+      <MakerCheckerNote reason="Exceptional decision: the person who asked has left and no sales manager can decide this deal." />
+      <div className="flex gap-2">
+        <Button variant="outline" loading={decide.isPending} onClick={() => run("send_back")}>
+          <X /> Send back
+        </Button>
+        <Button loading={decide.isPending} onClick={() => run("confirm")}>
+          <Check /> Confirm won
+        </Button>
+      </div>
+    </div>
   );
 }

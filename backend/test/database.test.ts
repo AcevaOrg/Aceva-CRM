@@ -140,6 +140,10 @@ describe('seed data integrity', () => {
     // nobody else holds this key
     expect(owner).toContain('sales.won_confirm_director');
     for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_confirm_director');
+    // M15.5 follow-up: the exceptional Won decision is the Owner's alone, and it brings no sales-management right
+    expect(owner).toContain('sales.won_decide_exception');
+    expect(owner).not.toContain('sales.targets');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_decide_exception');
     // everything the old "Owner or CEO" could change now belongs to the Director
     expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.view', 'payroll.export', 'people.approve_hire', 'sales.commission_approve', 'duty.assign']));
   });

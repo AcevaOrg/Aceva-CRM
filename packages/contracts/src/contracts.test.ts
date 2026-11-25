@@ -718,8 +718,9 @@ describe('Module 15.2: deals and pipeline contracts', () => {
 
   it('lost reasons and the re-contact period start unset (nothing invented); stored settings without them still read', async () => {
     const { salesSettingsSchema, SALES_SETTINGS_DEFAULTS } = await import('./sales');
-    expect(SALES_SETTINGS_DEFAULTS).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null });
-    expect(salesSettingsSchema.parse({ sharedWebsiteDomains: [] })).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null });
+    // M15.5 adds the archive period, whose default is the plan's own 12 months (approved decision 9)
+    expect(SALES_SETTINGS_DEFAULTS).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null, archiveMonths: 12 });
+    expect(salesSettingsSchema.parse({ sharedWebsiteDomains: [] })).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null, archiveMonths: 12 });
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], lostReasons: ['Price', 'price'], recontactMonths: 6 }).success).toBe(false);
     expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], lostReasons: ['Price'], recontactMonths: 0 }).success).toBe(false);
   });
@@ -794,5 +795,22 @@ describe('Module 15.4: do-not-contact and import contracts', () => {
     expect(salesImportPreviewSchema.safeParse({ source: 'apollo', ownerEmpId: 'ACV-0009' }).success).toBe(true);
     expect(salesImportPreviewSchema.safeParse({ source: 'newsletter' }).success).toBe(false);
     expect(salesImportPreviewSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('Module 15.5: archiving and leavers contracts', () => {
+  it('the archive period is a setting: 12 months by default, 1 to 120', async () => {
+    const { salesSettingsSchema, SALES_SETTINGS_DEFAULTS } = await import('./sales');
+    expect(SALES_SETTINGS_DEFAULTS.archiveMonths).toBe(12);
+    expect(salesSettingsSchema.parse({ sharedWebsiteDomains: [] }).archiveMonths).toBe(12);
+    expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], archiveMonths: 6 }).success).toBe(true);
+    for (const bad of [0, 121, 1.5]) expect(salesSettingsSchema.safeParse({ sharedWebsiteDomains: [], archiveMonths: bad }).success, String(bad)).toBe(false);
+  });
+
+  it('archiving removes exactly the approved contact details; the reasons are named', async () => {
+    const c = await import('./sales');
+    expect([...c.SALES_ARCHIVE_CLEARED_FIELDS]).toEqual(['email', 'phone', 'linkedinUrl']);
+    expect([...c.SALES_ARCHIVE_REASONS]).toEqual(['inactive']);
+    expect([...c.SALES_REASSIGNMENT_ISSUE_REASONS]).toEqual(['no_recipient']);
   });
 });

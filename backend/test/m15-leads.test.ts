@@ -258,7 +258,8 @@ describe('M15.1 leads and companies', () => {
   it('shared website domains (settings, empty by default) never identify a company', async () => {
     await as(HIRA).put(`${API}/settings/modules/sales`).send({ value: { sharedWebsiteDomains: ['fiverr-test.com'] }, version: 0, reason: 'Marketplace' }).expect(403);
     const current = (await as(HIRA).get(`${API}/settings/modules/sales`).expect(200)).body;
-    expect(current.value).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null }); // nothing invented (M15.2 added the last two)
+    // nothing invented (M15.2 added lostReasons and recontactMonths; M15.5 the archive period, the plan's own 12 months)
+    expect(current.value).toEqual({ sharedWebsiteDomains: [], lostReasons: [], recontactMonths: null, archiveMonths: 12 });
     await put(DIRECTOR, `${API}/settings/modules/sales`).send({ value: { sharedWebsiteDomains: ['fiverr-test.com'] }, version: current.version, reason: 'Profiles on a marketplace say nothing about the company' }).expect(200);
     const a = await newLead(HIRA, { fullName: 'Gig One', email: 'gig1@mail-test.com', source: 'fiverr', company: { name: 'Gig One Studio', website: 'fiverr-test.com/gigone' } }).expect(201);
     const b = await newLead(KAMRAN, { fullName: 'Gig Two', email: 'gig2@mail-test.com', source: 'fiverr', company: { name: 'Gig Two Studio', website: 'https://www.fiverr-test.com/gigtwo' } }).expect(201);
