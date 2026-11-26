@@ -126,6 +126,7 @@ export const NOTIFICATION_LABEL: Record<NotificationType, string> = {
   sales_reply: "New sales reply",
   sales_follow_up: "Sales follow-up due",
   sales_tool_problem: "Sales tool problem",
+  sales_commission_decided: "Commission decision",
   message_mention: "Mention in messages",
   announcement: "Announcement",
   renewal_due: "Subscription renewal",

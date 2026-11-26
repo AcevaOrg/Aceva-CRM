@@ -144,6 +144,15 @@ describe('seed data integrity', () => {
     expect(owner).toContain('sales.won_decide_exception');
     expect(owner).not.toContain('sales.targets');
     for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_decide_exception');
+    // M15.7: the Owner approves the Director's own commission and decides leaver-held commission (nobody else holds it);
+    // holding or rejecting a line is the Director's and the Finance duty's, never the Owner's
+    expect(owner).toContain('sales.commission_approve_director');
+    expect(owner).not.toContain('sales.commission_hold');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.commission_approve_director');
+    expect(await keys('director')).toContain('sales.commission_hold');
+    const financeDuty = (await prisma.dutyPermission.findMany({ where: { duty: { key: 'finance' } }, include: { permission: true } })).map((p) => p.permission.key);
+    expect(financeDuty).toEqual(expect.arrayContaining(['sales.commission_view', 'sales.commission_hold']));
+    expect(financeDuty).not.toContain('sales.commission_approve');
     // everything the old "Owner or CEO" could change now belongs to the Director
     expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.view', 'payroll.export', 'people.approve_hire', 'sales.commission_approve', 'duty.assign']));
   });

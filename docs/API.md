@@ -903,6 +903,60 @@ to Won); a jump or the stage a deal is in now is never counted.
 **Audit actions:** `sales.targets.daily_set`, `sales.targets.monthly_set`, `sales.daily_log.saved`,
 `sales.proof.requested`, `sales.proof.answered`, `sales.proof.closed`. Module 4 records each successful change.
 
+## Module 15, part 7: sales commission
+
+Plan section 20 ("Commission"), with the approved M15.7 scope. Finance screens: 10 minutes idle, and **404** for anyone
+without access (also where the service decides access itself). Module 15 never writes to the ledger; approved lines reach
+payroll through a separate, reviewed Module 8 change (not part of this module).
+
+**The baseline:** one immutable row (`sales_commission_baseline`), recorded once when the background workers first start
+with this module. It is the internal eligibility boundary: only an invoice whose **completing payment was posted**
+(`journal_entries.posted_at`) at or after it can earn commission. The moment an event is handled and the payment's own
+(backdatable) date never count. Deals confirmed Won before it get a legacy eligibility snapshot, judged at that moment.
+
+**When a line is made:** the deal's **own** invoice (`invoices.source_deal_number`) is fully paid by posted allocations,
+seen through the Module 13 event `billing.invoice.paid` or the daily reconciliation (01:00 Pakistan time), which finds any
+deal invoice still without a line (a missed event). Partial payments make nothing. One line per deal, per invoice and per
+event (unique), made under the deal's lock: repeats and concurrent runs make nothing twice. Skips are audited once
+(`sales.commission.skipped`: `paid_before_baseline`, `earner_not_eligible_at_won`, `no_eligibility_snapshot`, `deal_not_won`).
+
+**The amount:** the collected base is the posted allocations, in the invoice's currency; the PKR base is each allocation
+at its own payment's recorded exchange rate, rounded half up per allocation; amount = PKR base x rate / 100, rounded half
+up to 2 decimals, **in PKR** (also a database CHECK). The line keeps the rule version and the rate; the rule applied is the
+one in force on the Pakistan day of the posting.
+
+**Eligibility and the earner:** fixed once per Won deal (`sales_commission_eligibility`, insert-only), at the Won
+confirmation: the deal owner, if sales staff under the M15.6 rule (on notice still counts; never the Owner role). Later
+department, role or status changes never change it; no split. When the line is calculated, an earner whose status is
+**left** is held (`earner_left`) for the Owner's final-settlement decision; on notice is not held.
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /sales/commission?status&empId` | own lines (`sales.own`), team (`sales.targets`, reporting line), all (`sales.commission_view`) | `{ scope, lines, totals }`; totals per status: count, PKR commission, collected per currency (never converted) |
+| `GET /sales/commission/:id` | as above | the line with its history and `can` (what the viewer may do now) |
+| `GET /sales/commission/rules` | `sales.commission_approve` (Director), `sales.commission_approve_director` (Owner) | `{ current, versions, baselineAt, baselineDay }` |
+| `PUT /sales/commission/rules {ratePercent, effectiveFrom, reason}` | Director, **step-up** | a new insert-only version; the **first** rule starts exactly on the baseline day (400 `first_rule_baseline_day`; also a trigger), later ones today or later (400 `rule_in_past`); 409 `baseline_missing`; lines waiting for a rate are calculated with the rule in force on their paid day |
+| `POST /sales/commission/:id/approve {version, reason?}` | Director (normal lines); the Director's own line: **only the Owner**, with **step-up** and a reason | from calculated or a manual hold; sets the payroll month (the month of approval); sends `sales.commission.approved`; never your own (403 `self_approval`) |
+| `POST /sales/commission/:id/reject {reason, version}` | normal lines: the Director or `sales.commission_hold` (Director, Finance duty); the Director's own line: **only the Owner**, with step-up | from calculated, held (manual) or approved (not yet in payroll); final |
+| `POST /sales/commission/:id/hold {reason, version}` | `sales.commission_hold` (Director, Finance duty), **normal lines only** | from calculated or approved, for example after a refund or a payment reversal (neither is signalled automatically; no automatic clawback) |
+| `POST /sales/commission/:id/leaver-decision {decision: pay\|forfeit, reason, version}` | the Owner (`sales.commission_approve_director`), **step-up** | only for a line held because the earner left; recorded once |
+
+**Statuses:** `waiting_rate`, `calculated`, `approved`, `rejected`, `held`, `included` (set only by the separate Module 8 change; nothing in M15.7 sets it).
+Errors: 409 `stale_version`, `invalid_transition`, `leaver_decision` (use the leaver route), 403 `self_approval`,
+`not_allowed`, `step_up_required`.
+
+**Approvals inbox:** type `commission` (the Director: normal lines; the Owner: the Director's own lines and leaver-held
+lines). The Owner's decisions need step-up, so the inbox answers 409 `decide_on_commission_page` for them.
+
+**Notifications (Module 12):** `approval_waiting` to the Director (normal line) or the Owner (the Director's own line;
+a leaver-held line); `sales_commission_decided` to the earner when their line is approved, rejected or put on hold
+(active earners only).
+
+**Database:** the baseline, eligibility snapshots, rules and the line history are insert-only; no rule before the baseline,
+and the first on its day; a line needs the eligible snapshot of its deal and a completing payment posted at or after the
+baseline; a line's identity and amounts never change once set; statuses only move forward; an approval is written only by
+the move into approved; `rejected` and `included` are final; nobody decides their own line (CHECK); no delete.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

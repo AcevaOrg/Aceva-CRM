@@ -604,6 +604,16 @@ model Employee {
   salesProofRequests      SalesProofRequest[]       @relation("SalesProofFor")
   salesProofRequested     SalesProofRequest[]       @relation("SalesProofRequestedBy")
   salesProofClosed        SalesProofRequest[]       @relation("SalesProofClosedBy")
+  // Module 15.7: commission
+  salesCommissionRulesSet       SalesCommissionRule[]      @relation("SalesCommissionRuleSetBy")
+  salesCommissionEarned         SalesCommissionLine[]      @relation("SalesCommissionEarner")
+  salesCommissionWonOwned       SalesCommissionLine[]      @relation("SalesCommissionWonOwner")
+  salesCommissionHeld           SalesCommissionLine[]      @relation("SalesCommissionHeldBy")
+  salesCommissionApproved       SalesCommissionLine[]      @relation("SalesCommissionApprovedBy")
+  salesCommissionRejected       SalesCommissionLine[]      @relation("SalesCommissionRejectedBy")
+  salesCommissionLeaverDecided  SalesCommissionLine[]      @relation("SalesCommissionLeaverDecidedBy")
+  salesCommissionEvents         SalesCommissionLineEvent[]
+  salesCommissionEligibility    SalesCommissionEligibility[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -2537,6 +2547,8 @@ model Invoice {
   lines         InvoiceLine[]
   allocations   PaymentAllocation[]
   recurringRule RecurringBillingRule?  @relation(fields: [recurringRuleId], references: [id])
+  /// Module 15.7: the commission line of a deal's own invoice (a relation only; no column on invoices).
+  salesCommissionLine SalesCommissionLine?
   assignedTo    Employee?              @relation("InvoiceAssignee", fields: [assignedToId], references: [id])
   reminders     InvoiceReminder[]
   emails        BillingCustomerEmail[]
@@ -3808,6 +3820,8 @@ model SalesDeal {
   history        SalesDealHistory[]
   activities     SalesActivity[]
   wonExceptions  SalesWonException[]
+  commissionLine SalesCommissionLine?
+  commissionEligibility SalesCommissionEligibility?
 
   @@index([ownerId, stage])
   @@index([leadId])
@@ -4136,4 +4150,206 @@ model SalesProofRequest {
   @@index([employeeId, day])
   @@index([status])
   @@map("sales_proof_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.7: sales commission (plan section 20 "Commission"; the approved M15.7 scope).
+// ---------------------------------------------------------------------------
+
+/// waiting_rate: paid, but no commission rule was in force on the paid day yet. included: taken into a payroll run (M8).
+enum SalesCommissionStatus {
+  waiting_rate
+  calculated
+  approved
+  rejected
+  held
+  included
+
+  @@map("sales_commission_status")
+}
+
+/// earner_left: the earner was no longer active when the invoice became fully paid (the Owner decides). manual: held by the
+/// Director or the Finance duty, for example after a refund or a payment reversal (neither is signalled automatically).
+enum SalesCommissionHoldReason {
+  earner_left
+  manual
+
+  @@map("sales_commission_hold_reason")
+}
+
+/// The Owner's final-settlement decision on a leaver-held line.
+enum SalesCommissionLeaverDecision {
+  pay
+  forfeit
+
+  @@map("sales_commission_leaver_decision")
+}
+
+/// How a deal's eligibility was fixed: at its Won confirmation, or (a deal confirmed before the baseline) at the baseline.
+enum SalesCommissionEligibilityBasis {
+  won_confirmation
+  legacy_baseline
+
+  @@map("sales_commission_eligibility_basis")
+}
+
+/// What made a line: the "invoice paid" event, or the daily reconciliation (a missed event).
+enum SalesCommissionLineSource {
+  event
+  reconciliation
+
+  @@map("sales_commission_line_source")
+}
+
+enum SalesCommissionEventKind {
+  waiting_rate
+  calculated
+  approved
+  rejected
+  held
+  leaver_decided
+  included
+
+  @@map("sales_commission_event_kind")
+}
+
+/// The one M15.7 baseline (insert-only, a single row): the internal eligibility boundary. Only invoices whose completing
+/// payment was posted at or after it can earn commission; the first rule starts on its business day.
+model SalesCommissionBaseline {
+  id          Int      @id @default(1)
+  baselineAt  DateTime @map("baseline_at") @db.Timestamptz(3)
+  /// The Pakistan business day of baselineAt (also a CHECK).
+  businessDay DateTime @map("business_day") @db.Date
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("sales_commission_baseline")
+}
+
+/// Whether a Won deal's owner may earn commission, fixed once (insert-only): at the Won confirmation, or at the baseline
+/// for a deal confirmed before it. Later department, role or status changes never change it.
+model SalesCommissionEligibility {
+  id             String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId         String                          @unique @map("deal_id") @db.Uuid
+  /// The deal owner at Won confirmation (the earner if eligible).
+  earnerId       String                          @map("earner_id") @db.Uuid
+  eligible       Boolean
+  basis          SalesCommissionEligibilityBasis
+  evaluatedAt    DateTime                        @map("evaluated_at") @db.Timestamptz(3)
+  /// What the rule saw (for the record): department code, role key, employment status.
+  departmentCode String                          @map("department_code")
+  roleKey        String                          @map("role_key")
+  status         String
+  createdAt      DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  deal   SalesDeal            @relation(fields: [dealId], references: [id])
+  earner Employee             @relation(fields: [earnerId], references: [id])
+  line   SalesCommissionLine?
+
+  @@map("sales_commission_eligibility")
+}
+
+/// A version of the company commission rule (insert-only; the rule in force on a day is the latest version whose
+/// effective day is on or before it). Only the Director sets it, with step-up and a reason.
+model SalesCommissionRule {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version       Int      @unique
+  /// Percent of the collected PKR value, 0.01 to 100.
+  ratePercent   Decimal  @map("rate_percent") @db.Decimal(5, 2)
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  reason        String
+  setById       String   @map("set_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  setBy Employee              @relation("SalesCommissionRuleSetBy", fields: [setById], references: [id])
+  lines SalesCommissionLine[]
+
+  @@index([effectiveFrom])
+  @@map("sales_commission_rules")
+}
+
+/// One commission line per Won deal, from the deal's own invoice once it is fully paid by posted payments. The amount is
+/// in PKR: the collected base converted with each payment's recorded exchange rate (never an invented rate).
+model SalesCommissionLine {
+  id                String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId            String                         @unique @map("deal_id") @db.Uuid
+  invoiceId         String                         @unique @map("invoice_id") @db.Uuid
+  /// The billing.invoice.paid outbox event this line came from (null when the reconciliation made it).
+  paidEventId       String?                        @unique @map("paid_event_id") @db.Uuid
+  source            SalesCommissionLineSource
+  /// The deal's eligibility snapshot (eligible), fixed at Won confirmation or at the baseline.
+  eligibilityId     String                         @unique @map("eligibility_id") @db.Uuid
+  earnerId          String                         @map("earner_id") @db.Uuid
+  /// The deal owner at Won confirmation (frozen; always the earner: no split commission).
+  wonOwnerId        String                         @map("won_owner_id") @db.Uuid
+  invoiceCurrency   Currency                       @map("invoice_currency")
+  /// The posted allocations of the invoice, in its currency.
+  collectedBase     Decimal                        @map("collected_base") @db.Decimal(14, 2)
+  /// The same allocations in PKR, each at its payment's recorded exchange rate (rounded half up per allocation).
+  basePkr           Decimal                        @map("base_pkr") @db.Decimal(14, 2)
+  /// When the completing payment's ledger entry was posted (the invoice became fully paid); at or after the baseline.
+  fullyPaidAt       DateTime                       @map("fully_paid_at") @db.Timestamptz(3)
+  /// The Pakistan business day of fullyPaidAt (never the payment's own, backdatable date). The rule in force on it applies.
+  paidOn            DateTime                       @map("paid_on") @db.Date
+  ruleId            String?                        @map("rule_id") @db.Uuid
+  ruleVersion       Int?                           @map("rule_version")
+  ratePercent       Decimal?                       @map("rate_percent") @db.Decimal(5, 2)
+  /// The commission, in PKR (null only while waiting for a rate).
+  amount            Decimal?                       @db.Decimal(14, 2)
+  currency          Currency                       @default(PKR)
+  status            SalesCommissionStatus
+  calculatedAt      DateTime?                      @map("calculated_at") @db.Timestamptz(3)
+  holdReason        SalesCommissionHoldReason?     @map("hold_reason")
+  holdNote          String?                        @map("hold_note")
+  heldById          String?                        @map("held_by_id") @db.Uuid
+  heldAt            DateTime?                      @map("held_at") @db.Timestamptz(3)
+  approvedById      String?                        @map("approved_by_id") @db.Uuid
+  approvedAt        DateTime?                      @map("approved_at") @db.Timestamptz(3)
+  /// The payroll month the approval is for (M8 takes the line into the next editable run from this month on).
+  payrollMonth      String?                        @map("payroll_month")
+  rejectedById      String?                        @map("rejected_by_id") @db.Uuid
+  rejectedAt        DateTime?                      @map("rejected_at") @db.Timestamptz(3)
+  rejectReason      String?                        @map("reject_reason")
+  leaverDecision    SalesCommissionLeaverDecision? @map("leaver_decision")
+  leaverDecidedById String?                        @map("leaver_decided_by_id") @db.Uuid
+  leaverDecidedAt   DateTime?                      @map("leaver_decided_at") @db.Timestamptz(3)
+  leaverReason      String?                        @map("leaver_reason")
+  includedAt        DateTime?                      @map("included_at") @db.Timestamptz(3)
+  version           Int                            @default(1)
+  createdAt         DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  deal            SalesDeal                  @relation(fields: [dealId], references: [id])
+  invoice         Invoice                    @relation(fields: [invoiceId], references: [id])
+  earner          Employee                   @relation("SalesCommissionEarner", fields: [earnerId], references: [id])
+  wonOwner        Employee                   @relation("SalesCommissionWonOwner", fields: [wonOwnerId], references: [id])
+  rule            SalesCommissionRule?       @relation(fields: [ruleId], references: [id])
+  eligibility     SalesCommissionEligibility @relation(fields: [eligibilityId], references: [id])
+  heldBy          Employee?                  @relation("SalesCommissionHeldBy", fields: [heldById], references: [id])
+  approvedBy      Employee?                  @relation("SalesCommissionApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy      Employee?                  @relation("SalesCommissionRejectedBy", fields: [rejectedById], references: [id])
+  leaverDecidedBy Employee?                  @relation("SalesCommissionLeaverDecidedBy", fields: [leaverDecidedById], references: [id])
+  events          SalesCommissionLineEvent[]
+
+  @@index([earnerId, status])
+  @@index([status])
+  @@map("sales_commission_lines")
+}
+
+/// Every step of a commission line, insert-only (calculated, waiting for a rate, held, approved, rejected, leaver
+/// decision, included in payroll). actorId null = the system.
+model SalesCommissionLineEvent {
+  id         String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lineId     String                   @map("line_id") @db.Uuid
+  event      SalesCommissionEventKind
+  fromStatus SalesCommissionStatus?   @map("from_status")
+  toStatus   SalesCommissionStatus    @map("to_status")
+  actorId    String?                  @map("actor_id") @db.Uuid
+  reason     String?
+  at         DateTime                 @default(now()) @db.Timestamptz(3)
+
+  line  SalesCommissionLine @relation(fields: [lineId], references: [id])
+  actor Employee?           @relation(fields: [actorId], references: [id])
+
+  @@index([lineId, at])
+  @@map("sales_commission_line_events")
 }

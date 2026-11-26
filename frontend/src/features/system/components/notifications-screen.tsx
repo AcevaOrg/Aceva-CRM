@@ -30,6 +30,7 @@ const ICON: Record<NotificationType, React.ElementType> = {
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
   invoice_due: CreditCard, invoice_draft_ready: CreditCard, usage_alert: Gauge,
   message_new: MessageSquare, message_reply: MessageSquareReply, meeting_invited: CalendarDays, meeting_cancelled: CalendarDays,
+  sales_commission_decided: Wallet,
 };
 
 /** Email preference groups; a group shows only to people who can receive those notifications. */
@@ -41,7 +42,7 @@ const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Perm
   { title: "Pay and results", types: ["payslip_available", "scorecard_released"] },
   { title: "Messages", types: ["message_new", "message_reply", "message_mention", "announcement", "meeting_invited", "meeting_cancelled"] },
   { title: "Security", types: ["security_alert"] },
-  { title: "Sales", types: ["sales_reply", "sales_follow_up"], permission: "sales.own" },
+  { title: "Sales", types: ["sales_reply", "sales_follow_up", "sales_commission_decided"], permission: "sales.own" },
   { title: "Sales tools", types: ["sales_tool_problem"], permission: "integrations.view" },
   { title: "Finance", types: ["renewal_due", "invoice_overdue", "invoice_due", "invoice_draft_ready", "usage_alert"], permission: "billing.view" },
 ];

@@ -1074,3 +1074,168 @@ export interface SalesDashboardView {
   leadsByCountry: Array<{ country: string; count: number }>;
   people: SalesPersonProgressView[];
 }
+
+// =============================================================================================================== M15.7
+
+/**
+ * Module 15.7: sales commission (plan section 20: "the Director sets the commission rules ... Commission is calculated
+ * when the client's first invoice is paid, approved by the Director, and sent to payroll as a bonus line (Module 8)").
+ * Approved scope:
+ *  - one company rule, versioned and insert-only, set by the Director only (step-up, reason, audit); a line keeps the
+ *    rule version and rate it used;
+ *  - one immutable baseline (sales_commission_baseline) is the eligibility boundary: a line is made only when the deal's
+ *    OWN invoice became fully paid by a payment POSTED at or after it (never the event's handling time, never the payment's
+ *    own date); partial payments make nothing; the first rule starts on the baseline's business day; a daily
+ *    reconciliation finds any missed invoice (idempotent);
+ *  - the base is what was collected: the posted allocations, and in PKR each allocation at its payment's recorded
+ *    exchange rate (never an invented rate); amount = PKR base x rate / 100, rounded half up to 2 decimals, in PKR;
+ *  - the earner is the deal owner at Won confirmation (frozen, no split); eligibility (sales staff under the M15.6 rule, on
+ *    notice still counting, never the Owner) is fixed then, or at the baseline for a deal Won before it; only an earner
+ *    who has LEFT by the time it is calculated is held for the Owner;
+ *  - the Director approves or rejects normal lines (never their own); only the Owner decides the Director's own lines and
+ *    lines held because the earner left (step-up and a reason); the Director and the Finance duty hold or reject NORMAL
+ *    lines by hand (refunds and payment reversals are not signalled automatically; no automatic clawback);
+ *  - Module 15 never writes to the ledger; approved lines reach payroll through a separate, reviewed Module 8 change.
+ */
+export const SALES_COMMISSION_STATUSES = ['waiting_rate', 'calculated', 'approved', 'rejected', 'held', 'included'] as const;
+export const salesCommissionStatusSchema = z.enum(SALES_COMMISSION_STATUSES);
+export type SalesCommissionStatus = z.infer<typeof salesCommissionStatusSchema>;
+
+export const SALES_COMMISSION_STATUS_LABEL: Record<SalesCommissionStatus, string> = {
+  waiting_rate: 'Waiting for a rate',
+  calculated: 'Waiting for approval',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  held: 'On hold',
+  included: 'In payroll',
+};
+
+export type SalesCommissionHoldReason = 'earner_left' | 'manual';
+export type SalesCommissionLeaverDecision = 'pay' | 'forfeit';
+
+/** A percentage with up to 2 decimals, from 0.01 to 100 ("10" or "10.00"). */
+export const commissionRateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{1,3}(\.\d{1,2})?$/, 'A rate looks like 10 or 7.50')
+  .refine((v) => Number(v) > 0 && Number(v) <= 100, 'The rate is more than 0 and at most 100 percent');
+
+/** PUT /sales/commission/rules (the Director, with step-up): a new version of the company rule. */
+export const setSalesCommissionRuleSchema = z.object({
+  ratePercent: commissionRateSchema,
+  /** The first rule: exactly the baseline's business day; later rules: today or later. */
+  effectiveFrom: daySchema,
+  reason: decisionReasonSchema,
+});
+export type SetSalesCommissionRuleRequest = z.infer<typeof setSalesCommissionRuleSchema>;
+
+export const salesCommissionListQuerySchema = z.object({
+  status: salesCommissionStatusSchema.optional(),
+  empId: empIdSchema.optional(),
+});
+export type SalesCommissionListQuery = z.infer<typeof salesCommissionListQuerySchema>;
+
+/**
+ * Approve: the version read (another change at the same moment: 409 stale_version). The Owner's approval of the Director's
+ * own line also needs a reason (and a fresh step-up).
+ */
+export const approveSalesCommissionSchema = z.object({ version: z.number().int().min(1), reason: decisionReasonSchema.optional() });
+export type ApproveSalesCommissionRequest = z.infer<typeof approveSalesCommissionSchema>;
+
+/** Reject or hold: a reason (at least 5 characters) and the version read. */
+export const decideSalesCommissionSchema = z.object({ reason: decisionReasonSchema, version: z.number().int().min(1) });
+export type DecideSalesCommissionRequest = z.infer<typeof decideSalesCommissionSchema>;
+
+/** The Owner's final-settlement decision on a line held because the earner left (step-up). */
+export const salesCommissionLeaverDecisionSchema = z.object({
+  decision: z.enum(['pay', 'forfeit']),
+  reason: decisionReasonSchema,
+  version: z.number().int().min(1),
+});
+export type SalesCommissionLeaverDecisionRequest = z.infer<typeof salesCommissionLeaverDecisionSchema>;
+
+export interface SalesCommissionRuleView {
+  version: number;
+  ratePercent: string;
+  effectiveFrom: string;
+  reason: string;
+  setBy: SalesPersonRef;
+  setAt: string;
+}
+
+export interface SalesCommissionRulesView {
+  /** The rule in force today (null: none yet, so paid invoices wait for a rate). */
+  current: SalesCommissionRuleView | null;
+  /** Every version, newest first. */
+  versions: SalesCommissionRuleView[];
+  /** The M15.7 baseline: only invoices whose completing payment was posted at or after it earn commission (null: not recorded). */
+  baselineAt: string | null;
+  /** Its Pakistan business day: the first rule starts on it. */
+  baselineDay: string | null;
+}
+
+export interface SalesCommissionEventView {
+  event: 'waiting_rate' | 'calculated' | 'approved' | 'rejected' | 'held' | 'leaver_decided' | 'included';
+  fromStatus: SalesCommissionStatus | null;
+  toStatus: SalesCommissionStatus;
+  by: SalesPersonRef | null;
+  reason: string | null;
+  at: string;
+}
+
+export interface SalesCommissionLineView {
+  id: string;
+  version: number;
+  dealId: string;
+  dealNumber: string;
+  invoiceNumber: string;
+  companyName: string;
+  earner: SalesPersonRef;
+  /** The deal owner at Won confirmation (always the earner). */
+  wonOwner: SalesPersonRef;
+  /** How eligibility was fixed: at the Won confirmation, or (a deal Won before the baseline) at the baseline. */
+  eligibility: { basis: 'won_confirmation' | 'legacy_baseline'; at: string };
+  /** event: the "invoice paid" event; reconciliation: the daily check found it (a missed event). */
+  source: 'event' | 'reconciliation';
+  invoiceCurrency: Currency;
+  /** Collected, in the invoice's currency. */
+  collectedBase: string;
+  /** Collected, in PKR at each payment's recorded rate (equal to collectedBase for a PKR invoice). */
+  basePkr: string;
+  /** When the completing payment's ledger entry was posted (the invoice became fully paid). */
+  fullyPaidAt: string;
+  /** Its Pakistan business day (the rule in force on it applies); never the payment's own date. */
+  paidOn: string;
+  ruleVersion: number | null;
+  ratePercent: string | null;
+  /** The commission in PKR (null while waiting for a rate). */
+  amount: string | null;
+  currency: 'PKR';
+  status: SalesCommissionStatus;
+  calculatedAt: string | null;
+  hold: { reason: SalesCommissionHoldReason; note: string | null; by: SalesPersonRef | null; at: string } | null;
+  approval: { by: SalesPersonRef; at: string; payrollMonth: string } | null;
+  rejection: { by: SalesPersonRef | null; at: string; reason: string } | null;
+  leaverDecision: { decision: SalesCommissionLeaverDecision; by: SalesPersonRef; at: string; reason: string } | null;
+  /** Module 8: when the line was taken into a payroll run (null until then). */
+  includedAt: string | null;
+  /** What the viewer may do on this line now (the server checks again). */
+  can: { approve: boolean; reject: boolean; hold: boolean; decideLeaver: boolean };
+  history: SalesCommissionEventView[];
+}
+
+export interface SalesCommissionTotals {
+  status: SalesCommissionStatus;
+  count: number;
+  /** PKR commission (lines waiting for a rate have none). */
+  amount: string;
+  /** Collected per invoice currency, never converted. */
+  collected: Array<{ currency: Currency; total: string }>;
+}
+
+export interface SalesCommissionListView {
+  /** own: the viewer's own lines; team: their reporting line; all: every line. */
+  scope: 'own' | 'team' | 'all';
+  lines: SalesCommissionLineView[];
+  totals: SalesCommissionTotals[];
+}

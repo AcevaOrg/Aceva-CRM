@@ -24,6 +24,7 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey } from "@/lib/dates";
 import { canDecideCommission, isSalesManager, type CommissionRow } from "../api";
 import { isLive } from "@/lib/api/http";
+import { LiveCommissionTab } from "./commission-live";
 import { LiveTargetsTab } from "./performance-live";
 import { useAddDnc, useApproveCommission, useCommission, useDnc, useRejectCommission, useSaveTargets, useTargets, useUpdateCommissionRule } from "../hooks";
 import type { CommissionStatus, DailyTargets, DncEntry, MonthlyTargets } from "../types";
@@ -41,7 +42,8 @@ export function TargetsScreen() {
 function TargetsInner() {
   const viewer = useViewer();
   const canTargets = !!viewer?.can(["sales.targets", "sales.own"]);
-  const canCommission = !!viewer?.can(["sales.commission_view", "sales.commission_approve"]);
+  // M15.7 live: salespeople see their own lines and sales managers their team's (the server decides which lines).
+  const canCommission = !!viewer?.can(["sales.commission_view", "sales.commission_approve", ...(isLive("m15") ? (["sales.own", "sales.commission_approve_director"] as const) : [])]);
   // M15.4: the list is for the sales manager (the CEO / Owner views it); only the sales manager adds an email to it.
   const canDnc = !!viewer?.can(["sales.team", "sales.all"]);
   const first: Tab = canTargets ? "targets" : canCommission ? "commission" : "dnc";
@@ -70,7 +72,7 @@ function TargetsInner() {
         )}
         {canCommission && (
           <TabsContent value="commission">
-            <CommissionTab />
+            {isLive("m15") ? <LiveCommissionTab /> : <CommissionTab />}
           </TabsContent>
         )}
         {canDnc && (

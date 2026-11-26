@@ -6,7 +6,8 @@ import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, s
 import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
 import { liveFollowUps, liveReassignmentIssues } from "./live-api";
 import { performanceApi } from "./performance-live";
-import type { SetSalesDailyTargetsRequest, SetSalesMonthlyTargetsRequest, SubmitSalesDailyLogRequest } from "@aceva/contracts";
+import { liveCommissionApi } from "./commission-live";
+import type { SalesCommissionStatus, SetSalesCommissionRuleRequest, SetSalesDailyTargetsRequest, SetSalesMonthlyTargetsRequest, SubmitSalesDailyLogRequest } from "@aceva/contracts";
 import type { DailyTargets, DealStage, ImportRow, LeadSource, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
@@ -314,4 +315,37 @@ export function useLiveDashboard(month?: string) {
 }
 export function useLiveProgress(empId?: string) {
   return useQuery({ queryKey: ["sales", "perf", "progress", empId ?? null], queryFn: () => performanceApi.progress(empId), enabled: LIVE_M15() });
+}
+
+/* ---------------- M15.7 (live mode): commission ---------------- */
+
+export function useLiveCommission(status?: SalesCommissionStatus) {
+  return useQuery({ queryKey: ["sales", "commission", "lines", status ?? null], queryFn: () => liveCommissionApi.list(status), enabled: LIVE_M15() });
+}
+/** Only the Director and the Owner may read the rules (the server answers 404 to everyone else). */
+export function useLiveCommissionRules(enabled: boolean) {
+  return useQuery({ queryKey: ["sales", "commission", "rules"], queryFn: () => liveCommissionApi.rules(), enabled: LIVE_M15() && enabled });
+}
+export function useSetCommissionRule() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesCommissionRuleRequest) => liveCommissionApi.setRule(body), onSuccess: done });
+}
+export function useApproveCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, version, reason }: { id: string; version: number; reason?: string }) => liveCommissionApi.approve(id, { version, ...(reason ? { reason } : {}) }), onSuccess: done });
+}
+export function useRejectCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, reason, version }: { id: string; reason: string; version: number }) => liveCommissionApi.reject(id, { reason, version }), onSuccess: done });
+}
+export function useHoldCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, reason, version }: { id: string; reason: string; version: number }) => liveCommissionApi.hold(id, { reason, version }), onSuccess: done });
+}
+export function useCommissionLeaverDecision() {
+  const done = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, decision, reason, version }: { id: string; decision: "pay" | "forfeit"; reason: string; version: number }) => liveCommissionApi.leaverDecision(id, { decision, reason, version }),
+    onSuccess: done,
+  });
 }

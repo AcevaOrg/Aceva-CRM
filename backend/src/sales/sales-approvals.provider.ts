@@ -8,7 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { Prisma } from '../generated/prisma/client';
 import { DealsService, DIRECTOR_LEVEL } from './deals.service';
 import { SalesAccessService } from './sales-access.service';
-import { badRequest } from './sales-errors';
+import { SalesCommissionService } from './sales-commission.service';
+import { badRequest, conflict } from './sales-errors';
 
 /**
  * Module 15's items in the approvals inbox: Won requests ("won_deal") wait for the sales manager of the deal's owner
@@ -19,7 +20,7 @@ import { badRequest } from './sales-errors';
 @Injectable()
 export class SalesApprovalsProvider implements ApprovalProvider, OnModuleInit {
   readonly key = 'sales';
-  readonly types: readonly ApprovalTypeName[] = ['won_deal'];
+  readonly types: readonly ApprovalTypeName[] = ['won_deal', 'commission'];
 
   constructor(
     private readonly inbox: ApprovalsInbox,
@@ -27,6 +28,7 @@ export class SalesApprovalsProvider implements ApprovalProvider, OnModuleInit {
     private readonly access: SalesAccessService,
     private readonly scope: ScopeService,
     private readonly deals: DealsService,
+    private readonly commission: SalesCommissionService,
   ) {}
 
   onModuleInit(): void {
@@ -34,6 +36,31 @@ export class SalesApprovalsProvider implements ApprovalProvider, OnModuleInit {
   }
 
   async list(actor: Actor): Promise<ApprovalItemView[]> {
+    return [...(await this.wonItems(actor)), ...(await this.commissionItems(actor))];
+  }
+
+  /**
+   * M15.7: commission lines waiting for this person (the Director: normal lines; the Owner: the Director's own lines and
+   * lines held because the earner left). Decisions that need step-up (the Owner's) are made on the commission screen.
+   */
+  private async commissionItems(actor: Actor): Promise<ApprovalItemView[]> {
+    const lines = await this.commission.waitingFor(actor);
+    return lines.map((l) => ({
+      id: `commission:${l.id}`,
+      type: 'commission',
+      refId: l.id,
+      refNumber: l.dealNumber,
+      title: `Commission: ${l.companyName}`,
+      subtitle: `${l.earner.name} · PKR ${l.amount ?? '0.00'}${l.can.decideLeaver ? ' · the earner has left' : ''}`,
+      requester: l.earner.empId,
+      createdAt: l.calculatedAt ?? l.paidOn,
+      href: '/sales/targets?tab=commission',
+      approveLabel: l.can.decideLeaver ? 'Pay' : 'Approve',
+      rejectLabel: l.can.decideLeaver ? 'Do not pay' : 'Reject',
+    }));
+  }
+
+  private async wonItems(actor: Actor): Promise<ApprovalItemView[]> {
     const a = await this.access.of(actor);
     // The sales manager: their reporting line. The CEO / Founder / Owner (decision B1): deals the Director owns, only.
     const whose: Prisma.EmployeeWhereInput | null = a.manage ? this.scope.employeeWhere(actor.id) : a.confirmDirectorDeals ? { level: { number: DIRECTOR_LEVEL } } : null;
@@ -70,6 +97,7 @@ export class SalesApprovalsProvider implements ApprovalProvider, OnModuleInit {
   }
 
   async decide(actor: Actor, item: { type: ApprovalTypeName; refId: string }, decision: 'approve' | 'reject', input: DecideApprovalRequest, client: RequestInfo): Promise<void> {
+    if (item.type === 'commission') return this.decideCommission(actor, item.refId, decision, input, client);
     if (item.type !== 'won_deal') throw new NotFoundException({ statusCode: 404, code: 'not_found', message: 'Approval item not found' });
     // The inbox decides the request as it is now: the version is read here, and the deal service checks every rule again.
     const { version } = await this.deals.find(item.refId);
@@ -79,5 +107,19 @@ export class SalesApprovalsProvider implements ApprovalProvider, OnModuleInit {
     }
     if (!input.reason || input.reason.trim().length < 5) badRequest('reason_required', 'Please give a reason (at least 5 characters)');
     await this.deals.rejectWon(actor, item.refId, { reason: input.reason.trim(), version }, client);
+  }
+
+  /** The inbox decides a commission line as it is now (the service checks every rule again). */
+  private async decideCommission(actor: Actor, id: string, decision: 'approve' | 'reject', input: DecideApprovalRequest, client: RequestInfo): Promise<void> {
+    const line = await this.commission.one(actor, id);
+    // The Owner's decisions need a fresh step-up, which only the commission screen asks for.
+    const ownersDecision = line.can.decideLeaver || (await this.commission.isDirectorsOwn(line.earner.empId));
+    if (ownersDecision) conflict('decide_on_commission_page', 'This decision needs you to confirm your password and code again: open it on the commission screen');
+    if (decision === 'approve') {
+      await this.commission.approve(actor, null, id, { version: line.version }, client);
+      return;
+    }
+    if (!input.reason || input.reason.trim().length < 5) badRequest('reason_required', 'Please give a reason (at least 5 characters)');
+    await this.commission.reject(actor, null, id, { reason: input.reason.trim(), version: line.version }, client);
   }
 }

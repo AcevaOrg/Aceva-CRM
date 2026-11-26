@@ -54,11 +54,16 @@ export class SalesMetricsService {
    * holds sales.own outside the Sales department is not sales staff. Permissions come from the role and active duties,
    * exactly as everywhere else. Reports already built are never touched by this rule (they are frozen rows).
    */
-  async salespeople(db: Db = this.prisma, among?: Prisma.EmployeeWhereInput): Promise<Array<{ id: string; empId: string; fullName: string }>> {
+  async salespeople(
+    db: Db = this.prisma,
+    among?: Prisma.EmployeeWhereInput,
+    /** M15.7 commission eligibility also counts people on notice (still employed); everything else uses active only. */
+    statuses: readonly string[] = ['active'],
+  ): Promise<Array<{ id: string; empId: string; fullName: string }>> {
     const eligible = await db.$queryRaw<Array<{ id: string }>>`
       SELECT e.id FROM employees e
       JOIN departments d ON d.id = e.department_id
-      WHERE e.status = 'active' AND (
+      WHERE e.status::text = ANY(${[...statuses]}::text[]) AND (
         (d.code = ${SALES_DEPARTMENT} AND d.archived_at IS NULL AND (
           EXISTS (SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id WHERE rp.role_id = e.role_id AND p.key = ${SALES_OWN})
           OR EXISTS (SELECT 1 FROM employee_duties ed JOIN duty_permissions dp ON dp.duty_id = ed.duty_id JOIN permissions p ON p.id = dp.permission_id

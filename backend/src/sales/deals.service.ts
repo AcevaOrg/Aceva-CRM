@@ -38,6 +38,8 @@ import { type SalesAccess, SalesAccessService } from './sales-access.service';
 import { badRequest, conflict, forbidden, notFound } from './sales-errors';
 import { person } from './sales-views';
 import { checkWonException } from './won-exception-rules';
+import { lockCommissionBaseline, snapshotAtWonConfirmation } from './commission-eligibility';
+import { SalesMetricsService } from './sales-metrics.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -92,6 +94,7 @@ export class DealsService {
     private readonly clock: Clock,
     private readonly activities: ActivitiesService,
     private readonly scope: ScopeService,
+    private readonly metrics: SalesMetricsService,
   ) {}
 
   private today(): string {
@@ -431,6 +434,8 @@ export class DealsService {
    * normal confirmation and (M15.5 follow-up) by the exceptional decision, which adds its reason and note.
    */
   async applyConfirm(tx: Tx, row: DealRow, actor: Actor, version: number, client: RequestInfo, exception?: { reason: string; note: string }): Promise<void> {
+    // M15.7: taken first, so the commission baseline can never be recorded while this confirmation is half done.
+    await lockCommissionBaseline(tx);
     const now = this.clock.now();
     const { count } = await tx.salesDeal.updateMany({
       where: { id: row.id, version, wonStatus: 'pending' },
@@ -438,6 +443,8 @@ export class DealsService {
     });
     if (!count) conflict('stale_version', 'This deal was changed by someone else. Reload it');
     await tx.salesDealHistory.create({ data: { dealId: row.id, event: 'won_confirmed', fromStage: row.stage, toStage: 'won', actorId: actor.id, reason: exception?.reason, note: exception?.note } });
+    // M15.7: the owner's commission eligibility is fixed now, with the confirmation (never judged again later).
+    await snapshotAtWonConfirmation(tx, this.metrics, { id: row.id, ownerId: row.ownerId }, now);
     await this.audit.record(
       {
         actorId: actor.id,

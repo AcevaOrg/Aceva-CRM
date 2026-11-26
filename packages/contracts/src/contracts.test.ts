@@ -855,3 +855,36 @@ describe('Module 15.6: targets, daily log, proof and report contracts', () => {
     }
   });
 });
+
+describe('Module 15.7: commission contracts', () => {
+  it('a rule is a percentage from 0.01 to 100 with at most 2 decimals, a day and a reason', async () => {
+    const { setSalesCommissionRuleSchema } = await import('./sales');
+    const ok = { ratePercent: '10', effectiveFrom: '2026-12-11', reason: 'Approved company rate' };
+    expect(setSalesCommissionRuleSchema.safeParse(ok).success).toBe(true);
+    expect(setSalesCommissionRuleSchema.safeParse({ ...ok, ratePercent: '7.50' }).success).toBe(true);
+    for (const ratePercent of ['0', '0.00', '100.01', '10.555', '-1', 'ten', '']) expect(setSalesCommissionRuleSchema.safeParse({ ...ok, ratePercent }).success, ratePercent).toBe(false);
+    expect(setSalesCommissionRuleSchema.safeParse({ ...ok, reason: 'ok' }).success).toBe(false);
+    expect(setSalesCommissionRuleSchema.safeParse({ ...ok, effectiveFrom: '11/12/2026' }).success).toBe(false);
+  });
+
+  it('decisions name the version read; rejecting, holding and the leaver decision need a reason', async () => {
+    const { approveSalesCommissionSchema, decideSalesCommissionSchema, salesCommissionLeaverDecisionSchema } = await import('./sales');
+    expect(approveSalesCommissionSchema.safeParse({ version: 2 }).success).toBe(true);
+    expect(approveSalesCommissionSchema.safeParse({}).success).toBe(false);
+    // the Owner's approval of the Director's own line carries a reason (at least 5 characters)
+    expect(approveSalesCommissionSchema.safeParse({ version: 2, reason: 'Signed off by the Owner' }).success).toBe(true);
+    expect(approveSalesCommissionSchema.safeParse({ version: 2, reason: 'ok' }).success).toBe(false);
+    expect(decideSalesCommissionSchema.safeParse({ reason: 'The client asked for a refund', version: 3 }).success).toBe(true);
+    expect(decideSalesCommissionSchema.safeParse({ reason: 'no', version: 3 }).success).toBe(false);
+    expect(salesCommissionLeaverDecisionSchema.safeParse({ decision: 'pay', reason: 'Final settlement', version: 2 }).success).toBe(true);
+    expect(salesCommissionLeaverDecisionSchema.safeParse({ decision: 'split', reason: 'Final settlement', version: 2 }).success).toBe(false);
+  });
+
+  it('the statuses are fixed, and the earner notification exists and is not essential', async () => {
+    const { SALES_COMMISSION_STATUSES } = await import('./sales');
+    expect(SALES_COMMISSION_STATUSES).toEqual(['waiting_rate', 'calculated', 'approved', 'rejected', 'held', 'included']);
+    const n = await import('./notifications');
+    expect(n.notificationTypeSchema.safeParse('sales_commission_decided').success).toBe(true);
+    expect(n.isEssentialNotificationType('sales_commission_decided')).toBe(false);
+  });
+});

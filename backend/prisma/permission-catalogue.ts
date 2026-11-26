@@ -40,6 +40,9 @@ export const PERMISSION_KEYS: string[] = [
   'sales.won_confirm_director',
   // M15.5 follow-up: the exceptional Won decision on a request stranded by a leaver (WonExceptionService decides when)
   'sales.won_decide_exception',
+  // M15.7 (approved scope): the Owner approves the Director's own commission and decides leaver-held commission;
+  // the Director and the Finance duty hold or reject commission lines (for example after a refund or a reversal)
+  'sales.commission_approve_director', 'sales.commission_hold',
 ];
 
 export interface RoleSeed {
@@ -88,6 +91,8 @@ const OWNER: string[] = [
   'sales.won_confirm_director',
   // M15.5 follow-up (approved): the exceptional Won decision, only when the requester has left and nobody else can decide
   'sales.won_decide_exception',
+  // M15.7 (approved): the Director's own commission (nobody approves their own) and leaver-held commission, with step-up
+  'sales.commission_approve_director',
 ];
 
 /**
@@ -110,7 +115,7 @@ const DIRECTOR: string[] = [
   'payroll.export', 'finance.view', 'finance.export', 'statements.view', 'statements.export',
   'sheet.view', 'insights.view', 'audit.view', 'settings.view', 'settings.manage', 'backup.view',
   'billing.view', 'subscriptions.view', 'subscriptions.manage', 'sales.own', 'sales.team',
-  'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.export',
+  'sales.all', 'sales.targets', 'sales.commission_view', 'sales.commission_approve', 'sales.commission_hold', 'sales.export',
   'integrations.view', 'integrations.manage', 'approval.approve', 'duty.assign',
   'auth.set_temporary_password',
   'auth.reset_two_factor',
@@ -149,6 +154,8 @@ const DUTY_FINANCE: string[] = [
   'finance.view', 'finance.entry_create', 'finance.close', 'payroll.view', 'payroll.prepare',
   'statements.view', 'sheet.view', 'sheet.import', 'insights.view', 'billing.view', 'billing.manage',
   'subscriptions.view', 'sales.commission_view',
+  // M15.7 (approved): hold or reject a commission line (refunds and reversals are not signalled automatically)
+  'sales.commission_hold',
   'people.view_pay',
 ];
 

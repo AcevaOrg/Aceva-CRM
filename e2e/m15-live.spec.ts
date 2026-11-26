@@ -11,7 +11,8 @@ import { screenLoadsFromServer } from './live-screen';
  * a follow-up completed from My sales day. Module 15.4: a CSV import with its preview, a lead marked do not contact on its
  * page, and the Director adding an email to the do-not-contact list. Module 15.5: the archive period in Settings > Sales,
  * and the leavers' leads waiting for an owner (sales manager only). Module 15.6: targets set by the Director, a salesperson's
- * daily log, and the daily report and dashboard screens on the server.
+ * daily log, and the daily report and dashboard screens on the server. Module 15.7: the live Commission tab (the rule for
+ * the Director; own lines for a salesperson) and its server-side access.
  */
 const HIRA = 'ACV-0009';
 const KAMRAN = 'ACV-0012';
@@ -467,4 +468,28 @@ test('targets, the daily log, and the report and dashboard screens come from the
   const progress = await (await hira.get('/sales/progress')).json();
   expect(progress.today.metrics.emailsChecked).toEqual({ value: null, measured: false, target: 10, met: null });
   expect((await hira.put('/sales/targets/daily', { empId: HIRA, effectiveFrom: dayToday, leadsAdded: 9 })).status()).toBe(403);
+});
+
+test('commission (M15.7): the Commission tab comes from the server; the Director sees the rule, a salesperson only their own lines', async ({ browser, playwright }) => {
+  test.setTimeout(180_000);
+  const director = await openAs(browser, DIRECTOR, '/');
+  await screenLoadsFromServer(director.page, '/sales/targets?tab=commission', /\/api\/v1\/sales\/commission$/);
+  await expect(director.page.getByText('Commission rule', { exact: true })).toBeVisible();
+  await expect(director.page.getByRole('button', { name: /Set the rate|Change the rate/ })).toBeVisible();
+  await expect(director.page.getByText('Every commission line.', { exact: false })).toBeVisible();
+  await director.context.close();
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, '/sales/targets?tab=commission', /\/api\/v1\/sales\/commission$/);
+  await expect(page.getByText('Your own commission lines.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Commission rule', { exact: true })).toHaveCount(0);
+  await context.close();
+  // the server decides: Finance sees every line but not the rules; a salesperson cannot read the rules
+  const fin = await apiAs(playwright, FINANCE);
+  const all = await fin.get('/sales/commission');
+  expect(all.status(), await all.text()).toBe(200);
+  expect((await all.json()).scope).toBe('all');
+  expect((await fin.get('/sales/commission/rules')).status()).toBe(404);
+  const hira = await apiAs(playwright, HIRA);
+  expect((await (await hira.get('/sales/commission')).json()).scope).toBe('own');
+  expect((await hira.get('/sales/commission/rules')).status()).toBe(404);
 });

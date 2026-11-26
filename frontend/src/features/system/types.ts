@@ -12,7 +12,9 @@ export type NotificationType =
   | "security_alert" | "sales_reply" | "sales_follow_up" | "sales_tool_problem"
   | "message_mention" | "announcement" | "renewal_due" | "invoice_overdue"
   | "invoice_due" | "invoice_draft_ready" | "usage_alert"
-  | "message_new" | "message_reply" | "meeting_invited" | "meeting_cancelled";
+  | "message_new" | "message_reply" | "meeting_invited" | "meeting_cancelled"
+  // M15.7: the earner's commission line was approved, rejected or put on hold
+  | "sales_commission_decided";
 
 export interface Notification {
   id: string;
@@ -41,6 +43,7 @@ export const NOTIFICATION_GROUP: Record<NotificationType, "approvals" | "mention
   message_mention: "mentions", announcement: "other", renewal_due: "other", invoice_overdue: "other",
   invoice_due: "other", invoice_draft_ready: "other", usage_alert: "other",
   message_new: "other", message_reply: "mentions", meeting_invited: "other", meeting_cancelled: "other",
+  sales_commission_decided: "other",
 };
 
 export const ESSENTIAL_TYPES: NotificationType[] = ["approval_waiting", "payroll_ready", "leave_requested", "extension_requested", "security_alert"];

@@ -27,6 +27,8 @@ export const notificationTypeSchema = z.enum([
   // M15.6: the nightly daily sales report is ready (to the sales managers); a manager asked for proof of a day's log
   'sales_daily_report',
   'sales_proof_requested',
+  // M15.7: the earner's commission line was approved, rejected or put on hold (approvals use approval_waiting)
+  'sales_commission_decided',
   'message_mention',
   // Module 14 (later part): a new message in a DM or group (one per conversation until it is read), a reply to my message
   'message_new',
