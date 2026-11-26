@@ -595,6 +595,15 @@ model Employee {
   salesWonExceptionsAsked SalesWonException[]       @relation("SalesWonExceptionRequester")
   salesWonExceptionsWas   SalesWonException[]       @relation("SalesWonExceptionOwnerAtRequest")
   salesWonExceptionsOwner SalesWonException[]       @relation("SalesWonExceptionCurrentOwner")
+  salesDailyTargets       SalesDailyTarget[]        @relation("SalesDailyTargetFor")
+  salesDailyTargetsSet    SalesDailyTarget[]        @relation("SalesDailyTargetSetBy")
+  salesMonthlyTargets     SalesMonthlyTarget[]      @relation("SalesMonthlyTargetFor")
+  salesMonthlyTargetsSet  SalesMonthlyTarget[]      @relation("SalesMonthlyTargetSetBy")
+  salesDailyLogs          SalesDailyLog[]
+  salesDailyReports       SalesDailyReport[]
+  salesProofRequests      SalesProofRequest[]       @relation("SalesProofFor")
+  salesProofRequested     SalesProofRequest[]       @relation("SalesProofRequestedBy")
+  salesProofClosed        SalesProofRequest[]       @relation("SalesProofClosedBy")
 
   @@index([departmentId])
   @@index([officeId])
@@ -4009,4 +4018,122 @@ model SalesWonException {
 
   @@index([dealId, createdAt])
   @@map("sales_won_exceptions")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.6: targets, the manual daily log, the nightly daily report (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// A salesperson's daily targets from a day on (insert-only: a change is a new row; the latest row for the latest
+/// effective day on or before a day is in force that day). Null = no target for that metric.
+model SalesDailyTarget {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String   @map("employee_id") @db.Uuid
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  leadsAdded    Int?     @map("leads_added")
+  emailsChecked Int?     @map("emails_checked")
+  emailsSent    Int?     @map("emails_sent")
+  followUpsDone Int?     @map("follow_ups_done")
+  setById       String   @map("set_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee @relation("SalesDailyTargetFor", fields: [employeeId], references: [id])
+  setBy    Employee @relation("SalesDailyTargetSetBy", fields: [setById], references: [id])
+
+  @@index([employeeId, effectiveFrom, createdAt])
+  @@map("sales_daily_targets")
+}
+
+/// A salesperson's targets for a month (insert-only; the latest row for the month is in force). The deals-won target has
+/// an amount and a currency (both or neither); only deals in that currency count toward it.
+model SalesMonthlyTarget {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  month          String
+  meetingsBooked Int?      @map("meetings_booked")
+  proposalsSent  Int?      @map("proposals_sent")
+  wonAmount      Decimal?  @map("won_amount") @db.Decimal(14, 2)
+  wonCurrency    Currency? @map("won_currency")
+  setById        String    @map("set_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee @relation("SalesMonthlyTargetFor", fields: [employeeId], references: [id])
+  setBy    Employee @relation("SalesMonthlyTargetSetBy", fields: [setById], references: [id])
+
+  @@index([employeeId, month, createdAt])
+  @@map("sales_monthly_targets")
+}
+
+/// The manual daily log (self-reported counts). Insert-only: every save is a new version; the highest version is current.
+model SalesDailyLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  day         DateTime @db.Date
+  version     Int
+  linkedin    Int
+  whatsapp    Int
+  fiverr      Int
+  calls       Int
+  fieldVisits Int      @map("field_visits")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee            @relation(fields: [employeeId], references: [id])
+  reports  SalesDailyReport[]
+  proofs   SalesProofRequest[]
+
+  @@unique([employeeId, day, version])
+  @@map("sales_daily_logs")
+}
+
+/// The nightly report of one person for one working day, exactly as built: the targets, the measures, the log version and
+/// the result at that moment. Insert-only, one per person and day: never rebuilt or overwritten.
+model SalesDailyReport {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  day         DateTime @db.Date
+  generatedAt DateTime @map("generated_at") @db.Timestamptz(3)
+  job         String
+  /// The daily targets in force that day (null = none).
+  targets     Json?
+  /// { metric: { value, measured, target, met } }
+  metrics     Json
+  /// Every target set and measurable was met; null when none was set.
+  met         Boolean?
+  logId       String?  @map("log_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee       @relation(fields: [employeeId], references: [id])
+  log      SalesDailyLog? @relation(fields: [logId], references: [id])
+
+  @@unique([employeeId, day])
+  @@index([day])
+  @@map("sales_daily_reports")
+}
+
+/// A sales manager's request for proof of a day's self-reported work: open, then answered by the salesperson, then
+/// closed by the manager. Only its status, answer and closing change (a trigger keeps the rest); never deleted.
+model SalesProofRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String    @map("employee_id") @db.Uuid
+  day           DateTime  @db.Date
+  logId         String    @map("log_id") @db.Uuid
+  status        String    @default("open")
+  note          String
+  requestedById String    @map("requested_by_id") @db.Uuid
+  requestedAt   DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  answer        String?
+  answeredAt    DateTime? @map("answered_at") @db.Timestamptz(3)
+  closeNote     String?   @map("close_note")
+  closedById    String?   @map("closed_by_id") @db.Uuid
+  closedAt      DateTime? @map("closed_at") @db.Timestamptz(3)
+
+  employee    Employee      @relation("SalesProofFor", fields: [employeeId], references: [id])
+  log         SalesDailyLog @relation(fields: [logId], references: [id])
+  requestedBy Employee      @relation("SalesProofRequestedBy", fields: [requestedById], references: [id])
+  closedBy    Employee?     @relation("SalesProofClosedBy", fields: [closedById], references: [id])
+
+  @@index([employeeId, day])
+  @@index([status])
+  @@map("sales_proof_requests")
 }

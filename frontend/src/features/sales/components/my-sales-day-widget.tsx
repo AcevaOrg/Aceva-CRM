@@ -14,6 +14,8 @@ import { ProgressRing } from "@/components/shared/metrics";
 import { useLookup } from "@/hooks/use-directory";
 import { useSession } from "@/lib/auth/session";
 import { useLiveFollowUps, useMySalesDay } from "../hooks";
+import { isLive } from "@/lib/api/http";
+import { LiveWidgetTargets } from "./performance-live";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal } from "../logic";
 
 export function MySalesDayWidget({ className }: { className?: string }) {
@@ -43,12 +45,17 @@ export function MySalesDayWidget({ className }: { className?: string }) {
         </Button>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="grid grid-cols-4 gap-2">
-          <ProgressRing value={leadsAddedTotal(s)} target={t.leadsAdded} label="Leads" size={64} color="var(--zone-sales)" />
-          <ProgressRing value={s.emailsChecked} target={t.emailsChecked} label="Checked" size={64} color="var(--zone-sales)" />
-          <ProgressRing value={emailsSentTotal(s)} target={t.emailsSent} label="Sent" size={64} color="var(--zone-sales)" />
-          <ProgressRing value={followUpsTotal(s)} target={t.followUps} label="Follow-ups" size={64} color="var(--zone-sales)" />
-        </div>
+        {/* M15.6 live: today's figures from the server (emails checked: not measured yet) */}
+        {isLive("m15") ? (
+          <LiveWidgetTargets />
+        ) : (
+          <div className="grid grid-cols-4 gap-2">
+            <ProgressRing value={leadsAddedTotal(s)} target={t.leadsAdded} label="Leads" size={64} color="var(--zone-sales)" />
+            <ProgressRing value={s.emailsChecked} target={t.emailsChecked} label="Checked" size={64} color="var(--zone-sales)" />
+            <ProgressRing value={emailsSentTotal(s)} target={t.emailsSent} label="Sent" size={64} color="var(--zone-sales)" />
+            <ProgressRing value={followUpsTotal(s)} target={t.followUps} label="Follow-ups" size={64} color="var(--zone-sales)" />
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-2 text-[12.5px]">
           <Link href={href} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 transition hover:bg-muted">
             <AlarmClock className={missed ? "size-4 text-danger" : "size-4 text-muted-foreground"} />

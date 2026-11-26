@@ -814,3 +814,44 @@ describe('Module 15.5: archiving and leavers contracts', () => {
     expect([...c.SALES_REASSIGNMENT_ISSUE_REASONS]).toEqual(['no_recipient']);
   });
 });
+
+describe('Module 15.6: targets, daily log, proof and report contracts', () => {
+  it('daily metrics are the plan’s four; emails checked is not measured; monthly are meetings, proposals and deals won', async () => {
+    const c = await import('./sales');
+    expect([...c.SALES_DAILY_METRICS]).toEqual(['leadsAdded', 'emailsChecked', 'emailsSent', 'followUpsDone']);
+    expect([...c.SALES_UNMEASURED_METRICS]).toEqual(['emailsChecked']);
+    expect([...c.SALES_MONTHLY_METRICS]).toEqual(['meetingsBooked', 'proposalsSent', 'wonValue']);
+    expect([...c.SALES_LOG_FIELDS]).toEqual(['linkedin', 'whatsapp', 'fiverr', 'calls', 'fieldVisits']);
+    expect([...c.SALES_PROOF_STATUSES]).toEqual(['open', 'answered', 'closed']);
+  });
+
+  it('targets are whole numbers from 0 to 10,000 (null clears one); a deals-won target needs a positive amount and USD or PKR', async () => {
+    const { setSalesDailyTargetsSchema, setSalesMonthlyTargetsSchema } = await import('./sales');
+    const base = { empId: 'ACV-0009', effectiveFrom: '2026-12-10' };
+    expect(setSalesDailyTargetsSchema.safeParse({ ...base, leadsAdded: 30, emailsChecked: null }).success).toBe(true);
+    for (const bad of [-1, 10_001, 2.5]) expect(setSalesDailyTargetsSchema.safeParse({ ...base, leadsAdded: bad }).success, String(bad)).toBe(false);
+    expect(setSalesDailyTargetsSchema.safeParse(base).success).toBe(false); // nothing to set
+    expect(setSalesMonthlyTargetsSchema.safeParse({ empId: 'ACV-0009', month: '2026-12', wonValue: { amount: '5000.00', currency: 'USD' } }).success).toBe(true);
+    expect(setSalesMonthlyTargetsSchema.safeParse({ empId: 'ACV-0009', month: '2026-12', wonValue: { amount: '0', currency: 'USD' } }).success).toBe(false);
+    expect(setSalesMonthlyTargetsSchema.safeParse({ empId: 'ACV-0009', month: '2026-12', wonValue: { amount: '10.00', currency: 'EUR' } }).success).toBe(false);
+    expect(setSalesMonthlyTargetsSchema.safeParse({ empId: 'ACV-0009', month: '2026-13', meetingsBooked: 2 }).success).toBe(false);
+  });
+
+  it('a log names the version it read and has counts from 0 to 1,000; proof notes need a reason', async () => {
+    const { submitSalesDailyLogSchema, requestSalesProofSchema, answerSalesProofSchema } = await import('./sales');
+    const log = { linkedin: 1, whatsapp: 0, fiverr: 0, calls: 2, fieldVisits: 0, version: 0 };
+    expect(submitSalesDailyLogSchema.safeParse(log).success).toBe(true);
+    expect(submitSalesDailyLogSchema.safeParse({ ...log, version: undefined }).success).toBe(false);
+    expect(submitSalesDailyLogSchema.safeParse({ ...log, calls: 1001 }).success).toBe(false);
+    expect(requestSalesProofSchema.safeParse({ empId: 'ACV-0009', day: '2026-12-08', note: 'ok' }).success).toBe(false);
+    expect(answerSalesProofSchema.safeParse({ answer: 'Sent by message' }).success).toBe(true);
+  });
+
+  it('the two new notification types exist and are not essential (people may switch their emails off)', async () => {
+    const n = await import('./notifications');
+    for (const t of ['sales_daily_report', 'sales_proof_requested'] as const) {
+      expect(n.notificationTypeSchema.safeParse(t).success, t).toBe(true);
+      expect(n.isEssentialNotificationType(t), t).toBe(false);
+    }
+  });
+});

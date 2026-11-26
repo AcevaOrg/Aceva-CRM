@@ -853,6 +853,56 @@ record for that deal, that confirmer and its current owner was written in the sa
 confirmation is still refused (`owner_confirms_director_deals_only`). The usual confirm-won, reject-won and B1 routes
 are unchanged.
 
+## Module 15, part 6: targets, the daily log, the nightly daily report and the dashboard
+
+Plan section 20 ("Daily targets", "Manual daily log", "Daily sales report", "Sales dashboard"); approved decisions 10 to
+16 and the M15.6 answers. Every route needs `sales.own`; what each person sees and changes is decided inside.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/targets?month` | own; the team for `sales.team` / `sales.all` | Daily targets in force today (`daily`), a change set for a later day (`dailyNext`), the month's targets (`monthly`), `canEdit` |
+| `PUT /sales/targets/daily {empId, effectiveFrom, leadsAdded?, emailsChecked?, emailsSent?, followUpsDone?}` | the sales manager (`sales.targets`), for someone in their reporting line who holds `sales.own`, never themselves | A new version from `effectiveFrom` (today or later; 400 `target_in_past`). Whole numbers 0 to 10,000; null clears one; a field left out keeps its value. 403 `own_targets`, 400 `not_sales` |
+| `PUT /sales/targets/monthly {empId, month, meetingsBooked?, proposalsSent?, wonValue?: {amount, currency}}` | as above | A new version for a month (this month or later). The deals-won target has an amount and USD or PKR |
+| `GET /sales/daily-logs/:day?empId` | own; a team member's for `sales.team` / `sales.all` | `{ log }`: the current version, earlier versions, and `locked`; `{ log: null }` when there is none |
+| `PUT /sales/daily-logs/:day {linkedin, whatsapp, fiverr, calls, fieldVisits, note?, version}` | the sales staff, for themselves | Today, or yesterday until its report is built. A new version each time; `version` is the one read (409 `stale_version`); 409 `log_locked` once the report exists (also a database trigger) |
+| `GET /sales/proof-requests?status&empId` | own; the team | Proof requests |
+| `POST /sales/proof-requests {empId, day, note}` | the sales manager of that person (never about themselves) | About a day that has a log (409 `no_log`); one not closed at a time (409 `proof_open`). Notifies the person (`sales_proof_requested`) |
+| `POST /sales/proof-requests/:id/answer {answer}` | the person asked | Once (`open` to `answered`) |
+| `POST /sales/proof-requests/:id/close {note}` | their sales manager | `open` or `answered` to `closed` (final) |
+| `GET /sales/reports/daily?day` and `GET /sales/reports/daily/dates` | own; the team | The nightly reports exactly as built |
+| `GET /sales/dashboard?month` | own figures; the team for `sales.team` / `sales.all` | Pipeline by stage, Won and Lost this month (per currency), consecutive stage moves this month, leads by source and country, each person's progress |
+| `GET /sales/progress?empId` | own; a team member's | One person's progress today and this month |
+
+**What is measured** (Pakistan days): leads added (leads the person added or imported, `created_by`); follow-ups done
+(`follow_up` activities); emails sent (hand-logged `email_sent` activities, until Module 16); emails checked is **not
+measured yet** (`value: null, measured: false`, never 0). Monthly: meetings booked (meeting activities with a date),
+proposals sent (proposal activities with a link), and the person's deals confirmed Won that month, per currency. A day is
+met only when every target that is set and measured is met; unmeasured metrics are left out and listed (`unmeasured`); a
+day with no measurable target set has `met: null` ("no targets set"). Activity on an archived lead and outgoing contact on
+a do-not-contact lead cannot be logged (M15.4, M15.5), so they never count.
+
+**Who is reported on:** the sales staff, the same rule for targets, logs, reports and the dashboard: active employees of
+the Sales department (`dep-sales`) who hold `sales.own`, and the sales managers (holders of `sales.targets` through their
+role or the `sales_manager` duty). Being Level 4, or having the default `sales` role, is not enough on its own: HR,
+Finance or Engineering staff are never included. A target can be set only for sales staff (400 `not_sales_staff`).
+
+**The nightly report** (job `sales.daily_report`, 00:30 Pakistan time; the archive job stays at 02:00): for each working
+day (Module 7's calendar) that has just ended, and every working day of the last 7 still missing a report, each salesperson
+gets one report: the targets in force that day, the measures, the latest log version, and the result. It is built under the
+person's day lock (shared with the log) and inserted once (unique per person and day; insert-only), so a retry, a second
+server or two runs at the same moment change nothing, and later work or a new target never alter it. Then each active
+sales manager gets one `sales_daily_report` notification per day (Module 12: in the app, by email unless switched off,
+dedupe key `sales_daily_report:<manager>:<day>`).
+
+**Money:** every total is per currency (USD and PKR apart), never converted; there is no exchange rate and no forecast. A
+deals-won target counts only deals in its own currency; the other currency is shown apart.
+
+**Stage moves:** counted only from the stage history, only between consecutive stages (New to Contacted, ..., Negotiation
+to Won); a jump or the stage a deal is in now is never counted.
+
+**Audit actions:** `sales.targets.daily_set`, `sales.targets.monthly_set`, `sales.daily_log.saved`,
+`sales.proof.requested`, `sales.proof.answered`, `sales.proof.closed`. Module 4 records each successful change.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

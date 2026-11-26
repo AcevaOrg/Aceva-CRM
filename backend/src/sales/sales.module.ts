@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { SALES_SETTINGS, SALES_SETTINGS_DEFAULTS, salesSettingsSchema } from '@aceva/contracts';
+import { AttendanceModule } from '../attendance/attendance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrgModule } from '../org/org.module';
 import { ModuleSettingsService } from '../settings/module-settings.service';
@@ -14,7 +15,13 @@ import { LeadImportService } from './lead-import.service';
 import { LeadsService } from './leads.service';
 import { SalesAccessService, SALES_OWN } from './sales-access.service';
 import { SalesApprovalsProvider } from './sales-approvals.provider';
+import { SalesDailyLogService } from './sales-daily-log.service';
+import { SalesDailyReportService } from './sales-daily-report.service';
+import { SalesDashboardService } from './sales-dashboard.service';
+import { SalesMetricsService } from './sales-metrics.service';
 import { SalesOffboardingService } from './sales-offboarding.service';
+import { SalesDailyLogsController, SalesDailyReportsController, SalesDashboardController, SalesProofRequestsController, SalesTargetsController } from './sales-performance.controller';
+import { SalesTargetsService } from './sales-targets.service';
 import { WonExceptionService } from './won-exception.service';
 import {
   SalesCompaniesController,
@@ -31,13 +38,14 @@ import {
  * activities, follow-ups (daily reminder at 09:00 Pakistan time) and proposal links. M15.4: the do-not-contact list and the
  * lead import (CSV, preview first). M15.5: a leaver's leads and deals move to the sales manager (employee.offboarded,
  * with a nightly check), and inactive leads are archived (nightly job at 02:00 Pakistan time); a Won request stranded by a
- * leaver may get the Owner's exceptional decision (WonExceptionService).
+ * leaver may get the Owner's exceptional decision (WonExceptionService). M15.6: targets, the manual daily log, proof requests,
+ * the nightly daily report (00:30 Pakistan time) and the sales dashboard.
  * It works on its own with manual entries (plan section 23); Module 16 adds the automatic counts later.
  */
 @Module({
-  imports: [OrgModule, NotificationsModule],
-  controllers: [SalesLeadsController, SalesCompaniesController, SalesDealsController, SalesFollowUpsController, SalesDncController, SalesReassignmentIssuesController],
-  providers: [SalesAccessService, CompaniesService, LeadsService, DealsService, ActivitiesService, DuplicateCheckThrottle, SalesApprovalsProvider, FollowUpRemindersService, DncService, LeadImportService, SalesOffboardingService, LeadArchiveService, WonExceptionService],
+  imports: [OrgModule, NotificationsModule, AttendanceModule],
+  controllers: [SalesLeadsController, SalesCompaniesController, SalesDealsController, SalesFollowUpsController, SalesDncController, SalesReassignmentIssuesController, SalesTargetsController, SalesDailyLogsController, SalesProofRequestsController, SalesDailyReportsController, SalesDashboardController],
+  providers: [SalesAccessService, CompaniesService, LeadsService, DealsService, ActivitiesService, DuplicateCheckThrottle, SalesApprovalsProvider, FollowUpRemindersService, DncService, LeadImportService, SalesOffboardingService, LeadArchiveService, WonExceptionService, SalesMetricsService, SalesTargetsService, SalesDailyLogService, SalesDailyReportService, SalesDashboardService],
   exports: [SalesAccessService],
 })
 export class SalesModule {

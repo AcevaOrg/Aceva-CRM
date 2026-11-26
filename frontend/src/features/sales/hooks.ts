@@ -5,6 +5,8 @@ import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
 import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
 import { liveFollowUps, liveReassignmentIssues } from "./live-api";
+import { performanceApi } from "./performance-live";
+import type { SetSalesDailyTargetsRequest, SetSalesMonthlyTargetsRequest, SubmitSalesDailyLogRequest } from "@aceva/contracts";
 import type { DailyTargets, DealStage, ImportRow, LeadSource, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
@@ -266,4 +268,50 @@ export function useLiveFollowUps(ownerEmpId?: string) {
  */
 export function useReassignmentIssues(enabled: boolean) {
   return useQuery({ queryKey: ["sales", "reassignment-issues"], queryFn: liveReassignmentIssues, enabled: enabled && isLive("m15") });
+}
+
+/* ---------------- M15.6 (live mode): targets, daily log, proof, reports, dashboard ---------------- */
+
+const LIVE_M15 = () => isLive("m15");
+
+export function useLiveTargets(month?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "targets", month ?? null], queryFn: () => performanceApi.targets(month), enabled: LIVE_M15() });
+}
+export function useSetDailyTargets() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesDailyTargetsRequest) => performanceApi.setDaily(body), onSuccess: done });
+}
+export function useSetMonthlyTargets() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesMonthlyTargetsRequest) => performanceApi.setMonthly(body), onSuccess: done });
+}
+export function useLiveLog(day: string, empId?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "log", day, empId ?? null], queryFn: () => performanceApi.log(day, empId), enabled: LIVE_M15() && !!day });
+}
+export function useSaveLiveLog() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ day, body }: { day: string; body: SubmitSalesDailyLogRequest }) => performanceApi.saveLog(day, body), onSuccess: done });
+}
+export function useLiveReportDates() {
+  return useQuery({ queryKey: ["sales", "perf", "report-dates"], queryFn: performanceApi.reportDates, enabled: LIVE_M15() });
+}
+export function useLiveReports(day?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "reports", day ?? null], queryFn: () => performanceApi.reports(day!), enabled: LIVE_M15() && !!day });
+}
+export function useLiveProofs() {
+  return useQuery({ queryKey: ["sales", "perf", "proofs"], queryFn: () => performanceApi.proofs(), enabled: LIVE_M15() });
+}
+export function useProofActions() {
+  const done = useInvalidate();
+  return {
+    request: useMutation({ mutationFn: ({ empId, day, note }: { empId: string; day: string; note: string }) => performanceApi.requestProof(empId, day, note), onSuccess: done }),
+    answer: useMutation({ mutationFn: ({ id, answer }: { id: string; answer: string }) => performanceApi.answerProof(id, answer), onSuccess: done }),
+    close: useMutation({ mutationFn: ({ id, note }: { id: string; note: string }) => performanceApi.closeProof(id, note), onSuccess: done }),
+  };
+}
+export function useLiveDashboard(month?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "dashboard", month ?? null], queryFn: () => performanceApi.dashboard(month), enabled: LIVE_M15() });
+}
+export function useLiveProgress(empId?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "progress", empId ?? null], queryFn: () => performanceApi.progress(empId), enabled: LIVE_M15() });
 }

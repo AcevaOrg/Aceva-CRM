@@ -21,6 +21,8 @@ import { formatMonthKey, formatWeekdayLong, isoDay } from "@/lib/dates";
 import { formatMoneyCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { isSalesManager, type DailyReportRow } from "../api";
+import { isLive } from "@/lib/api/http";
+import { LiveDailyReport, LiveDashboard } from "./performance-live";
 import { useDailyReport, useReportDates, useRequestProof, useSalesDashboard, useSalesScorecards } from "../hooks";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal, selfReportedTotal, STAGE_META } from "../logic";
 import type { SalesScorecard } from "../types";
@@ -55,13 +57,16 @@ function ReportsInner() {
           <TabsTrigger value="scorecard">Sales scorecard</TabsTrigger>
         </TabsList>
         <TabsContent value="daily">
-          <DailyReport canAskProof={canAskProof} />
+          {/* M15.6 live: the nightly reports as built; the demo data otherwise */}
+          {isLive("m15") ? <LiveDailyReport canAskProof={canAskProof} myEmpId={viewer?.employee.empId ?? ""} /> : <DailyReport canAskProof={canAskProof} />}
         </TabsContent>
-        <TabsContent value="dashboard">
-          <Dashboard />
-        </TabsContent>
+        <TabsContent value="dashboard">{isLive("m15") ? <LiveDashboard /> : <Dashboard />}</TabsContent>
         <TabsContent value="scorecard">
-          <Scorecards />
+          {isLive("m15") ? (
+            <EmptyState icon={<ChartLine />} title="The sales scorecard is not connected yet" description="It comes with the Module 6 connection; Module 15.6 builds the targets and daily reports it will use." />
+          ) : (
+            <Scorecards />
+          )}
         </TabsContent>
       </Tabs>
     </>

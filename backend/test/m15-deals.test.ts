@@ -392,7 +392,8 @@ describe('M15.2 pipeline, reassignment and records', () => {
         as(KAMRAN).post(`${API}/sales/deals/${d.id}/move`).send({ toStage: 'lost', lostReason: 'Price', version: d.version }),
       ]);
       expect([200, 409]).toContain(moveLead.status);
-      expect([200, 409]).toContain(closeDeal.status);
+      // When the lead (with its open deal) moved to Saad first, Kamran no longer works on the deal: a clean 403.
+      expect([200, 403, 409]).toContain(closeDeal.status);
       const deal = await prisma.salesDeal.findUniqueOrThrow({ where: { id: d.id }, include: { owner: true } });
       const leadNow = await prisma.salesLead.findUniqueOrThrow({ where: { id: leadId }, include: { owner: true } });
       // a closed deal keeps the owner it had when it closed; an open deal follows its lead

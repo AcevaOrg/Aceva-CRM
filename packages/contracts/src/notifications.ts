@@ -24,6 +24,9 @@ export const notificationTypeSchema = z.enum([
   'sales_reply',
   'sales_follow_up',
   'sales_tool_problem',
+  // M15.6: the nightly daily sales report is ready (to the sales managers); a manager asked for proof of a day's log
+  'sales_daily_report',
+  'sales_proof_requested',
   'message_mention',
   // Module 14 (later part): a new message in a DM or group (one per conversation until it is read), a reply to my message
   'message_new',

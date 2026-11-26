@@ -23,6 +23,8 @@ import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey } from "@/lib/dates";
 import { canDecideCommission, isSalesManager, type CommissionRow } from "../api";
+import { isLive } from "@/lib/api/http";
+import { LiveTargetsTab } from "./performance-live";
 import { useAddDnc, useApproveCommission, useCommission, useDnc, useRejectCommission, useSaveTargets, useTargets, useUpdateCommissionRule } from "../hooks";
 import type { CommissionStatus, DailyTargets, DncEntry, MonthlyTargets } from "../types";
 
@@ -62,7 +64,8 @@ function TargetsInner() {
         </TabsList>
         {canTargets && (
           <TabsContent value="targets">
-            <TargetsTab editable={canSetTargets} />
+            {/* M15.6 live: versioned targets from the server (the sales manager edits); the demo data otherwise */}
+            {isLive("m15") ? <LiveTargetsTab /> : <TargetsTab editable={canSetTargets} />}
           </TabsContent>
         )}
         {canCommission && (

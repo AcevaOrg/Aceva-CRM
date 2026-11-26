@@ -10,7 +10,8 @@ import { screenLoadsFromServer } from './live-screen';
  * invoice), and Lost with a reason from the settings. Module 15.3: a logged call moves a deal forward, a proposal link, and
  * a follow-up completed from My sales day. Module 15.4: a CSV import with its preview, a lead marked do not contact on its
  * page, and the Director adding an email to the do-not-contact list. Module 15.5: the archive period in Settings > Sales,
- * and the leavers' leads waiting for an owner (sales manager only).
+ * and the leavers' leads waiting for an owner (sales manager only). Module 15.6: targets set by the Director, a salesperson's
+ * daily log, and the daily report and dashboard screens on the server.
  */
 const HIRA = 'ACV-0009';
 const KAMRAN = 'ACV-0012';
@@ -429,4 +430,41 @@ test('the Director sets the archive period in Settings > Sales (12 months until 
   expect(await (await dir.get('/sales/reassignment-issues')).json()).toEqual([]);
   const hira = await apiAs(playwright, HIRA);
   expect((await hira.get('/sales/reassignment-issues')).status()).toBe(403);
+});
+
+// --------------------------------------------------------------------------------- M15.6: targets, daily log, reports
+
+test('targets, the daily log, and the report and dashboard screens come from the server; emails checked is not measured', async ({ browser, playwright }) => {
+  test.setTimeout(180_000);
+  const dayToday = new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10);
+  const dir = await apiAs(playwright, DIRECTOR);
+  const set = await dir.put('/sales/targets/daily', { empId: HIRA, effectiveFrom: dayToday, leadsAdded: 1, emailsChecked: 10, emailsSent: 1, followUpsDone: 1 });
+  expect(set.status(), await set.text()).toBe(200);
+  // the Director sees the team's targets on the Targets tab
+  const director = await openAs(browser, DIRECTOR, '/');
+  await screenLoadsFromServer(director.page, '/sales/targets?tab=targets', /\/api\/v1\/sales\/targets$/);
+  await expect(director.page.getByRole('button', { name: /Edit the targets of Hira/ })).toBeVisible();
+  // the dashboard and the daily report load from the server
+  await screenLoadsFromServer(director.page, '/sales/reports?tab=dashboard', /\/api\/v1\/sales\/dashboard$/);
+  await expect(director.page.getByText('Moves to the next stage this month')).toBeVisible();
+  await screenLoadsFromServer(director.page, '/sales/reports?tab=daily', /\/api\/v1\/sales\/reports\/daily\/dates$/);
+  await director.context.close();
+  // Hira logs her day on My sales day; her targets show emails checked as not measured
+  const { page, context } = await openAs(browser, HIRA, '/');
+  await screenLoadsFromServer(page, '/sales', /\/api\/v1\/sales\/progress$/);
+  await expect(page.getByText('Not measured yet').first()).toBeVisible();
+  await page.getByRole('button', { name: /my log|Log my day/ }).first().click();
+  const sheet = page.getByRole('dialog');
+  await sheet.locator('#log-calls').fill('3');
+  await sheet.locator('#log-linkedin').fill('5');
+  const saved = page.waitForResponse((r) => r.url().endsWith(`/api/v1/sales/daily-logs/${dayToday}`) && r.request().method() === 'PUT', { timeout: 30_000 });
+  await sheet.getByRole('button', { name: 'Save log' }).click();
+  const res = await saved;
+  expect(res.status(), await res.text()).toBe(200);
+  expect(await res.json()).toMatchObject({ version: 1, counts: { calls: 3, linkedin: 5 } });
+  await context.close();
+  const hira = await apiAs(playwright, HIRA);
+  const progress = await (await hira.get('/sales/progress')).json();
+  expect(progress.today.metrics.emailsChecked).toEqual({ value: null, measured: false, target: 10, met: null });
+  expect((await hira.put('/sales/targets/daily', { empId: HIRA, effectiveFrom: dayToday, leadsAdded: 9 })).status()).toBe(403);
 });

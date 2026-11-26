@@ -23,6 +23,7 @@ import { isLive } from "@/lib/api/http";
 import { emailsSentTotal, followUpsTotal, leadsAddedTotal, selfReportedTotal, STAGE_META, targetsMet } from "../logic";
 import type { FollowUp, MySalesDay as Day } from "../types";
 import { DailyLogSheet } from "./daily-log-sheet";
+import { LiveDailyLogSheet, LiveTodayCards } from "./performance-live";
 import { FollowUpDialog } from "./follow-up-dialog";
 import { FollowUpDue, SELF_REPORTED_FIELDS } from "./sales-ui";
 
@@ -81,7 +82,12 @@ function MySalesDayInner() {
       ) : (
         <DayBody day={day.data} canLog={isMe} canWork={!!viewer && canWorkOn(viewer, day.data.empId)} onLog={() => setLog("1")} />
       )}
-      {isMe && <DailyLogSheet open={log === "1"} onOpenChange={(o) => setLog(o ? "1" : "")} existing={day.data?.log} />}
+      {isMe &&
+        (isLive("m15") ? (
+          <LiveDailyLogSheet open={log === "1"} onOpenChange={(o) => setLog(o ? "1" : "")} />
+        ) : (
+          <DailyLogSheet open={log === "1"} onOpenChange={(o) => setLog(o ? "1" : "")} existing={day.data?.log} />
+        ))}
     </>
   );
 }
@@ -116,6 +122,7 @@ function DayBody({ day, canLog, canWork, onLog }: { day: Day; canLog: boolean; c
 
   return (
     <div className="grid gap-5">
+      {isLive("m15") ? <LiveTodayCards empId={day.empId} canLog={canLog} onLog={onLog} /> : (
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <Card>
           <CardHeader>
@@ -181,6 +188,7 @@ function DayBody({ day, canLog, canWork, onLog }: { day: Day; canLog: boolean; c
           </CardContent>
         </Card>
       </div>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <FollowUps items={liveFollowUps ?? day.followUpsDue} canWork={canWork} />

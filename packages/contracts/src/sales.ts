@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { empIdSchema } from './events';
-import { currencySchema, daySchema, decisionReasonSchema, moneySchema, pageQuerySchema, type Currency } from './shared';
+import { currencySchema, daySchema, decisionReasonSchema, moneySchema, monthSchema, pageQuerySchema, positiveMoneySchema, type Currency } from './shared';
 
 /**
  * Module 15: sales and CRM (plan section 20). M15.1: leads and companies.
@@ -853,3 +853,224 @@ export const decideSalesWonExceptionSchema = z.object({
   version: versionSchema,
 });
 export type DecideSalesWonExceptionRequest = z.infer<typeof decideSalesWonExceptionSchema>;
+
+// =============================================================================================================== M15.6
+/*
+ * Module 15.6: targets, the manual daily log, the nightly daily report and the sales dashboard (plan section 20).
+ *
+ * "the sales manager sets targets for each person for every working day (leads added, emails checked, emails sent and
+ * follow-ups done) and for each month (meetings booked, proposals sent and deals won)". "Manual daily log ... marked
+ * self-reported." "Daily sales report: built automatically every night for each salesperson ... and compared with that
+ * day's targets." Approved rules (decisions 10-16 and the M15.6 answers):
+ *  - emails sent = hand-logged "email sent" activities until Module 16; emails checked is "not measured yet" (never 0);
+ *  - a day is met only when every target that is set and measurable is met; unmeasured ones are left out and named; a day
+ *    with no measurable target set has no result (null);
+ *  - the deals-won target has an amount and a currency (USD or PKR); only deals in that currency count, others are shown
+ *    apart; nothing is ever converted;
+ *  - targets are versioned (a change takes effect from a day or month that has not passed; history is never rewritten);
+ *  - the log is versioned and locked once that day's report exists; the report keeps the version it used;
+ *  - the report is built at 00:30 Pakistan time for each working day, once per person and day, and never overwritten;
+ *  - leads added count for the person who added or imported them; the morning notification goes to the sales managers;
+ *  - the sales staff (targets, logs, reports, dashboard) are active employees of the Sales department who hold sales.own,
+ *    and the sales managers (sales.targets). Being Level 4 or having the default "sales" role is not enough on its own.
+ */
+
+/** The daily target metrics, in the plan's order. */
+export const SALES_DAILY_METRICS = ['leadsAdded', 'emailsChecked', 'emailsSent', 'followUpsDone'] as const;
+export type SalesDailyMetric = (typeof SALES_DAILY_METRICS)[number];
+/** Metrics with no source yet: shown as "not measured yet", never as zero, and left out of "met" (Module 16 measures them). */
+export const SALES_UNMEASURED_METRICS = ['emailsChecked'] as const satisfies readonly SalesDailyMetric[];
+/** The monthly target metrics. */
+export const SALES_MONTHLY_METRICS = ['meetingsBooked', 'proposalsSent', 'wonValue'] as const;
+export type SalesMonthlyMetric = (typeof SALES_MONTHLY_METRICS)[number];
+
+const targetCount = z.number().int().min(0, 'At least 0').max(10_000, 'At most 10,000').nullable().optional();
+
+/** PUT /sales/targets/daily: a salesperson's daily targets from a day on (today or later). null or absent = no target. */
+export const setSalesDailyTargetsSchema = z
+  .object({
+    empId: empIdSchema,
+    effectiveFrom: daySchema,
+    leadsAdded: targetCount,
+    emailsChecked: targetCount,
+    emailsSent: targetCount,
+    followUpsDone: targetCount,
+  })
+  .refine((v) => SALES_DAILY_METRICS.some((k) => v[k] !== undefined), 'Set at least one target (or clear it with null)');
+export type SetSalesDailyTargetsRequest = z.input<typeof setSalesDailyTargetsSchema>;
+
+/** PUT /sales/targets/monthly: a salesperson's monthly targets for a month (this month or later). */
+export const setSalesMonthlyTargetsSchema = z
+  .object({
+    empId: empIdSchema,
+    month: monthSchema,
+    meetingsBooked: targetCount,
+    proposalsSent: targetCount,
+    /** The deals-won target: an amount and its currency. null clears it. */
+    wonValue: z.object({ amount: positiveMoneySchema, currency: currencySchema }).nullable().optional(),
+  })
+  .refine((v) => SALES_MONTHLY_METRICS.some((k) => v[k] !== undefined), 'Set at least one target (or clear it with null)');
+export type SetSalesMonthlyTargetsRequest = z.input<typeof setSalesMonthlyTargetsSchema>;
+
+export const salesTargetsQuerySchema = z.object({ month: monthSchema.optional() });
+
+export interface SalesDailyTargetsView {
+  effectiveFrom: string;
+  leadsAdded: number | null;
+  emailsChecked: number | null;
+  emailsSent: number | null;
+  followUpsDone: number | null;
+  setBy: SalesPersonRef | null;
+  setAt: string;
+}
+export interface SalesMonthlyTargetsView {
+  month: string;
+  meetingsBooked: number | null;
+  proposalsSent: number | null;
+  wonValue: { amount: string; currency: Currency } | null;
+  setBy: SalesPersonRef | null;
+  setAt: string;
+}
+/** GET /sales/targets?month: each person's daily targets in force today (and any set for later) and the month's targets. */
+export interface SalesTargetsRowView {
+  person: SalesPersonRef;
+  daily: SalesDailyTargetsView | null;
+  /** A change already set for a later day, if any. */
+  dailyNext: SalesDailyTargetsView | null;
+  monthly: SalesMonthlyTargetsView | null;
+  canEdit: boolean;
+}
+
+// ------------------------------------------------------------------------------------------------------- daily log
+
+/** The self-reported counts (plan section 20: work outside the connected tools). */
+export const SALES_LOG_FIELDS = ['linkedin', 'whatsapp', 'fiverr', 'calls', 'fieldVisits'] as const;
+export type SalesLogField = (typeof SALES_LOG_FIELDS)[number];
+const logCount = z.number().int().min(0, 'At least 0').max(1000, 'At most 1,000');
+
+/**
+ * PUT /sales/daily-logs/:day: the caller's own log for today (or yesterday, until its report is built). `version` is the
+ * version read (0 when there is none yet); every save is a new version.
+ */
+export const submitSalesDailyLogSchema = z.object({
+  linkedin: logCount,
+  whatsapp: logCount,
+  fiverr: logCount,
+  calls: logCount,
+  fieldVisits: logCount,
+  note: z.string().trim().max(1000).nullable().optional(),
+  version: z.number().int().min(0),
+});
+export type SubmitSalesDailyLogRequest = z.infer<typeof submitSalesDailyLogSchema>;
+
+export const salesDailyLogQuerySchema = z.object({ empId: empIdSchema.optional() });
+
+export interface SalesDailyLogView {
+  person: SalesPersonRef;
+  day: string;
+  version: number;
+  counts: Record<SalesLogField, number>;
+  note: string | null;
+  submittedAt: string;
+  /** The day's report exists: no more changes. */
+  locked: boolean;
+  /** Earlier versions, newest first (only the counts and when). */
+  history: Array<{ version: number; counts: Record<SalesLogField, number>; submittedAt: string }>;
+}
+
+// ------------------------------------------------------------------------------------------------- proof requests
+
+export const SALES_PROOF_STATUSES = ['open', 'answered', 'closed'] as const;
+export type SalesProofStatus = (typeof SALES_PROOF_STATUSES)[number];
+
+/** POST /sales/proof-requests: the sales manager asks for proof of a day's self-reported work. */
+export const requestSalesProofSchema = z.object({ empId: empIdSchema, day: daySchema, note: decisionReasonSchema });
+/** POST /sales/proof-requests/:id/answer: the salesperson answers (for example where the screenshot was sent). */
+export const answerSalesProofSchema = z.object({ answer: z.string().trim().min(3, 'At least 3 characters').max(1000) });
+/** POST /sales/proof-requests/:id/close: the sales manager closes it with a note. */
+export const closeSalesProofSchema = z.object({ note: decisionReasonSchema });
+export const salesProofListQuerySchema = z.object({ status: z.enum(SALES_PROOF_STATUSES).optional(), empId: empIdSchema.optional() });
+
+export interface SalesProofRequestView {
+  id: string;
+  person: SalesPersonRef;
+  day: string;
+  /** The log version the request was about. */
+  logVersion: number;
+  status: SalesProofStatus;
+  note: string;
+  requestedBy: SalesPersonRef;
+  requestedAt: string;
+  answer: string | null;
+  answeredAt: string | null;
+  closeNote: string | null;
+  closedBy: SalesPersonRef | null;
+  closedAt: string | null;
+}
+
+// ------------------------------------------------------------------------------------------------- daily report
+
+/** One metric of a day: its value (null = not measured yet), its target (null = none set), and whether it was met. */
+export interface SalesMetricResult {
+  value: number | null;
+  measured: boolean;
+  target: number | null;
+  /** null when there is no target or the metric is not measured. */
+  met: boolean | null;
+}
+
+export const salesDailyReportQuerySchema = z.object({ day: daySchema });
+
+/** The nightly report of one person for one working day, exactly as it was built (it is never rebuilt). */
+export interface SalesDailyReportView {
+  id: string;
+  person: SalesPersonRef;
+  day: string;
+  generatedAt: string;
+  metrics: Record<SalesDailyMetric, SalesMetricResult>;
+  /** Metrics with no source yet (left out of "met"). */
+  unmeasured: SalesDailyMetric[];
+  /** Every target that was set and measurable was met; null when none was set. */
+  met: boolean | null;
+  /** The log version the report used (self-reported), or null when there was none. */
+  log: { version: number; counts: Record<SalesLogField, number>; note: string | null } | null;
+  /** The latest proof request about this day, if any. */
+  proof: { id: string; status: SalesProofStatus } | null;
+}
+
+// ------------------------------------------------------------------------------------------------------- dashboard
+
+export const salesDashboardQuerySchema = z.object({ month: monthSchema.optional() });
+
+/** Money totals, one per currency (never converted). */
+export type SalesCurrencyTotals = Array<{ currency: Currency; total: string; count: number }>;
+
+export interface SalesPersonProgressView {
+  person: SalesPersonRef;
+  /** Today so far (live, not a report). */
+  today: { day: string; metrics: Record<SalesDailyMetric, SalesMetricResult>; met: boolean | null };
+  /** Yesterday's (or the last working day's) report: whether it exists and its result. */
+  lastReport: { day: string; met: boolean | null } | null;
+  month: {
+    meetingsBooked: SalesMetricResult;
+    proposalsSent: SalesMetricResult;
+    /** Won deals confirmed this month in the target's currency, against the target; the other currency apart. */
+    wonValue: { target: { amount: string; currency: Currency } | null; inTargetCurrency: string | null; met: boolean | null; byCurrency: SalesCurrencyTotals };
+  };
+  /** This week (Monday to today), logged by hand: calls, emails sent, replies, meetings, follow-ups; and self-reported. */
+  week: { calls: number; emailsSent: number; replies: number; meetings: number; followUps: number; selfReported: number };
+}
+
+/** GET /sales/dashboard?month: the team (sales.team / sales.all) or the caller's own figures. */
+export interface SalesDashboardView {
+  month: string;
+  /** Open deals by stage, totals per currency. */
+  pipeline: Array<{ stage: SalesDealStage; count: number; totals: SalesCurrencyTotals }>;
+  won: { count: number; totals: SalesCurrencyTotals };
+  lost: { count: number; totals: SalesCurrencyTotals };
+  /** Moves from one stage to the very next one this month, counted from the stage history (never guessed). */
+  stageMoves: Array<{ from: SalesDealStage; to: SalesDealStage; count: number }>;
+  leadsBySource: Array<{ source: SalesLeadSource; count: number }>;
+  leadsByCountry: Array<{ country: string; count: number }>;
+  people: SalesPersonProgressView[];
+}
