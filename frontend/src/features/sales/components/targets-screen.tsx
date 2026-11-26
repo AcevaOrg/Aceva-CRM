@@ -22,7 +22,10 @@ import { EmptyState, ErrorState } from "@/components/shared/states";
 import { useUrlState } from "@/hooks/use-url-state";
 import { useViewer } from "@/lib/auth/viewer";
 import { formatDate, formatMonthKey } from "@/lib/dates";
-import { canDecideCommission, canDoSalesWork, isSalesManager, type CommissionRow } from "../api";
+import { canDecideCommission, isSalesManager, type CommissionRow } from "../api";
+import { isLive } from "@/lib/api/http";
+import { LiveCommissionTab } from "./commission-live";
+import { LiveTargetsTab } from "./performance-live";
 import { useAddDnc, useApproveCommission, useCommission, useDnc, useRejectCommission, useSaveTargets, useTargets, useUpdateCommissionRule } from "../hooks";
 import type { CommissionStatus, DailyTargets, DncEntry, MonthlyTargets } from "../types";
 
@@ -39,8 +42,10 @@ export function TargetsScreen() {
 function TargetsInner() {
   const viewer = useViewer();
   const canTargets = !!viewer?.can(["sales.targets", "sales.own"]);
-  const canCommission = !!viewer?.can(["sales.commission_view", "sales.commission_approve"]);
-  const canDnc = !!viewer?.can("sales.own");
+  // M15.7 live: salespeople see their own lines and sales managers their team's (the server decides which lines).
+  const canCommission = !!viewer?.can(["sales.commission_view", "sales.commission_approve", ...(isLive("m15") ? (["sales.own", "sales.commission_approve_director"] as const) : [])]);
+  // M15.4: the list is for the sales manager (the CEO / Owner views it); only the sales manager adds an email to it.
+  const canDnc = !!viewer?.can(["sales.team", "sales.all"]);
   const first: Tab = canTargets ? "targets" : canCommission ? "commission" : "dnc";
   const [tab, setTab] = useUrlState<Tab>("tab", first);
   // Targets are set by the sales manager: the Director. Everyone else (the CEO included) sees them read-only.
@@ -61,17 +66,18 @@ function TargetsInner() {
         </TabsList>
         {canTargets && (
           <TabsContent value="targets">
-            <TargetsTab editable={canSetTargets} />
+            {/* M15.6 live: versioned targets from the server (the sales manager edits); the demo data otherwise */}
+            {isLive("m15") ? <LiveTargetsTab /> : <TargetsTab editable={canSetTargets} />}
           </TabsContent>
         )}
         {canCommission && (
           <TabsContent value="commission">
-            <CommissionTab />
+            {isLive("m15") ? <LiveCommissionTab /> : <CommissionTab />}
           </TabsContent>
         )}
         {canDnc && (
           <TabsContent value="dnc">
-            <DncTab canAdd={!!viewer && canDoSalesWork(viewer)} />
+            <DncTab canAdd={!!viewer && isSalesManager(viewer)} />
           </TabsContent>
         )}
       </Tabs>

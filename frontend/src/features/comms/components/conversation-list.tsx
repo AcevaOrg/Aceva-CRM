@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import Link from "next/link";
-import { Bookmark, Plus, Search } from "lucide-react";
+import { Bookmark, Plus, Search, TextSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tip } from "@/components/ui/overlays";
@@ -20,21 +20,27 @@ function when(iso: string) {
 export function ConversationList({
   activeId,
   savedActive,
+  searchActive = false,
   onNew,
   onSaved,
+  onSearch,
 }: {
   activeId?: string;
   savedActive: boolean;
+  searchActive?: boolean;
   onNew: () => void;
   onSaved: () => void;
+  onSearch?: () => void;
 }) {
   const q = useConversations();
   const title = useConversationTitle();
   const [search, setSearch] = React.useState("");
   const needle = search.trim().toLowerCase();
   const list = (q.data ?? []).filter((c) => !needle || title(c).toLowerCase().includes(needle) || (c.topic ?? "").toLowerCase().includes(needle));
-  const channels = list.filter((c) => c.kind === "channel").sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-  const direct = list.filter((c) => c.kind !== "channel");
+  // Archived conversations stay readable, in a section of their own at the end.
+  const channels = list.filter((c) => c.kind === "channel" && !c.archived).sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  const direct = list.filter((c) => c.kind !== "channel" && !c.archived);
+  const archived = list.filter((c) => c.archived);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -59,6 +65,17 @@ export function ConversationList({
           </span>
           Saved messages
         </button>
+        {onSearch && (
+          <button
+            onClick={onSearch}
+            className={cn("mb-1 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition hover:bg-muted", searchActive && "bg-accent")}
+          >
+            <span className="grid size-8 place-content-center rounded-lg bg-muted text-muted-foreground">
+              <TextSearch className="size-4" />
+            </span>
+            Search messages
+          </button>
+        )}
         {q.isPending ? (
           <ListSkeleton rows={6} className="mt-2" />
         ) : q.isError ? (
@@ -67,6 +84,7 @@ export function ConversationList({
           <>
             <Section title="Channels" items={channels} activeId={activeId} title_={title} />
             <Section title="Direct messages" items={direct} activeId={activeId} title_={title} />
+            <Section title="Archived" items={archived} activeId={activeId} title_={title} />
             {!list.length && <p className="px-3 py-6 text-center text-[13px] text-muted-foreground">No conversations match “{search}”.</p>}
           </>
         )}

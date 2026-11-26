@@ -5,6 +5,7 @@
  * The CEO / Founder / Owner sees both lists on the sales screens but approves nothing here.
  */
 import type { ApprovalItem, ApprovalProvider } from "@/features/approvals/types";
+import { isLive } from "@/lib/api/http";
 import { employeeName } from "@/lib/directory";
 import { canConfirmWon, canDecideCommission, commissionLines, companiesTable, dealsTable, handoverDeal } from "./api";
 import { SERVICE_LABEL } from "./logic";
@@ -13,7 +14,8 @@ export const salesApprovals: ApprovalProvider = {
   key: "sales",
   list: (viewer) => {
     const items: ApprovalItem[] = [];
-    if (viewer.can("sales.team")) {
+    // Live (m15): Won requests come from the server's approvals inbox, never from the demo data.
+    if (viewer.can("sales.team") && !isLive("m15")) {
       dealsTable()
         .filter((d) => d.stage === "won" && d.wonStatus === "pending" && canConfirmWon(viewer, d))
         .forEach((d) => {

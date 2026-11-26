@@ -1,8 +1,14 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { http, isLive } from "@/lib/api/http";
 import { useSession } from "@/lib/auth/session";
 import { activitiesApi, commissionApi, dealsApi, dncApi, leadsApi, reportsApi, salesDayApi, targetsApi } from "./api";
-import type { DailyTargets, DealStage, ImportRow, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
+import { LOST_REASONS, RECONTACT_MONTHS } from "./logic";
+import { liveFollowUps, liveReassignmentIssues } from "./live-api";
+import { performanceApi } from "./performance-live";
+import { liveCommissionApi } from "./commission-live";
+import type { SalesCommissionStatus, SetSalesCommissionRuleRequest, SetSalesDailyTargetsRequest, SetSalesMonthlyTargetsRequest, SubmitSalesDailyLogRequest } from "@aceva/contracts";
+import type { DailyTargets, DealStage, ImportRow, LeadSource, LogActivityInput, MonthlyTargets, NewDealInput, NewLeadInput, SelfReported } from "./types";
 
 export const salesKeys = {
   all: ["sales"] as const,
@@ -99,12 +105,18 @@ export function useDnc() {
 
 /* ---------- Mutations ---------- */
 
+/**
+ * Reloads what a change touched. It waits for the reload, so a change only counts as done once the screen shows the new
+ * data (in live mode a deal or lead carries its version: the next change must name the new one).
+ */
 function useInvalidate() {
   const qc = useQueryClient();
-  return () => {
-    qc.invalidateQueries({ queryKey: ["sales"] });
-    qc.invalidateQueries({ queryKey: ["approvals"] });
-    qc.invalidateQueries({ queryKey: ["integrations"] });
+  return async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["sales"] }),
+      qc.invalidateQueries({ queryKey: ["approvals"] }),
+      qc.invalidateQueries({ queryKey: ["integrations"] }),
+    ]);
   };
 }
 
@@ -115,12 +127,12 @@ export function useCreateLead() {
 
 export function useUpdateLead() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, notes }: { id: string; notes: string }) => leadsApi.update(id, { notes }), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, notes, version }: { id: string; notes: string; version?: number }) => leadsApi.update(id, { notes }, version), onSuccess: done });
 }
 
 export function useReassignLead() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, empId }: { id: string; empId: string }) => leadsApi.reassign(id, empId), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, empId, reason, version }: { id: string; empId: string; reason?: string; version?: number }) => leadsApi.reassign(id, empId, reason, version), onSuccess: done });
 }
 
 export function useMarkDnc() {
@@ -129,12 +141,12 @@ export function useMarkDnc() {
 }
 
 export function useImportPreview() {
-  return useMutation({ mutationFn: (csv: string) => leadsApi.importPreview(csv) });
+  return useMutation({ mutationFn: ({ csv, source }: { csv: string; source: LeadSource }) => leadsApi.importPreview(csv, source) });
 }
 
 export function useImportCommit() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: (rows: ImportRow[]) => leadsApi.importCommit(rows), onSuccess: done });
+  return useMutation({ mutationFn: ({ batchId, rows }: { batchId: string; rows: ImportRow[] }) => leadsApi.importCommit(batchId, rows), onSuccess: done });
 }
 
 export function useVerifyEmails() {
@@ -154,7 +166,7 @@ export function useCreateDeal() {
 
 export function useMoveDeal() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, stage, reason }: { id: string; stage: DealStage; reason?: string }) => dealsApi.move(id, stage, reason), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, stage, reason, version }: { id: string; stage: DealStage; reason?: string; version?: number }) => dealsApi.move(id, stage, reason, version), onSuccess: done });
 }
 
 export function useConfirmWon() {
@@ -165,6 +177,15 @@ export function useConfirmWon() {
 export function useRejectWon() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => dealsApi.rejectWon(id, reason), onSuccess: done });
+}
+
+/** M15.5 follow-up: the Owner's exceptional Won decision (confirm or send back), with a reason. */
+export function useWonException() {
+  const done = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, decision, reason }: { id: string; decision: "confirm" | "send_back"; reason: string }) => dealsApi.decideWonException(id, decision, reason),
+    onSuccess: done,
+  });
 }
 
 export function useSetNextStep() {
@@ -218,4 +239,113 @@ export function useUpdateCommissionRule() {
 export function useAddDnc() {
   const done = useInvalidate();
   return useMutation({ mutationFn: ({ email, reason }: { email: string; reason: string }) => dncApi.add(email, reason), onSuccess: done });
+}
+
+/**
+ * The reasons a deal can be marked Lost. Live: the list management keeps in Settings > Sales (empty until it is set, and
+ * then nothing can be marked Lost); mock: the demo list.
+ */
+export function useLostReasons() {
+  return useQuery({
+    queryKey: ["sales", "lost-reasons"],
+    queryFn: async () => (isLive("m15") ? (await http.get<{ value: { lostReasons: string[]; recontactMonths: number | null } }>("/settings/modules/sales")).value : { lostReasons: LOST_REASONS, recontactMonths: RECONTACT_MONTHS }),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Live mode (m15): the follow-ups due today and missed, from the server (mine, or one team member's for the sales manager).
+ * Mock mode: undefined, and the screens keep the demo "sales day".
+ */
+export function useLiveFollowUps(ownerEmpId?: string) {
+  const viewer = useSession((s) => s.empId);
+  const own = !ownerEmpId || ownerEmpId === viewer;
+  return useQuery({ queryKey: ["sales", "follow-ups", viewer, own ? null : ownerEmpId], queryFn: () => liveFollowUps(own ? undefined : ownerEmpId), enabled: !!viewer && isLive("m15") });
+}
+
+/**
+ * M15.5 (live mode only): leavers whose leads and deals are waiting for an owner, for the sales manager and the CEO / Owner.
+ * Mock mode: none.
+ */
+export function useReassignmentIssues(enabled: boolean) {
+  return useQuery({ queryKey: ["sales", "reassignment-issues"], queryFn: liveReassignmentIssues, enabled: enabled && isLive("m15") });
+}
+
+/* ---------------- M15.6 (live mode): targets, daily log, proof, reports, dashboard ---------------- */
+
+const LIVE_M15 = () => isLive("m15");
+
+export function useLiveTargets(month?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "targets", month ?? null], queryFn: () => performanceApi.targets(month), enabled: LIVE_M15() });
+}
+export function useSetDailyTargets() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesDailyTargetsRequest) => performanceApi.setDaily(body), onSuccess: done });
+}
+export function useSetMonthlyTargets() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesMonthlyTargetsRequest) => performanceApi.setMonthly(body), onSuccess: done });
+}
+export function useLiveLog(day: string, empId?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "log", day, empId ?? null], queryFn: () => performanceApi.log(day, empId), enabled: LIVE_M15() && !!day });
+}
+export function useSaveLiveLog() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ day, body }: { day: string; body: SubmitSalesDailyLogRequest }) => performanceApi.saveLog(day, body), onSuccess: done });
+}
+export function useLiveReportDates() {
+  return useQuery({ queryKey: ["sales", "perf", "report-dates"], queryFn: performanceApi.reportDates, enabled: LIVE_M15() });
+}
+export function useLiveReports(day?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "reports", day ?? null], queryFn: () => performanceApi.reports(day!), enabled: LIVE_M15() && !!day });
+}
+export function useLiveProofs() {
+  return useQuery({ queryKey: ["sales", "perf", "proofs"], queryFn: () => performanceApi.proofs(), enabled: LIVE_M15() });
+}
+export function useProofActions() {
+  const done = useInvalidate();
+  return {
+    request: useMutation({ mutationFn: ({ empId, day, note }: { empId: string; day: string; note: string }) => performanceApi.requestProof(empId, day, note), onSuccess: done }),
+    answer: useMutation({ mutationFn: ({ id, answer }: { id: string; answer: string }) => performanceApi.answerProof(id, answer), onSuccess: done }),
+    close: useMutation({ mutationFn: ({ id, note }: { id: string; note: string }) => performanceApi.closeProof(id, note), onSuccess: done }),
+  };
+}
+export function useLiveDashboard(month?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "dashboard", month ?? null], queryFn: () => performanceApi.dashboard(month), enabled: LIVE_M15() });
+}
+export function useLiveProgress(empId?: string) {
+  return useQuery({ queryKey: ["sales", "perf", "progress", empId ?? null], queryFn: () => performanceApi.progress(empId), enabled: LIVE_M15() });
+}
+
+/* ---------------- M15.7 (live mode): commission ---------------- */
+
+export function useLiveCommission(status?: SalesCommissionStatus) {
+  return useQuery({ queryKey: ["sales", "commission", "lines", status ?? null], queryFn: () => liveCommissionApi.list(status), enabled: LIVE_M15() });
+}
+/** Only the Director and the Owner may read the rules (the server answers 404 to everyone else). */
+export function useLiveCommissionRules(enabled: boolean) {
+  return useQuery({ queryKey: ["sales", "commission", "rules"], queryFn: () => liveCommissionApi.rules(), enabled: LIVE_M15() && enabled });
+}
+export function useSetCommissionRule() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (body: SetSalesCommissionRuleRequest) => liveCommissionApi.setRule(body), onSuccess: done });
+}
+export function useApproveCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, version, reason }: { id: string; version: number; reason?: string }) => liveCommissionApi.approve(id, { version, ...(reason ? { reason } : {}) }), onSuccess: done });
+}
+export function useRejectCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, reason, version }: { id: string; reason: string; version: number }) => liveCommissionApi.reject(id, { reason, version }), onSuccess: done });
+}
+export function useHoldCommissionLine() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, reason, version }: { id: string; reason: string; version: number }) => liveCommissionApi.hold(id, { reason, version }), onSuccess: done });
+}
+export function useCommissionLeaverDecision() {
+  const done = useInvalidate();
+  return useMutation({
+    mutationFn: ({ id, decision, reason, version }: { id: string; decision: "pay" | "forfeit"; reason: string; version: number }) => liveCommissionApi.leaverDecision(id, { decision, reason, version }),
+    onSuccess: done,
+  });
 }

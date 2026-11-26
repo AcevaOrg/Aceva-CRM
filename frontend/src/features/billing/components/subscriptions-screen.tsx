@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Activity, CalendarClock, Gauge, History, MoreHorizontal, Pencil, Plus, Repeat, TriangleAlert, Wallet } from "lucide-react";
+import { Activity, CalendarClock, Gauge, History, MoreHorizontal, Pencil, Plus, Receipt, Repeat, TriangleAlert, Wallet } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,9 +26,9 @@ import { useRenewalDecisions, useSubscriptions } from "../hooks";
 import { daysUntil, monthlyCostPkr, SUB_CATEGORY, SUB_PERIOD, usageFlag, usagePercent, USD_TO_PKR } from "../logic";
 import type { Subscription } from "../types";
 import { Countdown, Sparkline, SubStatusBadge, ViewOnlyNote } from "./bits";
-import { RenewalDecisionDialog, SubscriptionSheet, UsageReadingDialog } from "./subscription-forms";
+import { CostRecordDialog, RenewalDecisionDialog, SubscriptionSheet, UsageReadingDialog } from "./subscription-forms";
 
-type Tab = "register" | "renewals" | "usage";
+type Tab = "register" | "renewals" | "usage" | "costs";
 
 export function SubscriptionsScreen() {
   return (
@@ -44,12 +44,13 @@ function SubscriptionsBody() {
   const [editing, setEditing] = React.useState<Subscription | "new" | null>(null);
   const [deciding, setDeciding] = React.useState<Subscription | null>(null);
   const [reading, setReading] = React.useState<Subscription | null>(null);
+  const [costing, setCosting] = React.useState<Subscription | null>(null);
   const subs = q.data ?? [];
   const live = subs.filter((s) => s.status !== "cancelled");
   const monthly = live.reduce((s, x) => s + monthlyCostPkr(x), 0);
   const soon = live.filter((s) => daysUntil(s.renewalDate) >= 0 && daysUntil(s.renewalDate) <= 14).length;
   const flagged = live.filter((s) => usageFlag(s.usage)).length;
-  const actions = { edit: (s: Subscription) => setEditing(s), decide: (s: Subscription) => setDeciding(s), reading: (s: Subscription) => setReading(s) };
+  const actions = { edit: (s: Subscription) => setEditing(s), decide: (s: Subscription) => setDeciding(s), reading: (s: Subscription) => setReading(s), cost: (s: Subscription) => setCosting(s) };
 
   return (
     <>
@@ -75,7 +76,7 @@ function SubscriptionsBody() {
         <ErrorState error={q.error} onRetry={() => q.refetch()} className="mb-6" />
       ) : (
         <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label="Monthly cost" value={<Money value={monthly} compact />} icon={<Wallet />} accent="var(--zone-finance)" hint={`Yearly plans spread per month · USD at ${USD_TO_PKR}`} />
+          <StatCard label="Monthly cost" value={<Money value={monthly} compact />} icon={<Wallet />} accent="var(--zone-finance)" hint={USD_TO_PKR ? `Yearly plans spread per month · USD at ${USD_TO_PKR}` : "USD costs not counted: no USD rate saved yet"} />
           <StatCard label="Active services" value={live.length} icon={<Repeat />} accent="var(--info)" hint={`${subs.length - live.length} cancelled`} />
           <StatCard label="Renewing in 14 days" value={soon} icon={<CalendarClock />} accent="var(--warning)" onClick={() => setTab("renewals")} />
           <StatCard label="Usage flags" value={<span className={flagged ? "text-danger" : undefined}>{flagged}</span>} icon={<Gauge />} accent="var(--danger)" hint="Near limit or unusual" onClick={() => setTab("usage")} />
@@ -93,6 +94,9 @@ function SubscriptionsBody() {
           <TabsTrigger value="usage">
             <Activity /> Usage
           </TabsTrigger>
+          <TabsTrigger value="costs">
+            <Receipt /> Costs
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="register">
           <RegisterTab subs={subs} loading={q.isPending} actions={actions} />
@@ -103,16 +107,20 @@ function SubscriptionsBody() {
         <TabsContent value="usage">
           <UsageTab subs={subs} loading={q.isPending} onReading={setReading} />
         </TabsContent>
+        <TabsContent value="costs">
+          <CostsTab subs={subs} loading={q.isPending} onCost={setCosting} />
+        </TabsContent>
       </Tabs>
 
       <SubscriptionSheet open={!!editing} onOpenChange={(o) => !o && setEditing(null)} sub={editing && editing !== "new" ? editing : undefined} />
       {deciding && <RenewalDecisionDialog sub={deciding} onClose={() => setDeciding(null)} />}
       {reading && <UsageReadingDialog sub={reading} onClose={() => setReading(null)} />}
+      {costing && <CostRecordDialog sub={costing} onClose={() => setCosting(null)} />}
     </>
   );
 }
 
-function RowMenu({ s, actions }: { s: Subscription; actions: { edit: (s: Subscription) => void; decide: (s: Subscription) => void; reading: (s: Subscription) => void } }) {
+function RowMenu({ s, actions }: { s: Subscription; actions: { edit: (s: Subscription) => void; decide: (s: Subscription) => void; reading: (s: Subscription) => void; cost: (s: Subscription) => void } }) {
   const canManage = useCan("subscriptions.manage");
   if (!canManage) return null;
   return (
@@ -136,6 +144,9 @@ function RowMenu({ s, actions }: { s: Subscription; actions: { edit: (s: Subscri
             <Gauge /> Add usage reading
           </DropdownMenuItem>
         )}
+        <DropdownMenuItem onSelect={() => actions.cost(s)}>
+          <Receipt /> Record a month&apos;s cost
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -375,6 +386,39 @@ function UsageTab({ subs, loading, onReading }: { subs: Subscription[]; loading:
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Monthly cost records: Estimated unless backed by the provider's invoice reference or a bill. */
+function CostsTab({ subs, loading, onCost }: { subs: Subscription[]; loading: boolean; onCost: (s: Subscription) => void }) {
+  const canManage = useCan("subscriptions.manage");
+  const rows = subs.flatMap((s) => (s.costs ?? []).map((c) => ({ ...c, sub: s })));
+  const columns: Column<(typeof rows)[number]>[] = [
+    { key: "month", header: "Month", sortValue: (r) => r.month, cell: (r) => <span className="tabular">{r.month}</span> },
+    { key: "service", header: "Service", sortValue: (r) => r.sub.vendor, cell: (r) => <span className="font-medium">{r.sub.vendor}</span> },
+    { key: "amount", header: "Cost", align: "right", sortValue: (r) => Number(r.amount.amount), cell: (r) => <Money value={r.amount} exact /> },
+    { key: "kind", header: "Basis", cell: (r) => (r.estimated ? <Badge tone="warning">Estimated</Badge> : <Badge tone="success">Actual · {r.reference ?? "bill"}</Badge>) },
+    { key: "note", header: "Note", hideOnMobile: true, cell: (r) => <span className="text-[12.5px] text-muted-foreground">{r.note ?? ""}</span> },
+  ];
+  return (
+    <div className="grid gap-4">
+      <p className="text-[12.5px] text-muted-foreground">
+        Costs are typed in: no provider is connected. A cost is “Estimated” unless it comes from the provider&apos;s own invoice. Paying a provider is a bill in the finance ledger.
+      </p>
+      {canManage && subs.some((s) => s.status !== "cancelled") && (
+        <div className="flex flex-wrap gap-2">
+          {subs
+            .filter((s) => s.status !== "cancelled")
+            .slice(0, 6)
+            .map((s) => (
+              <Button key={s.id} size="sm" variant="outline" onClick={() => onCost(s)}>
+                <Receipt /> {s.vendor}
+              </Button>
+            ))}
+        </div>
+      )}
+      <DataTable rows={rows} loading={loading} columns={columns} rowKey={(r) => r.id} initialSort={{ key: "month", dir: "desc" }} empty={<EmptyState compact icon={<Receipt />} title="No costs recorded yet" />} />
     </div>
   );
 }

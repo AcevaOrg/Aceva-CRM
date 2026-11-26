@@ -19,6 +19,9 @@ import { cn } from "@/lib/utils";
 import { useCreateConversation, useDeleteMessage, useLinkTask } from "../hooks";
 import { canCreateChannel } from "../logic";
 import type { Message } from "../types";
+import { isLive } from "@/lib/api/http";
+
+const LIVE = isLive("m14");
 
 export function DeleteMessageDialog({ message, onClose }: { message: Message; onClose: () => void }) {
   const del = useDeleteMessage();
@@ -60,7 +63,8 @@ export function LinkTaskDialog({ message, onClose }: { message: Message; onClose
   const link = useLinkTask();
   const [q, setQ] = React.useState("");
   const needle = q.trim().toLowerCase();
-  const list = (tasks.data ?? []).filter((t) => !needle || `${t.number} ${t.title}`.toLowerCase().includes(needle)).slice(0, 30);
+  // Personal to-dos are private to their owner: they are never linked to a message.
+  const list = (tasks.data ?? []).filter((t) => !t.personal && (!needle || `${t.number} ${t.title}`.toLowerCase().includes(needle))).slice(0, 30);
   const choose = async (taskId: string | null) => {
     try {
       await link.mutateAsync({ id: message.id, taskId });
@@ -121,7 +125,8 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
   const projects = useProjects();
   const create = useCreateConversation();
   const router = useRouter();
-  const allowChannel = viewer ? canCreateChannel(viewer.employee, viewer.can("comms.admin")) : false;
+  // Live: the server lets comms admins create channels (plan section 19: "admins can create channels"); the demo also lets managers.
+  const allowChannel = viewer ? (LIVE ? viewer.can("comms.admin") : canCreateChannel(viewer.employee, viewer.can("comms.admin"))) : false;
   const [mode, setMode] = React.useState<"people" | "channel">("people");
   const [selected, setSelected] = React.useState<string[]>([]);
   const [q, setQ] = React.useState("");
@@ -142,7 +147,14 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const ok = mode === "people" ? selected.length > 0 : name.trim().length >= 2 && selected.length > 0;
+  // Live: every channel belongs to a department or a project (plan section 19); a department channel's members follow the
+  // employee records, so nobody has to be picked for it.
+  const ok =
+    mode === "people"
+      ? selected.length > 0
+      : LIVE
+        ? name.trim().length >= 2 && !!scope && (scope.startsWith("dep:") || selected.length > 0)
+        : name.trim().length >= 2 && selected.length > 0;
 
   const submit = async () => {
     try {
@@ -153,6 +165,7 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
         topic: topic || undefined,
         departmentId: scope.startsWith("dep:") ? scope.slice(4) : undefined,
         projectId: scope.startsWith("prj:") ? scope.slice(4) : undefined,
+        projectName: scope.startsWith("prj:") ? projects.data?.find((p) => p.id === scope.slice(4))?.name : undefined,
         moderatorEmpIds: moderators,
       });
       toast.success(mode === "channel" ? `#${name.trim().toLowerCase().replace(/\s+/g, "-")} created` : "Conversation ready");
@@ -191,7 +204,7 @@ export function NewConversationDialog({ onClose }: { onClose: () => void }) {
             </Field>
             <Field label="Linked to" htmlFor="ch-scope" hint="Picking a department adds its members.">
               <NativeSelect id="ch-scope" value={scope} onChange={(e) => applyScope(e.target.value)}>
-                <option value="">Nothing (open topic)</option>
+                {LIVE ? <option value="">Choose a department or project</option> : <option value="">Nothing (open topic)</option>}
                 <optgroup label="Department">
                   {lookup.departments.map((d) => (
                     <option key={d.id} value={`dep:${d.id}`}>

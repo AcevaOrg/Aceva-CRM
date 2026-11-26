@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { CryptoService } from '../auth/crypto.service';
+import { OutboxConsumerRunner } from '../events/outbox-consumer-runner.service';
 import { OutboxDispatcher } from '../events/outbox-dispatcher.service';
 import { OutboxService } from '../events/outbox.service';
 import { JobRunner } from '../jobs/job-runner.service';
@@ -19,9 +20,11 @@ import { Clock, SystemClock } from './clock';
     CryptoService,
     OutboxService,
     OutboxDispatcher,
+    // The Cycle 3 outbox readers (notifications, Modules 13 and 14): own progress table, never touches processed_at.
+    OutboxConsumerRunner,
     JobRunner,
     { provide: CityLocator, useClass: LocalRangeCityLocator },
   ],
-  exports: [Clock, CryptoService, OutboxService, OutboxDispatcher, JobRunner, CityLocator],
+  exports: [Clock, CryptoService, OutboxService, OutboxDispatcher, OutboxConsumerRunner, JobRunner, CityLocator],
 })
 export class CommonModule {}

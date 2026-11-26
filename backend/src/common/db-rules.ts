@@ -7,6 +7,7 @@ import { BadRequestException, ConflictException, ForbiddenException, HttpExcepti
  */
 const RULES: Array<{ marker: string; code: string; status: 400 | 403 | 409; message: string }> = [
   { marker: '(owner_approval_inherited)', code: 'owner_approval_inherited', status: 409, message: 'This account is under an account that needs Owner approval, so it needs it too' },
+  { marker: '(invoice_issued)', code: 'invoice_locked', status: 409, message: 'An issued invoice cannot be changed; cancel it instead' },
   { marker: '(owner_only)', code: 'owner_only', status: 403, message: 'Only the Owner may do this' },
   { marker: '(period_locked)', code: 'period_locked', status: 409, message: 'This month is locked for payroll' },
   { marker: '(period_closed)', code: 'period_closed', status: 409, message: 'This month is closed' },

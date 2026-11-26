@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "@/lib/auth/session";
 import { useCan } from "@/lib/auth/viewer";
 import { billingApi } from "./api";
-import type { NewInvoiceInput, RecordPaymentInput, RenewalDecision, Subscription } from "./types";
+import type { BillingSettings } from "@aceva/contracts";
+import type { NewCustomerInput, NewInvoiceInput, RecordPaymentInput, RenewalDecision, Subscription, SubscriptionCostInput } from "./types";
 
 export const billingKeys = {
   all: ["billing"] as const,
@@ -15,6 +16,8 @@ export const billingKeys = {
   payments: (empId: string | null) => ["billing", "payments", empId] as const,
   subscriptions: (empId: string | null) => ["billing", "subscriptions", empId] as const,
   decisions: (empId: string | null) => ["billing", "renewal-decisions", empId] as const,
+  banks: ["billing", "bank-accounts"] as const,
+  settings: ["billing", "settings"] as const,
 };
 
 /**
@@ -102,5 +105,55 @@ export function useDecideRenewal() {
 
 export function useAddUsageReading() {
   const done = useInvalidate();
-  return useMutation({ mutationFn: ({ id, used }: { id: string; used: number }) => billingApi.addUsageReading(id, used), onSuccess: done });
+  return useMutation({ mutationFn: ({ id, used, estimatedCost }: { id: string; used: number; estimatedCost?: string }) => billingApi.addUsageReading(id, used, estimatedCost), onSuccess: done });
+}
+
+/** Module 9 bank accounts a payment can be received in (live; the finance duty person sees them). */
+export function useBankAccounts(enabled = true) {
+  return useQuery({ queryKey: billingKeys.banks, queryFn: billingApi.bankAccounts, enabled, staleTime: 5 * 60_000 });
+}
+
+export function useEmailInvoice() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (id: string) => billingApi.emailInvoice(id), onSuccess: done });
+}
+
+export function useRestoreInvoice() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (id: string) => billingApi.restoreInvoice(id), onSuccess: done });
+}
+
+export function useStopRecurring() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, reason }: { id: string; reason: string }) => billingApi.stopRecurring(id, reason), onSuccess: done });
+}
+
+export function useCreateCustomer() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (input: NewCustomerInput) => billingApi.createCustomer(input), onSuccess: done });
+}
+
+export function useResolveDealHandover() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, partyId }: { id: string; partyId: string }) => billingApi.resolveDealHandover(id, partyId), onSuccess: done });
+}
+
+export function useConfirmCustomer() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: (id: string) => billingApi.confirmCustomer(id), onSuccess: done });
+}
+
+export function useSetSubscriptionCost() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ id, input }: { id: string; input: SubscriptionCostInput }) => billingApi.setSubscriptionCost(id, input), onSuccess: done });
+}
+
+/** Billing settings (company details on invoices, sending address, reminder timing). */
+export function useBillingSettings(enabled = true) {
+  return useQuery({ queryKey: billingKeys.settings, queryFn: billingApi.settings, enabled });
+}
+
+export function useSaveBillingSettings() {
+  const done = useInvalidate();
+  return useMutation({ mutationFn: ({ value, version, reason }: { value: BillingSettings; version: number; reason: string }) => billingApi.saveSettings(value, version, reason), onSuccess: done });
 }

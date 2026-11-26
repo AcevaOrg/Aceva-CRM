@@ -182,6 +182,8 @@ const ACTION_LABEL: Partial<Record<Permission, string>> = {
   "finance.close": "Run or approve the month close",
   "finance.reopen": "Reopen a closed month",
   "sales.commission_approve": "Approve commission",
+  "sales.commission_approve_director": "Approve the Director's commission",
+  "sales.commission_hold": "Hold or reject commission",
   "approval.approve": "Approve requests (and be a stand-in)",
   "duty.assign": "Give or end extra duties",
   "auth.set_temporary_password": "Set a temporary password",

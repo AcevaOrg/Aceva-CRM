@@ -3,7 +3,7 @@ import * as React from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import {
-  AlarmClock, AtSign, Bell, BellOff, CalendarDays, CheckCheck, CircleCheck, ClipboardCheck, CreditCard, Gauge, Inbox, ListTodo, Lock,
+  AlarmClock, AtSign, Bell, BellOff, CalendarDays, CheckCheck, CircleCheck, ClipboardCheck, CreditCard, Gauge, Inbox, ListTodo, Lock, MessageSquare, MessageSquareReply,
   Megaphone, Plug, Receipt, Repeat, ShieldAlert, Sunrise, Wallet,
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
@@ -24,24 +24,27 @@ import { ESSENTIAL_TYPES, NOTIFICATION_GROUP, type Notification, type Notificati
 
 const ICON: Record<NotificationType, React.ElementType> = {
   task_assigned: ListTodo, task_due_soon: AlarmClock, task_overdue: AlarmClock, task_reviewed: ClipboardCheck,
-  extension_requested: AlarmClock, extension_answered: AlarmClock, leave_requested: CalendarDays, leave_answered: CalendarDays,
+  extension_requested: AlarmClock, extension_answered: AlarmClock, leave_requested: CalendarDays, leave_answered: CalendarDays, correction_answered: CalendarDays,
   approval_waiting: Inbox, payroll_ready: Wallet, payslip_available: Receipt, scorecard_released: Gauge,
   security_alert: ShieldAlert, sales_reply: Sunrise, sales_follow_up: Sunrise, sales_tool_problem: Plug,
   message_mention: AtSign, announcement: Megaphone, renewal_due: Repeat, invoice_overdue: CreditCard,
+  invoice_due: CreditCard, invoice_draft_ready: CreditCard, usage_alert: Gauge,
+  message_new: MessageSquare, message_reply: MessageSquareReply, meeting_invited: CalendarDays, meeting_cancelled: CalendarDays,
+  sales_commission_decided: Wallet,
 };
 
 /** Email preference groups; a group shows only to people who can receive those notifications. */
 const PREF_GROUPS: { title: string; types: NotificationType[]; permission?: Permission | Permission[] }[] = [
-  { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered"] },
+  { title: "Work", types: ["task_assigned", "task_due_soon", "task_overdue", "task_reviewed", "extension_answered", "leave_answered", "correction_answered"] },
   // Approvers: the Director and the CTO. The CEO / Founder / Owner only approves the Director's own leave or correction;
   // Finance, Sales and Development approve nothing.
   { title: "Approvals", types: ["approval_waiting", "extension_requested", "leave_requested", "payroll_ready"], permission: ["leave.approve", "payroll.approve", "finance.entry_approve"] },
   { title: "Pay and results", types: ["payslip_available", "scorecard_released"] },
-  { title: "Messages", types: ["message_mention", "announcement"] },
+  { title: "Messages", types: ["message_new", "message_reply", "message_mention", "announcement", "meeting_invited", "meeting_cancelled"] },
   { title: "Security", types: ["security_alert"] },
-  { title: "Sales", types: ["sales_reply", "sales_follow_up"], permission: "sales.own" },
+  { title: "Sales", types: ["sales_reply", "sales_follow_up", "sales_commission_decided"], permission: "sales.own" },
   { title: "Sales tools", types: ["sales_tool_problem"], permission: "integrations.view" },
-  { title: "Finance", types: ["renewal_due", "invoice_overdue"], permission: "billing.view" },
+  { title: "Finance", types: ["renewal_due", "invoice_overdue", "invoice_due", "invoice_draft_ready", "usage_alert"], permission: "billing.view" },
 ];
 
 function dayLabel(iso: string) {
@@ -187,7 +190,9 @@ function PrefsForm({ saved }: { saved: NotificationPrefs }) {
       <CardHeader>
         <div>
           <CardTitle>Email preferences</CardTitle>
-          <CardDescription>Emails come from an @acevatech.com address. Approvals and security alerts can&apos;t be turned off.</CardDescription>
+          <CardDescription>
+            These switches control emails only: every notification still appears here and in the bell. Emails come from an @acevatech.com address. Approvals and security alerts can&apos;t be turned off.
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">

@@ -23,7 +23,8 @@ export class OutboxService {
     private readonly clock: Clock,
   ) {}
 
-  async emit(event: EventInput, tx?: Db): Promise<void> {
+  /** Returns the event's id. */
+  async emit(event: EventInput, tx?: Db): Promise<string> {
     const occurredAt = this.clock.now();
     const full = outboxEventSchema.parse({
       id: randomUUID(),
@@ -44,5 +45,6 @@ export class OutboxService {
         occurredAt,
       },
     });
+    return full.id;
   }
 }

@@ -69,14 +69,19 @@ activity record (activity belongs to a person); Module 2's `login_attempts` keep
 
 | Event | Intended consumer | Payload |
 |---|---|---|
-| `employee.offboarded` | M8, M12 (no consumer yet) | `empId`, `lastWorkingDay`, `managerEmpId` |
+| `employee.offboarded` | M15 sales (`sales-offboarding`, consumed now: Module 15.5); M8, M12 (no consumer yet) | `empId`, `lastWorkingDay`, `managerEmpId` |
 | `task.transfer.requested` | M5 task management (`tasks.handover`, consumed now) | `fromEmpId`, `toEmpId`, `reason: "employee_left"` |
 | `payroll.final_settlement.requested` | M8 payroll (no consumer yet) | `empId`, `lastWorkingDay` |
 
 `employee.offboarded`, `task.transfer.requested` and `payroll.final_settlement.requested` are written to the outbox when an
 employee's last working day is processed (`backend/src/people/offboarding.service.ts`). `task.transfer.requested` is consumed
-by Module 5 (see below): it moves the leaver's open work tasks and active repeating series to the manager. The other two
-wait in `outbox_events` (unprocessed) until their consumers are registered (Module 8, Module 12).
+by Module 5 (see below): it moves the leaver's open work tasks and active repeating series to the manager. Module 15.5
+reads `employee.offboarded` (reader `sales-offboarding`): it moves the leaver's leads that are not archived and their open
+deals (a pending Won request included, kept as it is) to the one active holder of the `sales_manager` duty, otherwise to
+`managerEmpId` when that person is active, holds `sales.own` and `sales.targets` and is not the CEO / Owner, otherwise to
+nobody (a case for management, `GET
+/sales/reassignment-issues`). A nightly check (02:00 Pakistan time) covers events that failed or came before the reader
+existed. `payroll.final_settlement.requested` waits in `outbox_events` until Module 8 registers its consumer.
 
 ## Module 5 (tasks, size and deadline), version 1
 
@@ -267,5 +272,38 @@ None of these carry an amount, a salary, a bank number or an employee UUID: peop
 | `ledger.entry.posted` | M9 | A journal entry is posted | `entryNumber`, `source`, `entryDate` |
 | `finance.period.reopened` | M9 | The Director reopens a closed month (D25) | `month`, `byEmpId`, `reason` |
 
-No module consumes these yet. Module 12 (notifications) is meant to read them; until then nothing is emailed (decision D16).
+Since the Cycle 3 foundation the notification core reads `leave.requested`, `leave.decided`, `attendance.correction.decided`,
+`payroll.run.ready`, `payslip.issued` and `finance.period.reopened` (reader `notifications`) and turns them into in-app
+notifications and emails (this supersedes D16). See docs/CYCLE3-FOUNDATION.md.
 The schemas are in `packages/contracts/src/events.ts`; `OutboxService.emit` refuses a payload that does not match.
+
+## Cycle 3: several readers per event
+
+Readers registered with `OutboxConsumerRunner` record their progress in `outbox_consumptions` (one row per reader and
+event, unique), not in `processed_at`, so each reader handles each event exactly once and several readers can read the
+same event. `processed_at` stays with the final-settlement reader. A new reader only sees events written after it was
+first registered. Details: docs/CYCLE3-FOUNDATION.md.
+
+| Reader | Reads |
+|---|---|
+| `notifications` | `leave.requested`, `leave.decided`, `attendance.correction.decided`, `payroll.run.ready`, `payslip.issued`, `finance.period.reopened` |
+| Final settlements (M8, uses `processed_at`) | `payroll.final_settlement.requested` |
+| `billing` (M13) | `ledger.entry.posted` (an approved invoice entry queues its client email once; a posted payment makes an invoice paid: `billing.invoice.paid` once), `sales.deal.won_confirmed` (one handover per deal: a draft for the exact, unique client, or Finance chooses when several clients share the name) |
+
+## Cycle 3: Modules 13 to 15, version 1 (defined in the shared foundation; produced when each module is built)
+
+| Type | From | When | Payload |
+|---|---|---|---|
+| `sales.deal.won_confirmed` | M15 | A Won deal is confirmed (the Director until there is a sales manager) | `dealNumber`, `ownerEmpId`, `confirmedByEmpId`, `client` (`partyId` or `name`, `email`, `country`), `service`, `value`, `currency` (refined with M13; still produced by nobody until M15) |
+| `billing.invoice.issued` | M13 (produced) | An invoice is issued (its ledger entry waits for approval in M9) | `invoiceNumber`, `dueDate`, `sourceDealNumber` |
+| `billing.invoice.paid` | M13 (produced) | An invoice is fully paid (its last payment is posted), once per invoice | `invoiceNumber`, `paidOn`, `sourceDealNumber`, `firstForClient` |
+| `billing.invoice.overdue` | M13 (produced) | An invoice passes its due date unpaid, once per invoice (daily run) | `invoiceNumber`, `dueDate`, `daysOverdue` |
+| `billing.subscription.renewal_due` | M13 (produced) | A subscription or domain enters its alert window, once per renewal date | `subscriptionNumber`, `renewsOn`, `ownerEmpId` |
+| `sales.commission.approved` | M15 | The Director approves a commission line | `dealNumber`, `empId`, `approvedByEmpId`, `payrollMonth` |
+| `comms.mention` | M14 (produced from M14.1) | Someone is mentioned with an `@ACV-0000` token, when the message is sent or an edit adds the mention (never the message text; never for mentioning yourself). Read by `comms-notifications` (`message_mention`) | `conversationId`, `messageId`, `mentionedEmpId`, `byEmpId` |
+| `comms.message.created` | M14 (produced from M14.1) | A message is saved (once per message: a retry with the same `clientKey` writes nothing). Read by `comms-realtime` (M14.2): the live-delivery safety net re-sends the message's live signal when the first one was lost; and by `comms-notifications`: `message_reply` to the author answered, `message_new` to the other members of a DM or group (one per conversation until read) | `conversationId`, `conversationKind`, `messageId`, `seq`, `authorEmpId`, `parentMessageId`, `mentionedEmpIds` (never the text) |
+| `comms.message.changed` | M14 (M14.2) | A saved message changed: `edited`, `deleted` (by its author), `removed` (by a moderator), `reaction` (added or taken back), `pinned`, `unpinned`, `file_scanned` (an attached file finished its malware check), `task_link` (linked to a Module 5 task, or unlinked). Written in the same transaction as the change. Read by `comms-realtime`, which re-sends the live update when the first one was lost | `conversationId`, `messageId`, `change` (never the text) |
+| `comms.member.removed` | M14 (produced from M14.1) | Someone stops being a member of a conversation: removed by a moderator or admin (`removed`) or left (`left`). Not written when a department channel member is moved out of the department (that membership is worked out from the employee records at every request). `employee_left` is reserved for the offboarding part of M14 | `conversationId`, `empId`, `byEmpId`, `reason` |
+| `comms.announcement.published` | M14 | An announcement is published. Read by `comms-notifications`: everyone it is for (except its author) gets an `announcement` notification with the title only | `announcementId`, `byEmpId`, `requiresAck` |
+| `comms.meeting.invited` | M14 | People are invited to a meeting, when it is created or later. Read by `comms-notifications` (`meeting_invited`) | `meetingId`, `empIds`, `byEmpId` (never the agenda or notes) |
+| `comms.meeting.cancelled` | M14 | The organizer cancels a meeting. Read by `comms-notifications` (`meeting_cancelled` to everyone invited) | `meetingId`, `byEmpId` (never the reason) |

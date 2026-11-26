@@ -1,12 +1,17 @@
 "use client";
 import { AcevaMark } from "@/components/layout/logo";
+import { isLive } from "@/lib/api/http";
 import { formatDate } from "@/lib/dates";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useBillingSettings } from "../hooks";
 import { INVOICE_STATUS, INVOICE_TYPE, lineAmount, PERIOD_LABEL } from "../logic";
 import type { Customer, Invoice, InvoiceLine } from "../types";
 
-/** Aceva's details printed on every invoice (Settings → Company details). */
+/**
+ * MOCK DATA ONLY: example company details for the screens on made-up data. Live (m13), the details come from the billing
+ * settings, and a detail that is not set there is left out (nothing is invented).
+ */
 export const ACEVA_DETAILS = {
   name: "Aceva Tech (Private) Limited",
   address: ["Station Road, Dadu HQ", "Sindh 76200, Pakistan"],
@@ -27,7 +32,22 @@ export type PreviewInvoice = Pick<Invoice, "number" | "type" | "period" | "issue
 /**
  * Invoice laid out like the PDF the customer receives (plan §13: "Client invoices with Aceva's details, as PDF").
  */
+const LIVE = isLive("m13");
+
+/** The company block: the billing settings when live, the example details on mock data. */
+function useCompany() {
+  const s = useBillingSettings(LIVE);
+  if (!LIVE) return { name: ACEVA_DETAILS.name, lines: [...ACEVA_DETAILS.address, `${ACEVA_DETAILS.email} · ${ACEVA_DETAILS.web}`, ACEVA_DETAILS.ntn], payTo: ACEVA_DETAILS.bank as string | null };
+  const c = s.data?.value.company;
+  return {
+    name: c?.legalName ?? "Company name not set (billing settings)",
+    lines: [c?.address, c?.email, c?.phone, c?.taxNumbers].filter((x): x is string => !!x),
+    payTo: c?.paymentDetails ?? null,
+  };
+}
+
 export function InvoicePreview({ invoice, customer, className, watermark }: { invoice: PreviewInvoice; customer?: Pick<Customer, "name" | "contactName" | "email" | "address" | "country" | "taxId">; className?: string; watermark?: string }) {
+  const company = useCompany();
   const cur = invoice.currency;
   const fmt = (n: number) => formatMoney(n, { currency: cur, exact: true });
   const balance = invoice.total - (invoice.paid ?? 0);
@@ -43,14 +63,12 @@ export function InvoicePreview({ invoice, customer, className, watermark }: { in
           <div className="flex items-start gap-3">
             <AcevaMark size={36} />
             <div className="text-[11.5px] leading-relaxed text-[oklch(0.45_0.02_265)]">
-              <p className="text-[14px] font-semibold text-[oklch(0.22_0.02_265)]">{ACEVA_DETAILS.name}</p>
-              {ACEVA_DETAILS.address.map((l) => (
-                <p key={l}>{l}</p>
+              <p className="text-[14px] font-semibold text-[oklch(0.22_0.02_265)]">{company.name}</p>
+              {company.lines.map((l) => (
+                <p key={l} className="whitespace-pre-line">
+                  {l}
+                </p>
               ))}
-              <p>
-                {ACEVA_DETAILS.email} · {ACEVA_DETAILS.web}
-              </p>
-              <p>{ACEVA_DETAILS.ntn}</p>
             </div>
           </div>
           <div className="text-right">
@@ -107,7 +125,7 @@ export function InvoicePreview({ invoice, customer, className, watermark }: { in
               <th className="py-2 pr-2 font-semibold">Description</th>
               <th className="w-14 py-2 text-right font-semibold">Qty</th>
               <th className="w-28 py-2 text-right font-semibold">Rate</th>
-              <th className="hidden w-16 py-2 text-right font-semibold sm:table-cell">Tax</th>
+              {!LIVE && <th className="hidden w-16 py-2 text-right font-semibold sm:table-cell">Tax</th>}
               <th className="w-32 py-2 text-right font-semibold">Amount</th>
             </tr>
           </thead>
@@ -118,7 +136,7 @@ export function InvoicePreview({ invoice, customer, className, watermark }: { in
                   <td className="py-2 pr-2">{l.description || <span className="italic text-[oklch(0.6_0.02_265)]">Line description</span>}</td>
                   <td className="py-2 text-right font-mono tabular">{l.qty || 0}</td>
                   <td className="py-2 text-right font-mono tabular">{Number(l.rate || 0).toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="hidden py-2 text-right font-mono tabular sm:table-cell">{l.taxRate ? `${l.taxRate}%` : "—"}</td>
+                  {!LIVE && <td className="hidden py-2 text-right font-mono tabular sm:table-cell">{l.taxRate ? `${l.taxRate}%` : "—"}</td>}
                   <td className="py-2 text-right font-mono tabular">{lineAmount(l).toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 </tr>
               ))
@@ -135,15 +153,19 @@ export function InvoicePreview({ invoice, customer, className, watermark }: { in
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div className="max-w-xs text-[11.5px] leading-relaxed text-[oklch(0.45_0.02_265)]">
             <p className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[oklch(0.5_0.02_265)]">Pay to</p>
-            <p>{ACEVA_DETAILS.bank}</p>
+            <p className="whitespace-pre-line">{company.payTo ?? "Payment details not set (billing settings)"}</p>
             <p className="mt-1">Please quote {invoice.number} as the payment reference.</p>
             {invoice.notes && <p className="mt-2 italic">{invoice.notes}</p>}
           </div>
           <dl className="grid min-w-56 grid-cols-2 gap-x-4 gap-y-1 text-[12.5px]">
             <dt className="text-[oklch(0.5_0.02_265)]">Subtotal</dt>
             <dd className="text-right font-mono tabular">{fmt(invoice.subtotal)}</dd>
-            <dt className="text-[oklch(0.5_0.02_265)]">Tax</dt>
-            <dd className="text-right font-mono tabular">{fmt(invoice.tax)}</dd>
+            {!LIVE && (
+              <>
+                <dt className="text-[oklch(0.5_0.02_265)]">Tax</dt>
+                <dd className="text-right font-mono tabular">{fmt(invoice.tax)}</dd>
+              </>
+            )}
             <dt className="border-t border-[oklch(0.9_0.01_265)] pt-1.5 font-semibold">Total</dt>
             <dd className="border-t border-[oklch(0.9_0.01_265)] pt-1.5 text-right font-mono text-[14px] font-semibold tabular">{fmt(invoice.total)}</dd>
             {invoice.paid !== undefined && invoice.paid > 0 && (

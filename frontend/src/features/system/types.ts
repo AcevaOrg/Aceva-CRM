@@ -7,10 +7,14 @@
 export type NotificationType =
   | "task_assigned" | "task_due_soon" | "task_overdue" | "task_reviewed"
   | "extension_requested" | "extension_answered"
-  | "leave_requested" | "leave_answered"
+  | "leave_requested" | "leave_answered" | "correction_answered"
   | "approval_waiting" | "payroll_ready" | "payslip_available" | "scorecard_released"
   | "security_alert" | "sales_reply" | "sales_follow_up" | "sales_tool_problem"
-  | "message_mention" | "announcement" | "renewal_due" | "invoice_overdue";
+  | "message_mention" | "announcement" | "renewal_due" | "invoice_overdue"
+  | "invoice_due" | "invoice_draft_ready" | "usage_alert"
+  | "message_new" | "message_reply" | "meeting_invited" | "meeting_cancelled"
+  // M15.7: the earner's commission line was approved, rejected or put on hold
+  | "sales_commission_decided";
 
 export interface Notification {
   id: string;
@@ -33,10 +37,13 @@ export interface NotificationPrefs {
 export const NOTIFICATION_GROUP: Record<NotificationType, "approvals" | "mentions" | "other"> = {
   task_assigned: "other", task_due_soon: "other", task_overdue: "other", task_reviewed: "other",
   extension_requested: "approvals", extension_answered: "other",
-  leave_requested: "approvals", leave_answered: "other",
+  leave_requested: "approvals", leave_answered: "other", correction_answered: "other",
   approval_waiting: "approvals", payroll_ready: "approvals", payslip_available: "other", scorecard_released: "other",
   security_alert: "other", sales_reply: "other", sales_follow_up: "other", sales_tool_problem: "other",
   message_mention: "mentions", announcement: "other", renewal_due: "other", invoice_overdue: "other",
+  invoice_due: "other", invoice_draft_ready: "other", usage_alert: "other",
+  message_new: "other", message_reply: "mentions", meeting_invited: "other", meeting_cancelled: "other",
+  sales_commission_decided: "other",
 };
 
 export const ESSENTIAL_TYPES: NotificationType[] = ["approval_waiting", "payroll_ready", "leave_requested", "extension_requested", "security_alert"];

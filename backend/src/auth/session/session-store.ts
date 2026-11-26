@@ -15,6 +15,11 @@ export interface CachedSession {
   csrfHash: string;
   /** When PostgreSQL last received this session's last-active time. */
   pgSyncedAt: number;
+  /**
+   * Whether the last activity was on a finance screen (10-minute idle limit there, 30 elsewhere). Kept only in this fast
+   * copy; unknown (undefined) when the session was rebuilt from PostgreSQL after Redis lost it.
+   */
+  financeActivity?: boolean;
 }
 
 /**

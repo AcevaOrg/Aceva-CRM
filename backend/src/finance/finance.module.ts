@@ -23,6 +23,7 @@ import {
 import { FinanceDocumentsService } from './finance-documents.service';
 import { FinanceExportService } from './finance-export.service';
 import { FinanceViews } from './finance-views';
+import { InvoiceLifecycleService } from './invoice-lifecycle.service';
 import { JournalController } from './journal.controller';
 import { JournalService } from './journal.service';
 import { LedgerPostingPort } from './ledger-posting.port';
@@ -34,7 +35,8 @@ import { ReconciliationService } from './reconciliation.service';
 
 /**
  * Module 9: finance ledger (plan section 13). Owner: Track C.
- * Exports LedgerPostingPort for Module 8 and LedgerQueryService for Module 10. Imports nothing from Module 8.
+ * Exports LedgerPostingPort for Module 8, LedgerQueryService for Module 10, and the invoice life cycle with the documents
+ * service for Module 13 (customer billing extends Module 9's invoices; it never writes money itself). Imports nothing from Module 8.
  */
 @Module({
   imports: [OrgModule],
@@ -64,10 +66,11 @@ import { ReconciliationService } from './reconciliation.service';
     ReconciliationService,
     PeriodsService,
     FinanceExportService,
+    InvoiceLifecycleService,
     { provide: LedgerPostingPort, useClass: LedgerPostingService },
     // Private file storage for receipts (the same kind as employee documents: a private folder today, S3/R2 later).
     { provide: FILE_STORAGE, inject: [ENV], useFactory: (env: Env) => new LocalFileStorage(env.FILE_STORAGE_ROOT) },
   ],
-  exports: [LedgerPostingPort, LedgerQueryService],
+  exports: [LedgerPostingPort, LedgerQueryService, InvoiceLifecycleService, FinanceDocumentsService, JournalService, MasterDataService],
 })
 export class FinanceModule {}

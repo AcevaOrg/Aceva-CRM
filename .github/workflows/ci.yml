@@ -35,12 +35,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      clamav:
+        image: clamav/clamav:1.5.5
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd "clamdcheck.sh"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 3
+          --health-start-period 6m
 
     env:
       NODE_ENV: test
       # CI-only values for the throw-away services above. Not real secrets.
       DATABASE_URL: postgresql://aceva_app:ci_only_password@localhost:5432/aceva_dev
       TEST_DATABASE_URL: postgresql://aceva_app:ci_only_password@localhost:5432/aceva_test
+      # The test reset empties TEST_DATABASE_URL; it refuses any database that is not explicitly approved as disposable
+      # (backend/test/helpers/db-guard.ts). Here aceva_test is the throw-away container above, so it is approved for CI.
+      ACEVA_APPROVED_TEST_DATABASES: aceva_test
       REDIS_URL: redis://localhost:6379
       DATA_ENCRYPTION_KEY: Y2ktb25seS1rZXktbm90LWEtc2VjcmV0IWNpLW9ubHk=
       ARGON2_MEMORY_KIB: '4096'

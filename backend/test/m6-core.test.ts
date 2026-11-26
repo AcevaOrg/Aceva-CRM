@@ -868,13 +868,13 @@ describe('approvals inbox: scorecard and dispute items', () => {
     expect((await decide(CTO, id, 'reject').expect(400)).body.code).toBe('reason_required'); // the reason is the remark
     expect(await statusOf(cardDev1Draft.id)).toBe('draft');
 
-    await decide(CTO, id, 'reject', { reason: 'Please add the missing test notes first.' }).expect(201);
+    await decide(CTO, id, 'reject', { reason: 'Please add the missing test notes first.' }).expect(200);
     expect(await statusOf(cardDev1Draft.id)).toBe('draft'); // kept as a draft
     expect((await itemsOf(CTO)).some((i) => i.id === id)).toBe(true);
     expect(((await get(CTO, `/scorecards/${cardDev1Draft.id}`).expect(200)).body as DetailBody).scorecard.reviewerRemark).toBe('Please add the missing test notes first.');
 
     const before = await prisma.scorecard.findUniqueOrThrow({ where: { id: cardDev1Draft.id } });
-    await decide(CTO, id, 'approve', { reason: 'Notes added, good work.' }).expect(201);
+    await decide(CTO, id, 'approve', { reason: 'Notes added, good work.' }).expect(200);
     const after = await prisma.scorecard.findUniqueOrThrow({ where: { id: cardDev1Draft.id } });
     expect(after.status).toBe('released');
     expect(after.releasedById).toBe(await eid(CTO));
@@ -882,7 +882,7 @@ describe('approvals inbox: scorecard and dispute items', () => {
     expect((await itemsOf(CTO)).some((i) => i.id === id)).toBe(false);
     expect(((await get(DEV1, `/scorecards/${cardDev1Draft.id}`).expect(200)).body as DetailBody).scorecard.reviewerRemark).toBe('Notes added, good work.');
     // the Director releases the CTO's own scorecard
-    await decide(DIRECTOR, `scorecard:${cardCtoDraft.id}`, 'approve').expect(201);
+    await decide(DIRECTOR, `scorecard:${cardCtoDraft.id}`, 'approve').expect(200);
     expect(await statusOf(cardCtoDraft.id)).toBe('released');
   });
 
@@ -891,14 +891,14 @@ describe('approvals inbox: scorecard and dispute items', () => {
     const b = `dispute:${disputeB.id}`;
     expect((await decide(CTO, a, 'approve', { rating: 4 }).expect(403)).body.message).toMatch(/not waiting for you/);
     expect((await decide(DIRECTOR, a, 'approve').expect(400)).body.code).toBe('rating_required');
-    await decide(DIRECTOR, a, 'approve', { rating: 4, reason: 'Agreed, it is a four.' }).expect(201);
+    await decide(DIRECTOR, a, 'approve', { rating: 4, reason: 'Agreed, it is a four.' }).expect(200);
     const changed = (await get(DEV3, '/disputes').expect(200)).body as DisputeBody[];
     expect(changed.find((d) => d.id === disputeA.id)).toMatchObject({ status: 'changed', newRating: 4, decision: 'Agreed, it is a four.', decidedBy: DIRECTOR });
     const card = (await get(DEV3, `/scorecards/${dev3Card.id}`).expect(200)).body as DetailBody;
     expect(card.scorecard.recomputeCount).toBe(1);
     expect(card.scorecard.tasks[0]).toMatchObject({ rating: 4, originalRating: 3 });
 
-    await decide(DIRECTOR, b, 'reject').expect(201);
+    await decide(DIRECTOR, b, 'reject').expect(200);
     const kept = ((await get(DEV3, '/disputes').expect(200)).body as DisputeBody[]).find((d) => d.id === disputeB.id);
     expect(kept).toMatchObject({ status: 'upheld', decision: 'Rating kept.' });
     expect((await itemsOf(DIRECTOR)).some((i) => i.id === a || i.id === b)).toBe(false);

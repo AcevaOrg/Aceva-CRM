@@ -19,12 +19,14 @@ import {
 import { daysFromNow } from "@/mocks/time";
 import { apolloLastSyncAt, consumeMillionVerifierCredits, millionVerifierCredits } from "@/features/integrations/api";
 import {
-  capScore, dataQuality, DEFAULT_SALES_WEIGHTS, domainOf, EMAIL_RE, emailsSentTotal, findDuplicate, isDueToday, isGenericDomain, isMissed, OPEN_STAGES,
-  parseCsv, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, STAGES, targetsMet, toUsd,
+  capScore, dataQuality, DEFAULT_SALES_WEIGHTS, DNC_BLOCKED_KINDS, domainOf, EMAIL_RE, emailsSentTotal, findDuplicate, isDueToday, isGenericDomain, isMissed, OPEN_STAGES,
+  parseCsv, pipelineSummary, RECONTACT_MONTHS, reportSentence, salesScore, SOURCE_LABEL, STAGE_META, targetsMet, toUsd,
 } from "./logic";
+import { isLive } from "@/lib/api/http";
+import { type ActivitiesApi, type DealsApi, type DncApi, type LeadsApi, liveActivitiesApi, liveDealsApi, liveDncApi, liveLeadsApi } from "./live-api";
 import type {
   CommissionLine, CommissionRule, Company, DailySalesSummary, DailyTargets, Deal, DealDetail, DealStage, DncEntry, DuplicateResult, EmailCheck, FollowUp,
-  ImportRow, Lead, LeadDetail, LeadSource, LeadStub, LogActivityInput, ManualDailyLog, MonthlyTargets, MySalesDay, NewDealInput, NewLeadInput,
+  ImportPreview, ImportRow, Lead, LeadDetail, LeadSource, LeadStub, LogActivityInput, ManualDailyLog, MonthlyTargets, MySalesDay, NewDealInput, NewLeadInput,
   PipelineSummary, SalesActivity, SalesScorecard, SelfReported, VerifyPreview, VerifyResult,
 } from "./types";
 
@@ -234,7 +236,7 @@ function createLead(input: NewLeadInput, owner: string, manual: boolean): Lead {
 
 /* ---------------- Leads ---------------- */
 
-export const leadsApi = {
+const mockLeadsApi = {
   /** GET /leads */
   list: () =>
     mock<LeadRow[]>(() => {
@@ -274,6 +276,9 @@ export const leadsApi = {
       if (!ownsSalesWork(v)) forbidden("Leads belong to salespeople. Only someone in Sales can add a lead.");
       const dup = findDuplicate(input, leadsTable(), companiesTable());
       if (dup.duplicate) throw new ApiError("duplicate", `This lead already exists. Owner: ${employeeName(dup.ownerEmpId)} (${dup.ownerEmpId}).`, 409);
+      // M15.4: an email on the do-not-contact list never becomes a lead (the server refuses it the same way).
+      const email = input.email?.trim().toLowerCase();
+      if (email && dncTable().some((d) => d.email === email)) throw new ApiError("do_not_contact", "This email is on the do-not-contact list, so it cannot be added as a lead.", 409);
       return createLead(input, v.employee.empId, true);
     }),
 
@@ -314,19 +319,19 @@ export const leadsApi = {
     }),
 
   /** POST /leads/import (preview only) */
-  importPreview: (csv: string) =>
-    mock<ImportRow[]>(() => {
+  importPreview: (csv: string, fileSource: LeadSource) =>
+    mock<ImportPreview>(() => {
       const v = getViewer();
       requireSales(v);
       if (!ownsSalesWork(v)) forbidden("Leads belong to salespeople. Only someone in Sales can import leads.");
       const rows = parseCsv(csv);
-      if (!rows.length) return [];
+      if (!rows.length) return { batchId: uid("imp"), rows: [] };
       const header = rows[0].map((h) => h.toLowerCase());
       const hasHeader = header.includes("email") || header.includes("name");
       const idx = (k: string, fallback: number) => (hasHeader ? header.indexOf(k) : fallback);
       const cols = { name: idx("name", 0), email: idx("email", 1), company: idx("company", 2), website: idx("website", 3), country: idx("country", 4), title: idx("title", 5), source: idx("source", 6) };
       const seen = new Set<string>();
-      return rows.slice(hasHeader ? 1 : 0).map((r, i) => {
+      const checked = rows.slice(hasHeader ? 1 : 0).map((r, i): ImportRow => {
         const get = (c: number) => (c >= 0 ? (r[c] ?? "").trim() : "");
         const sourceRaw = get(cols.source).toLowerCase().replace(/[\s-]/g, "_") as LeadSource;
         const row: ImportRow = {
@@ -337,21 +342,25 @@ export const leadsApi = {
           website: get(cols.website) || undefined,
           country: get(cols.country) || undefined,
           title: get(cols.title) || undefined,
-          source: sourceRaw in SOURCE_LABEL ? sourceRaw : "apollo",
+          // The file's source, unless the row names a valid one; an unknown one makes the row invalid (approved decision 5).
+          source: !sourceRaw ? fileSource : sourceRaw in SOURCE_LABEL ? sourceRaw : undefined,
           status: "ok",
         };
+        if (!row.source) return { ...row, status: "invalid", message: `Unknown source "${get(cols.source)}".` };
         if (!row.name || !row.companyName) return { ...row, status: "invalid", message: "Name and company are required." };
         if (!EMAIL_RE.test(row.email)) return { ...row, status: "invalid", message: "The email address isn't valid." };
+        if (dncTable().some((d) => d.email === row.email)) return { ...row, status: "dnc", message: "This email is on the do-not-contact list." };
         if (seen.has(row.email)) return { ...row, status: "repeated", message: "Appears earlier in this file." };
         seen.add(row.email);
         const dup = findDuplicate({ email: row.email, website: row.website }, leadsTable(), companiesTable());
         if (dup.duplicate) return { ...row, status: "duplicate", ownerEmpId: dup.ownerEmpId, message: `Already exists (matched on ${dup.matchedOn}). Owner: ${employeeName(dup.ownerEmpId)}.` };
         return row;
       });
+      return { batchId: uid("imp"), rows: checked };
     }),
 
   /** POST /leads/import/commit — saves only the good rows */
-  importCommit: (rows: ImportRow[]) =>
+  importCommit: (_batchId: string, rows: ImportRow[]) =>
     mock(() => {
       const v = getViewer();
       requireSales(v);
@@ -359,10 +368,12 @@ export const leadsApi = {
       let n = 0;
       for (const r of rows.filter((x) => x.status === "ok")) {
         if (findDuplicate({ email: r.email, website: r.website }, leadsTable(), companiesTable()).duplicate) continue;
-        createLead({ name: r.name, email: r.email, companyName: r.companyName, website: r.website, country: r.country, title: r.title, source: r.source }, v.employee.empId, r.source !== "apollo");
+        if (r.email && dncTable().some((d) => d.email === r.email)) continue;
+        const source = r.source ?? "apollo";
+        createLead({ name: r.name, email: r.email, companyName: r.companyName, website: r.website, country: r.country, title: r.title, source }, v.employee.empId, source !== "apollo");
         n++;
       }
-      return { imported: n };
+      return { imported: n, skipped: rows.length - n };
     }),
 
   /** GET /leads/verify/preview */
@@ -403,9 +414,12 @@ export const leadsApi = {
     }, { delay: 1200 }),
 };
 
+/** Leads: the real API when Module 15 is live (NEXT_PUBLIC_LIVE_MODULES contains m15), the in-browser demo data otherwise. */
+export const leadsApi: LeadsApi = isLive("m15") ? liveLeadsApi : mockLeadsApi;
+
 /* ---------------- Activities ---------------- */
 
-export const activitiesApi = {
+const mockActivitiesApi = {
   /** POST /leads/:id/activities */
   log: (input: LogActivityInput) =>
     mock(() => {
@@ -413,12 +427,17 @@ export const activitiesApi = {
       const l = leadOf(input.leadId);
       if (!l || !canSeeLead(v, l)) notFound("Lead");
       requireWork(v, l.ownerEmpId);
+      if (l.doNotContact && DNC_BLOCKED_KINDS.includes(input.kind)) throw new ApiError("do_not_contact", "This lead asked not to be contacted. Outgoing contact cannot be logged; a reply or a note can.", 409);
       const at = input.at ?? new Date().toISOString();
       const a = addActivity({ leadId: l.id, dealId: input.dealId, empId: v.employee.empId, kind: input.kind, source: "manual", at, summary: input.summary });
       if (input.kind === "meeting" && isoDay(at) === today()) summaryFor(l.ownerEmpId).meetings += 1;
-      return a;
+      // The demo data does not move stages from activities (the live server does).
+      return { activity: a, stageChange: null, stageNotChanged: null };
     }),
 };
+
+/** Activities: the real API when Module 15 is live, the in-browser demo data otherwise. */
+export const activitiesApi: ActivitiesApi = isLive("m15") ? liveActivitiesApi : mockActivitiesApi;
 
 /* ---------------- Deals ---------------- */
 
@@ -454,7 +473,7 @@ export interface MoveResult {
   handover?: Deal["handover"];
 }
 
-export const dealsApi = {
+const mockDealsApi = {
   /** GET /deals */
   list: () =>
     mock<DealRow[]>(() => {
@@ -575,6 +594,10 @@ export const dealsApi = {
       pushHistory(d, d.stage, `Won not confirmed: ${reason}`);
     }),
 
+  /** POST /deals/:id/won-exception: only on the live system (it depends on Module 3 offboarding). */
+  decideWonException: () =>
+    mock<void>(() => forbidden("The exceptional Won decision exists only on the live system.")),
+
   /** PATCH /deals/:id { nextStep, nextStepDate } */
   setNextStep: (id: string, nextStep: string, nextStepDate: string) =>
     mock(() => {
@@ -620,25 +643,9 @@ export const dealsApi = {
     }),
 };
 
-function pipelineSummary(deals: Deal[]): PipelineSummary {
-  const month = monthKey();
-  const stages = STAGES.map((stage) => {
-    const list = deals.filter((d) => d.stage === stage);
-    return { stage, count: list.length, valueUsd: list.reduce((s, d) => s + toUsd(d.value), 0) };
-  });
-  const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
-  const closedAt = (d: Deal) => d.history[d.history.length - 1]?.at ?? d.updatedAt;
-  const wonMonth = deals.filter((d) => d.stage === "won" && d.wonStatus === "confirmed" && monthKey(closedAt(d)) === month);
-  return {
-    stages,
-    openValueUsd: open.reduce((s, d) => s + toUsd(d.value), 0),
-    openCount: open.length,
-    wonThisMonthUsd: wonMonth.reduce((s, d) => s + toUsd(d.value), 0),
-    wonThisMonthCount: wonMonth.length,
-    lostThisMonthCount: deals.filter((d) => d.stage === "lost" && monthKey(closedAt(d)) === month).length,
-    pendingWonCount: deals.filter((d) => d.wonStatus === "pending").length,
-  };
-}
+/** Deals: the real API when Module 15 is live (NEXT_PUBLIC_LIVE_MODULES contains m15), the in-browser demo data otherwise. */
+export const dealsApi: DealsApi = isLive("m15") ? liveDealsApi : mockDealsApi;
+
 
 /* ---------------- My sales day, daily log ---------------- */
 
@@ -918,7 +925,7 @@ export const commissionApi = {
     }),
 };
 
-export const dncApi = {
+const mockDncApi = {
   /** GET /sales/do-not-contact */
   list: () => mock(() => { requireSales(); return dncTable(); }),
   /** POST /sales/do-not-contact { email, reason } */
@@ -935,6 +942,9 @@ export const dncApi = {
       dncTable().unshift({ id: uid("dnc"), email: e, leadId: lead?.id, reason, addedBy: v.employee.empId, at: new Date().toISOString() });
     }),
 };
+
+/** The do-not-contact list: the real API when Module 15 is live, the in-browser demo data otherwise. */
+export const dncApi: DncApi = isLive("m15") ? liveDncApi : mockDncApi;
 
 /** Sales staff (L4) for selects. */
 export function salesPeopleOptions() {

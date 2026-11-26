@@ -542,6 +542,140 @@ export const financePeriodReopenedV1 = defineEvent(
   z.object({ month: monthString, byEmpId: empIdSchema, reason: z.string() }),
 );
 
+// ---------- Cycle 3: Modules 13, 14, 15 (defined in the shared foundation; each is produced once its module is built) ----------
+// Same rules as above: Emp-IDs and document numbers only, no amounts, no prospect or customer personal data.
+
+/**
+ * M15: a Won deal was confirmed (by the sales manager, or the Director until there is one). M13 makes exactly one draft
+ * invoice from it (unique per deal number) for the finance duty person to check and issue. Refined with M13 (nothing
+ * produces it yet): the client, the service and the deal value travel with the event, so billing needs nothing from M15.
+ */
+export const salesDealWonConfirmedV1 = defineEvent(
+  'sales.deal.won_confirmed',
+  1,
+  z.object({
+    dealNumber: z.string().min(1),
+    ownerEmpId: empIdSchema,
+    confirmedByEmpId: empIdSchema,
+    /** The Module 9 client when the company is already one; otherwise billing creates the client from the name. */
+    client: z.object({
+      partyId: z.uuid().nullable(),
+      name: z.string().trim().min(1).max(200),
+      email: z.email().nullable(),
+      country: z.string().max(80).nullable(),
+    }),
+    service: z.string().trim().min(1).max(300),
+    value: z.string().regex(/^\d{1,12}(\.\d{1,2})?$/),
+    currency: z.enum(['PKR', 'USD']),
+  }),
+);
+
+/** M13: an invoice was issued; its ledger entry now waits for approval in Module 9. */
+export const billingInvoiceIssuedV1 = defineEvent(
+  'billing.invoice.issued',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), dueDate: dayString, sourceDealNumber: z.string().min(1).nullable() }),
+);
+
+/** M13: an invoice is fully paid (its payments are posted in Module 9). M15 calculates commission from it. */
+export const billingInvoicePaidV1 = defineEvent(
+  'billing.invoice.paid',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), paidOn: dayString, sourceDealNumber: z.string().min(1).nullable(), firstForClient: z.boolean() }),
+);
+
+/** M13: an invoice passed its due date unpaid. */
+export const billingInvoiceOverdueV1 = defineEvent(
+  'billing.invoice.overdue',
+  1,
+  z.object({ invoiceNumber: z.string().min(1), dueDate: dayString, daysOverdue: z.number().int().min(1) }),
+);
+
+/** M13: a subscription or domain renews soon; its responsible person is alerted. */
+export const billingSubscriptionRenewalDueV1 = defineEvent(
+  'billing.subscription.renewal_due',
+  1,
+  z.object({ subscriptionNumber: z.string().min(1), renewsOn: dayString, ownerEmpId: empIdSchema }),
+);
+
+/** M15: the Director approved a commission line; Module 8 adds it to that month's payroll as a bonus line. */
+export const salesCommissionApprovedV1 = defineEvent(
+  'sales.commission.approved',
+  1,
+  z.object({ dealNumber: z.string().min(1), empId: empIdSchema, approvedByEmpId: empIdSchema, payrollMonth: monthString }),
+);
+
+/** M14: someone was mentioned in a message (never the message text). */
+export const commsMentionV1 = defineEvent(
+  'comms.mention',
+  1,
+  z.object({ conversationId: z.uuid(), messageId: z.uuid(), mentionedEmpId: empIdSchema, byEmpId: empIdSchema }),
+);
+
+/** M14: an announcement was published to its audience. */
+export const commsAnnouncementPublishedV1 = defineEvent(
+  'comms.announcement.published',
+  1,
+  z.object({ announcementId: z.uuid(), byEmpId: empIdSchema, requiresAck: z.boolean() }),
+);
+
+/**
+ * M14: a message was saved (never its text). Module 14's later parts deliver it live and notify people; nothing
+ * consumes it yet.
+ */
+export const commsMessageCreatedV1 = defineEvent(
+  'comms.message.created',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    conversationKind: z.enum(['dm', 'group', 'channel']),
+    messageId: z.uuid(),
+    seq: z.number().int().min(1),
+    authorEmpId: empIdSchema,
+    /** A reply: the message it answers. */
+    parentMessageId: z.uuid().nullable(),
+    mentionedEmpIds: z.array(empIdSchema),
+  }),
+);
+
+/**
+ * M14.2: a saved message changed (never its text): edited, deleted by its author, removed by a moderator, a reaction
+ * added or taken back, pinned or unpinned. Read by the live-delivery safety net (`comms-realtime`), which re-sends the
+ * live update when the first one was lost, so open screens always end up showing what the database holds.
+ */
+export const commsMessageChangedV1 = defineEvent(
+  'comms.message.changed',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    messageId: z.uuid(),
+    /** file_scanned: a file attached to the message finished its malware check (clean or blocked). */
+    change: z.enum(['edited', 'deleted', 'removed', 'reaction', 'pinned', 'unpinned', 'file_scanned', 'task_link']),
+  }),
+);
+
+/** M14: people were invited to a meeting (at creation or later; never the agenda or notes). */
+export const commsMeetingInvitedV1 = defineEvent(
+  'comms.meeting.invited',
+  1,
+  z.object({ meetingId: z.uuid(), empIds: z.array(empIdSchema).min(1), byEmpId: empIdSchema }),
+);
+
+/** M14: the organizer cancelled a meeting (never the reason text). */
+export const commsMeetingCancelledV1 = defineEvent('comms.meeting.cancelled', 1, z.object({ meetingId: z.uuid(), byEmpId: empIdSchema }));
+
+/** M14: someone stopped being a member of a conversation (removed by a moderator or admin, left, or left the company). */
+export const commsMemberRemovedV1 = defineEvent(
+  'comms.member.removed',
+  1,
+  z.object({
+    conversationId: z.uuid(),
+    empId: empIdSchema,
+    byEmpId: z.union([empIdSchema, z.literal('system')]),
+    reason: z.enum(['removed', 'left', 'employee_left']),
+  }),
+);
+
 /** Every known event, by type and version. */
 export const outboxEventSchemas = {
   'auth.login': { 1: authLoginV1 },
@@ -577,6 +711,19 @@ export const outboxEventSchemas = {
   'payslip.issued': { 1: payslipIssuedV1 },
   'ledger.entry.posted': { 1: ledgerEntryPostedV1 },
   'finance.period.reopened': { 1: financePeriodReopenedV1 },
+  'sales.deal.won_confirmed': { 1: salesDealWonConfirmedV1 },
+  'billing.invoice.issued': { 1: billingInvoiceIssuedV1 },
+  'billing.invoice.paid': { 1: billingInvoicePaidV1 },
+  'billing.invoice.overdue': { 1: billingInvoiceOverdueV1 },
+  'billing.subscription.renewal_due': { 1: billingSubscriptionRenewalDueV1 },
+  'sales.commission.approved': { 1: salesCommissionApprovedV1 },
+  'comms.mention': { 1: commsMentionV1 },
+  'comms.announcement.published': { 1: commsAnnouncementPublishedV1 },
+  'comms.message.created': { 1: commsMessageCreatedV1 },
+  'comms.message.changed': { 1: commsMessageChangedV1 },
+  'comms.member.removed': { 1: commsMemberRemovedV1 },
+  'comms.meeting.invited': { 1: commsMeetingInvitedV1 },
+  'comms.meeting.cancelled': { 1: commsMeetingCancelledV1 },
 } as const;
 
 export type OutboxEventType = keyof typeof outboxEventSchemas;
@@ -615,6 +762,19 @@ export const outboxEventSchema = z.discriminatedUnion('type', [
   payslipIssuedV1,
   ledgerEntryPostedV1,
   financePeriodReopenedV1,
+  salesDealWonConfirmedV1,
+  billingInvoiceIssuedV1,
+  billingInvoicePaidV1,
+  billingInvoiceOverdueV1,
+  billingSubscriptionRenewalDueV1,
+  salesCommissionApprovedV1,
+  commsMentionV1,
+  commsAnnouncementPublishedV1,
+  commsMessageCreatedV1,
+  commsMessageChangedV1,
+  commsMemberRemovedV1,
+  commsMeetingInvitedV1,
+  commsMeetingCancelledV1,
 ]);
 
 export type OutboxEvent = z.infer<typeof outboxEventSchema>;

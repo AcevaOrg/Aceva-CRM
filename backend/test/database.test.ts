@@ -136,6 +136,23 @@ describe('seed data integrity', () => {
     expect(owner).toEqual(expect.arrayContaining(['leave.approve', 'attendance.approve_correction', 'approval.approve']));
     // decision D26: also the Director's own journal entries, hire requests and payroll (the services check that they are the Director's)
     expect(owner).toEqual(expect.arrayContaining(['finance.entry_approve', 'people.approve_hire', 'payroll.approve']));
+    // decision B1 (M15.2): a Won deal the Director owns, and only such a deal (DealsService and a trigger check it);
+    // nobody else holds this key
+    expect(owner).toContain('sales.won_confirm_director');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_confirm_director');
+    // M15.5 follow-up: the exceptional Won decision is the Owner's alone, and it brings no sales-management right
+    expect(owner).toContain('sales.won_decide_exception');
+    expect(owner).not.toContain('sales.targets');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.won_decide_exception');
+    // M15.7: the Owner approves the Director's own commission and decides leaver-held commission (nobody else holds it);
+    // holding or rejecting a line is the Director's and the Finance duty's, never the Owner's
+    expect(owner).toContain('sales.commission_approve_director');
+    expect(owner).not.toContain('sales.commission_hold');
+    for (const role of ['director', 'cto', 'sales', 'finance', 'employee']) expect(await keys(role), role).not.toContain('sales.commission_approve_director');
+    expect(await keys('director')).toContain('sales.commission_hold');
+    const financeDuty = (await prisma.dutyPermission.findMany({ where: { duty: { key: 'finance' } }, include: { permission: true } })).map((p) => p.permission.key);
+    expect(financeDuty).toEqual(expect.arrayContaining(['sales.commission_view', 'sales.commission_hold']));
+    expect(financeDuty).not.toContain('sales.commission_approve');
     // everything the old "Owner or CEO" could change now belongs to the Director
     expect(await keys('director')).toEqual(expect.arrayContaining(['org.manage', 'people.manage', 'payroll.approve', 'finance.entry_approve', 'finance.close_approve', 'finance.reopen', 'finance.authority_manage', 'finance.view', 'payroll.export', 'people.approve_hire', 'sales.commission_approve', 'duty.assign']));
   });

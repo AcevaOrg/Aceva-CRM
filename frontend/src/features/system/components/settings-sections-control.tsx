@@ -23,6 +23,7 @@ import { useBackupStatus, useRunBackup } from "../hooks";
 import { ChipsEditor, NumberInput, SettingsSection } from "./settings-kit";
 import { SettingRow } from "./settings-sections-work";
 import { LiveApprovalLimitsSection } from "./settings-finance-live";
+import { LiveSalesSettingsSection } from "./settings-sales-live";
 import { isLive } from "@/lib/api/http";
 
 /* ---------------- Approval limits ★ ---------------- */
@@ -353,6 +354,9 @@ export function RetentionSection() {
 type Sales = { dailyLeads: number; dailyEmailsChecked: number; dailyEmailsSent: number; dailyFollowUps: number; monthlyMeetings: number; monthlyProposals: number; stages: string[]; lostReasons: string[]; commissionPct: number; commissionBasis: string; recontactMonths: number };
 
 export function SalesRulesSection() {
+  // Live (m15): the sales settings the server keeps (lost reasons, re-contact period, shared domains). The mock below is the
+  // old demo and runs only without the backend.
+  if (isLive("m15")) return <LiveSalesSettingsSection />;
   return (
     <SettingsSection<Sales> section="sales">
       {(d, set, can) => (

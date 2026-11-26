@@ -303,6 +303,9 @@ test('the confirm-again dialog is checked by the server: a wrong password or an 
 });
 
 test('pay edit form: the Director edits through confirm-again and a reason; history is masked; everyone else is refused', async ({ browser, playwright }) => {
+  // Real timing, not a weaker check: up to 30 s waiting for a fresh authenticator code (codes are never reused), and five
+  // API logins that the real login throttle slows to about 5 s each after the earlier wrong-password tests in the run.
+  test.setTimeout(120_000);
   const director = await openAs(browser, DIRECTOR, `/people/${hireId}?tab=pay`);
   const page = director.page;
   await page.getByRole('button', { name: 'Edit pay' }).click();

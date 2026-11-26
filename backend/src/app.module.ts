@@ -15,8 +15,13 @@ import { PayrollModule } from './payroll/payroll.module';
 import { OrgModule } from './org/org.module';
 import { PeopleModule } from './people/people.module';
 import { PerformanceModule } from './performance/performance.module';
+import { BillingModule } from './billing/billing.module';
+import { CommsModule } from './comms/comms.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ModuleSettingsModule } from './settings/module-settings.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SettingsModule } from './settings/settings.module';
+import { SalesModule } from './sales/sales.module';
 import { TasksModule } from './tasks/tasks.module';
 
 @Module({
@@ -38,6 +43,13 @@ import { TasksModule } from './tasks/tasks.module';
     AttendanceModule,
     FinanceModule,
     PayrollModule,
+    // Cycle 3: shared notifications and module settings, Module 13 (billing) and Module 14 (communication).
+    ModuleSettingsModule,
+    NotificationsModule,
+    BillingModule,
+    CommsModule,
+    // Module 15 (sales and CRM).
+    SalesModule,
   ],
   providers: [{ provide: APP_PIPE, useClass: ZodValidationPipe }],
 })

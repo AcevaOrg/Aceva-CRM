@@ -16,6 +16,7 @@ import { useSessionTimers } from "@/hooks/use-session-timers";
 import { useDirectory } from "@/hooks/use-directory";
 import { API_MODE, isLive } from "@/lib/api/http";
 import { authApi } from "@/features/auth/api";
+import { useCommsRealtime } from "@/features/comms/hooks";
 import { useSession } from "@/lib/auth/session";
 import { useUi } from "@/lib/ui-store";
 import { EMPLOYEES } from "@/mocks/seed/people";
@@ -93,6 +94,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const setShortcuts = useUi((s) => s.setShortcuts);
   const timers = useSessionTimers();
   useDirectory(); // warm the directory cache for EmpChips
+  useCommsRealtime(); // Module 14 live: messages, receipts and presence over the WebSocket
 
   const viewAs = useSession((s) => s.viewAs);
   React.useEffect(() => {

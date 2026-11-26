@@ -35,7 +35,11 @@ export interface Lead {
   notes?: string;
   lastActivityAt?: string;
   archived: boolean;
+  /** M15.5: why and when it was archived (contact details removed after the set months without activity). */
+  archiveInfo?: { at: string; inactiveMonths: number; lastActivityAt: string; byJob: boolean };
   createdAt: string;
+  /** Live mode: the version the server has (an edit names it, so a stale screen cannot overwrite a newer change). */
+  version?: number;
 }
 
 /** What a salesperson sees for a lead owned by someone else (plan §20: exists + owner only). */
@@ -89,6 +93,12 @@ export interface Deal {
   history: StageChange[];
   createdAt: string;
   updatedAt: string;
+  /** Live mode: the version the server has (a change names it, so a stale screen cannot overwrite a newer change). */
+  version?: number;
+  /** Live mode: the server says whether the viewer may confirm or send back the Won request. */
+  canDecideWon?: boolean;
+  /** M15.5 follow-up: the Owner may make the exceptional Won decision (the requester left; nobody else can decide). */
+  wonExceptionEligible?: boolean;
 }
 
 export type ActivityKind =
@@ -185,8 +195,10 @@ export interface MySalesDay {
 export interface PipelineStageSummary {
   stage: DealStage;
   count: number;
-  /** Total in USD at the saved exchange rate. */
+  /** Total in USD at the saved exchange rate (demo data only; 0 in live mode, which never converts). */
   valueUsd: number;
+  /** Live mode: the totals per original currency, from the server (no conversion). */
+  totals?: Money[];
 }
 
 export interface PipelineSummary {
@@ -197,6 +209,11 @@ export interface PipelineSummary {
   wonThisMonthCount: number;
   lostThisMonthCount: number;
   pendingWonCount: number;
+  /**
+   * Live mode: the totals per original currency (PKR and USD are never added together or converted until management decides
+   * the reporting currency and the exchange-rate source). The *Usd fields above are 0 in live mode.
+   */
+  totals?: { open: Money[]; wonThisMonth: Money[] };
 }
 
 export interface CommissionRule {
@@ -279,6 +296,8 @@ export interface DuplicateResult {
   leadName?: string;
   companyName?: string;
   ownerEmpId?: string;
+  /** Live mode: a company with this website domain already exists, and who owns leads there (shown, not blocking). */
+  company?: { name: string; ownerEmpIds: string[] };
 }
 
 export interface ImportRow {
@@ -289,10 +308,17 @@ export interface ImportRow {
   website?: string;
   country?: string;
   title?: string;
-  source: LeadSource;
-  status: "ok" | "duplicate" | "invalid" | "repeated";
+  /** Missing when the row names a source that does not exist (the row is then invalid). */
+  source?: LeadSource;
+  status: "ok" | "duplicate" | "invalid" | "repeated" | "dnc";
   message?: string;
   ownerEmpId?: string;
+}
+
+/** M15.4: a checked import, waiting (30 minutes) to be committed. */
+export interface ImportPreview {
+  batchId: string;
+  rows: ImportRow[];
 }
 
 export interface VerifyPreview {
@@ -326,6 +352,10 @@ export interface LogActivityInput {
   kind: ActivityKind;
   summary: string;
   at?: string;
+  /** A meeting's date and time (it moves the deal to Meeting booked). */
+  meetingAt?: string;
+  /** A proposal's link (it moves the deal to Proposal sent). Links only, no files. */
+  proposalUrl?: string;
 }
 
 export interface LeadDetail {
@@ -341,4 +371,25 @@ export interface DealDetail {
   company: Company;
   activities: SalesActivity[];
   commission?: CommissionLine;
+}
+
+/** Why a logged activity left the deal's stage alone (the activity is saved either way). */
+export type StageNotChangedReason = "deal_closed" | "won_pending" | "not_forward" | "needs_contacted";
+
+/** A logged activity and what it did to the deal's stage (M15.3). */
+export interface LoggedActivity {
+  activity: SalesActivity;
+  stageChange: { from: DealStage; to: DealStage } | null;
+  stageNotChanged: StageNotChangedReason | null;
+}
+
+/** M15.5: a leaver whose leads and deals wait for an owner (nobody could receive them automatically). */
+export interface ReassignmentIssue {
+  id: string;
+  empId: string;
+  name: string;
+  detail: string;
+  openLeads: number;
+  openDeals: number;
+  since: string;
 }

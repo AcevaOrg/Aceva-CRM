@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { decideApprovalRequestSchema } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
@@ -29,6 +29,7 @@ export class ApprovalsInboxController {
   }
 
   @Post(':id/approve')
+  @HttpCode(200) // a decision on an existing item creates nothing (as tasks/:id/approve)
   @Authenticated()
   @ApiOperation({ summary: 'Approve an item ("task_review:<id>" needs a rating 1 to 5; the provider checks I am the one who decides)' })
   approve(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: DecideDto, @ClientInfo() client: RequestInfo) {
@@ -36,6 +37,7 @@ export class ApprovalsInboxController {
   }
 
   @Post(':id/reject')
+  @HttpCode(200)
   @Authenticated()
   @ApiOperation({ summary: 'Reject an item ("task_review" = send to rework; a reason is required)' })
   reject(@CurrentActor() actor: Actor, @Param('id') id: string, @Body() body: DecideDto, @ClientInfo() client: RequestInfo) {

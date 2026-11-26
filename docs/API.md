@@ -478,6 +478,485 @@ Module 10's `/reports`.
 | `GET /ledger/reports/{trial-balance, general-ledger, ar-aging, ap-due, profit-by-project, profit-by-client}` | `finance.view` | |
 | `GET /ledger/export?from&to` | `finance.export` + "confirm again" | CSV with a watermark line; formula injection blocked; audited |
 
+## Cycle 3 foundation: notifications and module settings
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /notifications?unread=` | everyone logged in | The caller's own, newest first (the latest 100): `{ id, empId, type, title, body, link, at, read, essential }` |
+| `POST /notifications/read {ids?}` | everyone logged in | Marks the caller's own read (no ids = all); other people's ids are not matched. `{ updated }` |
+| `GET /notifications/prefs`, `PATCH /notifications/prefs` | everyone logged in | `{ email: { [type]: boolean }, dailySummary }`. Turning off an essential type: `400 essential_notification` |
+| `GET /settings/modules/:module` | the module's view permission (default `settings.view`) | `{ module, value, version, updatedAt, updatedByEmpId }`; version 0 = defaults. Unknown module or no permission: 404 |
+| `PUT /settings/modules/:module {value, version, reason}` | the module's manage permission (`notifications`: `settings.manage`) | Checked by the module's schema (`400 invalid_settings`), stale version `409 stale_version`, audited with old and new value |
+
+## Module 13: customer billing and subscriptions
+
+Every `/billing` route is a finance screen: without the permission the answer is 404, and the 10-minute finance idle limit
+applies. Invoices and payments are Module 9's (one system); full table of routes and rules: docs/M13-BILLING.md.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /billing/overview` | `billing.view` | Billed and collected this month, outstanding, overdue, due in 14 days, drafts from Won deals (PKR) |
+| `GET /billing/invoices?partyId&status`, `GET /billing/invoices/:id` | `billing.view` | Status calculated: draft, issued, part_paid, paid (posted payments only), overdue, cancelled. Detail: client, payments, reminders, emails, recurring rule |
+| `POST /billing/invoices` | `billing.manage` | A draft, no ledger entry; `requestKey` makes a retry return the same draft; recurring and rental create their rule |
+| `PATCH /billing/invoices/:id` | `billing.manage` | Drafts only (`409 invoice_locked` / `invalid_transition` otherwise) |
+| `POST /billing/invoices/:id/issue {issueDate?, exchangeRate?}` | `billing.manage` | INV number, entry submitted for approval, reminders scheduled. Not emailed: the client email is queued once the entry is approved. A client created from a Won deal must be confirmed first (`409 client_needs_review`) |
+| `POST /billing/invoices/:id/cancel {reason}` | `billing.manage` | Draft: cancelled. Posted: reversing entry for approval (step-up). `409 entry_pending`, `409 has_payments` |
+| `POST /billing/invoices/:id/restore`, `POST /billing/invoices/:id/email` | `billing.manage` | Restore after a rejected reversal; email once, only after approval (`409 entry_not_approved`, `customer_emails_off`, `already_emailed`) |
+| `GET /billing/deal-handovers?status`, `POST /billing/deal-handovers/:id/resolve {partyId}` | view / `billing.manage` | Won deals whose client name matched several clients: Finance chooses the client, then the draft is made once |
+| `POST /billing/customers/:id/confirm` | `billing.manage` | Confirm a client created automatically from a Won deal |
+| `POST /billing/invoices/:id/payments {requestKey, bankAccountId, date, amount, method, reference?}` | `billing.manage` + `finance.entry_create` | A Module 9 payment waiting for approval; card numbers refused |
+| `GET /billing/invoices/:id/document` | `billing.view` | Printable HTML with the company details from the settings |
+| `GET /billing/invoices/export` | `billing.view` + `finance.export` | CSV; step-up, watermark, audit |
+| `GET /billing/payments`, `GET/POST /billing/customers`, `PATCH /billing/customers/:id` | view / `billing.manage` | A client is a Module 9 party with billing details |
+| `GET /billing/recurring`, `POST /billing/recurring/:id/stop {reason}` | view / `billing.manage` | Recurring and rental rules |
+| `GET /billing/subscriptions`, `GET /billing/subscriptions/renewal-events`, `GET /billing/subscriptions/:id` | `subscriptions.view` | Register with status, latest readings, usage flag, costs |
+| `POST /billing/subscriptions`, `PATCH /billing/subscriptions/:id` | `subscriptions.manage` | PATCH: details only (plan, cost, period and renewal date change by a decision) |
+| `POST /billing/subscriptions/:id/renewal-decision {decision, note?, nextRenewalDate?, newPlan?, newCost?, newPeriod?}` | `subscriptions.manage` | renewed, changed or cancelled (a note is required) |
+| `POST /billing/subscriptions/:id/usage {readingDate, used, limit?, estimatedCost?}` | `subscriptions.manage` | Typed in; a cost on it is an estimate |
+| `PUT /billing/subscriptions/:id/costs/:month {amount, currency, estimated, billId?, reference?}` | `subscriptions.manage` | Actual only with a bill or provider reference |
+| `GET/PUT /settings/modules/billing` | view `billing.view`, change `settings.manage` (step-up) | Company details, customer emails, reminder days, default terms and income account |
+
+## Module 14, part 1: conversations and messages
+
+Every route needs `comms.use` (everyone). Inside a conversation, what you may do depends on being a member and your role
+there, checked on every request. **A conversation you are not a member of is "not found" (404)**, for every route below,
+also for managers and admins (DMs and groups are open to their members only). Department channel members are the
+department's current employees and its head (read from the employee records at each request) plus people added by hand.
+**History starts when you join:** a member sees only messages sent after they became a member. For people added by hand
+that is the conversation's message number when they were added (again); for department channels it is recorded by
+database triggers when someone is hired into or moved into the department, or made its head (table
+`department_channel_access`). Earlier messages are "not found" for them in every route, search, saved messages, unread
+counts, previews and receipts. People already in a department when its channel is created see it from the start.
+Message text is plain text (at most 4,000 characters, never HTML); it is never written to the audit log, the outbox or the
+application log, and database errors on these routes are answered and logged as codes only.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /comms/conversations?cursor&limit` | member | My conversations, most recently active first, with my unread count and the last message |
+| `POST /comms/conversations` | DM, group: anyone; channel: `comms.admin` | `{kind:'dm', empId}` (an existing DM is returned with 200), `{kind:'group', name?, memberEmpIds}` (at most 50 people; the creator moderates), `{kind:'channel', scope:'department', departmentId, name, topic?, moderatorEmpIds?}` or `{kind:'channel', scope:'project', projectId \| projectName, projectCode?, name, memberEmpIds, moderatorEmpIds?}` (a Module 5 `projectId` gives the name and code and links the channel; `400 unknown_project`) |
+| `GET /comms/conversations/:id` | member; a `comms.admin` also for any channel (no messages) | Members (with `source` added or department), my read position, receipts (DMs and groups only), pins, `can` |
+| `PATCH /comms/conversations/:id {name?, topic?, projectName?, projectCode?}` | group moderators; channel moderators and `comms.admin` | |
+| `POST /comms/conversations/:id/archive {reason}` | group moderators; channels: `comms.admin` | Read-only afterwards (`409 conversation_archived`) |
+| `POST /comms/conversations/:id/members {empIds}` | group moderators; channel moderators and `comms.admin` | Current employees only (`400 unknown_or_inactive_employee`) |
+| `DELETE /comms/conversations/:id/members/:empId` | same; your own Emp-ID = leave | `409 department_member`: department channel members stay while they are in the department. Writes `comms.member.removed` |
+| `PUT` / `DELETE /comms/conversations/:id/moderators/:empId` | channels: `comms.admin`; groups: moderators | |
+| `POST /comms/conversations/:id/read {seq}`, `POST .../delivered {seq}` | member | Positions only move forward; read counts as delivered |
+| `GET /comms/conversations/:id/messages?before=N` or `?after=N`, `&limit` | member | By sequence number (unique per conversation, no gaps). Deleted messages stay as placeholders |
+| `POST /comms/conversations/:id/messages {clientKey, body, parentId?}` | member, not archived | 201, or 200 with `created:false` for a retry with the same `clientKey`; `409 client_key_reused` when that key was used for something else; replies only to a top-level message (`400 invalid_reply_target`); `@ACV-0006` mentions members only (`400 mention_not_member`); at most 30 a minute (`429 rate_limited`) |
+| `GET /comms/conversations/:id/pins` | member | |
+| `GET /comms/messages/:id/thread?after&limit` | member | The message and its replies |
+| `PATCH /comms/messages/:id {body}` | the author, within 24 hours | `409 edit_window_closed`; the older text is kept, never shown |
+| `DELETE /comms/messages/:id` | the author, any time | A placeholder stays; the text is kept as an older version |
+| `POST /comms/messages/:id/remove {reason}` | moderators (and `comms.admin` members of a channel) | Audited with the reason, never the text |
+| `PUT` / `DELETE /comms/messages/:id/reactions/:emoji` | member | Once per person and emoji |
+| `PUT` / `DELETE /comms/messages/:id/pin` | DMs and groups: members; channels: moderators | Once per message; audited |
+| `PUT` / `DELETE /comms/messages/:id/save` | member | Private to you |
+| `GET /comms/search?q&conversationId&cursor&limit` | member | PostgreSQL full-text search, only in conversations you can see now |
+| `GET /comms/saved?cursor&limit` | anyone | Your saved messages from conversations you can still see |
+| `GET /comms/admin/channels?cursor&limit` | `comms.admin` | Every channel with member count and moderators, never messages |
+
+## Module 14, later parts: notifications, announcements, meetings, files, links and retention
+
+Every route needs `comms.use`. Contracts: `packages/contracts/src/comms.ts`. Database rules (never deleted, what was
+published or uploaded never changes) are enforced by triggers whose errors name the rule only (`announcement_rule`,
+`meeting_rule`, `attachment_rule`), never a value.
+
+| Route | Who | Rules |
+|---|---|---|
+| `POST /comms/conversations/:id/messages {..., attachmentIds?}` | member | Up to 5 files the sender uploaded to this conversation and has not sent yet, not blocked (`400 invalid_attachments`) |
+| `PUT /comms/messages/:id/task {task}` | members who may post | Links the message to a Module 5 task (number or id) the caller may see (`404` otherwise); never a personal to-do (`400 personal_task`). Audited with the task number |
+| `DELETE /comms/messages/:id/task` | the person who linked it, the author, a moderator | |
+| `GET /comms/messages/:id/link` | member | `{ task }` as the caller may see it, `{ task: null }` for a task they may not see (never its number or title), or `null` |
+| `POST /comms/conversations/:id/files` (multipart `file`) | members who may post, not archived | PDF, PNG, JPEG or Word `.docx` by content (`400 file_type_not_allowed`), at most 10 MB (`413`). Scanned by ClamAV in memory **before** it is stored: `scan` is `clean`, `blocked` (never stored, audited `comms.file.blocked` with the signature) or `scanning` (scanner unavailable: kept, unopenable, re-checked by the `comms.file.scan` job: five attempts over about 2.6 hours, then re-armed by the file sweep at most every 6 hours until a check answers). At most 10 uploads a minute and 60 an hour per person (`429 rate_limited`, `retryAfterSec`). Not sent within 24 hours: discarded (record kept, bytes removed; `discarded: true`) |
+| `POST /comms/meetings/:id/files` | the organizer, not cancelled | Same limits and scanning |
+| `GET /comms/files/:id` | whoever may see what it belongs to | Unsent files: their uploader only. Message files: current members whose history includes the message, not deleted. Meeting files: the organizer and invitees. Everyone else `404` |
+| `GET /comms/files/:id/download` | same | `409 file_scanning`, `410 file_blocked`, `410 file_discarded`; `Content-Disposition: attachment`, `nosniff`, `private, no-store`; audited `comms.file.downloaded` |
+| `GET /comms/announcements?cursor&limit` | everyone | The ones for me (everyone, or my current department), my own, and all of them for the CEO / Founder / Owner and the Director. Pinned first. `progress` (who it is for, who acknowledged) only for publishers |
+| `POST /comms/announcements {title, body, audience:{all, departmentIds}, pinned, requiresAck}` | `announcements.publish` | Audited (title and audience, never the body); `comms.announcement.published` |
+| `GET /comms/announcements/:id` | as the list | |
+| `PUT` / `DELETE /comms/announcements/:id/pin` | `announcements.publish` | Audited |
+| `POST /comms/announcements/:id/ack` | people it is for | Once (`400 no_ack_needed`, `403 not_in_audience`) |
+| `GET /comms/meetings?from&to` | everyone | My meetings (organised or invited), soonest first; at most 400 days |
+| `POST /comms/meetings {title, startsAt, durationMin, location, agenda, participantEmpIds}` | everyone | Not in the past (`400 in_the_past`), current colleagues (`400 not_current_employee`); the organizer is never an invitee. Audited without the agenda |
+| `GET /comms/meetings/:id` | organizer and invitees | Everyone else `404`, managers and admins included. Linked tasks the viewer may see, plus `hiddenLinkedTasks` |
+| `PATCH /comms/meetings/:id {title?, startsAt?, durationMin?, location?, agenda?, notes?}` | the organizer | `409 meeting_cancelled`; audited with the changed field names only |
+| `POST /comms/meetings/:id/participants {empIds}` | the organizer | `comms.meeting.invited` |
+| `PUT /comms/meetings/:id/rsvp {rsvp: yes\|no\|maybe}` | invitees | Until the meeting ends (`409 meeting_over`) |
+| `POST /comms/meetings/:id/tasks {task}`, `DELETE /comms/meetings/:id/tasks/:taskId` | the organizer | Tasks the organizer may see; never a personal to-do |
+| `POST /comms/meetings/:id/cancel {reason}` | the organizer | Read-only afterwards; audited with the reason; `comms.meeting.cancelled` |
+| `GET /comms/admin/audit?action&outcome&from&to&cursor&limit` | `comms.admin` | Module 14 security and audit events, newest first: every `comms.*` audit record, the comms retention setting changes and refusals (`access.denied`) on `/comms` routes. `action` is an exact action or a group (`messages`, `conversations`, `files`, `announcements`, `meetings`, `settings`, `denied`). Metadata only (ids, Emp-IDs, numbers, reasons, scanner findings): message text, file names, agendas and notes are never in the audit log |
+| `GET /comms/policy` | everyone | The retention periods management set (`null` = not set: everything is kept); `automaticRemoval: false` |
+| `GET` / `PUT /settings/modules/comms` | `comms.admin` (PUT: confirm again, a reason) | `{ messageRetentionDays, fileRetentionDays }`, 30 to 3650 days or `null`; versioned and audited |
+
+**Notifications** (outbox reader `comms-notifications`, through the Module 12 core). None is essential, so each person
+can turn the **email** for each type off (`PATCH /notifications/prefs`); the notification itself always appears in the
+app (the bell and `/notifications`), as the notification settings of the plan and `spec.md` define them (email
+switches only). Types: `message_new` (DMs and groups: one per conversation until it is read), `message_reply`,
+`message_mention`, `announcement` (the title only), `meeting_invited` and `meeting_cancelled` (the organizer and the
+time only). **Channels notify mentions and replies only**, never every new message; DMs and groups also notify new
+messages. Never the text of a message, an agenda or notes; never for one's own action, a message already read, a
+deleted message or one outside the reader's history.
+
+## Module 14, part 2: live delivery (WebSocket)
+
+REST makes every change; the socket only delivers what is already saved. Contract: `packages/contracts/src/realtime.ts`.
+
+| What | Rule |
+|---|---|
+| Endpoint | Socket.IO 4.8 at `/socket.io` on the API server (outside `/api/v1`), **WebSocket transport only** (no long-polling, so no sticky sessions behind a load balancer). A reverse proxy must pass the upgrade headers for `/socket.io` |
+| Signing in | The HttpOnly `aceva_session` cookie on the handshake. Same rules as REST: session not ended, inside its idle and 12-hour limits, login finished (`auth_incomplete` otherwise), still employed, `comms.use`. The check is **read-only**: connecting and socket traffic never extend the session |
+| Idle limit of a socket | The limit of the screen the person was last active on: 10 minutes after a finance screen, 30 elsewhere (the session remembers it; the heartbeat sent from a finance screen carries `X-Aceva-Screen: finance`, which can only make the limit stricter). If Redis lost that memory, people with Finance duty get 10 minutes. The socket is re-checked exactly at that deadline (and at the 12-hour end) |
+| Origin | Must equal `CORS_ORIGIN`, checked before the upgrade (400 otherwise; a missing Origin is refused). CORS does not protect WebSockets |
+| Refusals (`connect_error`, `err.data.code`) | `unauthenticated`, `auth_incomplete`, `forbidden`, `origin_not_allowed`, `too_many_connections` (more than 5 sockets per person across every server), `too_many_attempts` (300 connection attempts a minute per client address, 30 per session), `realtime_unavailable` (Redis down: new sockets are refused) |
+| Limits | At most 20 events a second per socket (refused with `{ error: 'rate_limited' }`; more than 20 refusals in a second closes the socket); packets over 16 KB close the socket; any event other than `sync` closes the socket (`closing { reason: 'unknown_event' }`) |
+| Session ends | Logout, timeout, a forced logout, "log out other devices", a password change or leaving the company: `SessionService.end` signals every server through Redis and the socket gets `session.ended` and is closed at once. If the signal is lost, every server re-checks its sockets' sessions every minute and at each session's deadline |
+| Access changes | A department move, a new department head, a level or role change, or a duty given or ended signals every server (`access-changed`, Emp-IDs only) after the change is committed: that person's sockets are re-checked at once. Losing `comms.use` closes them (`closing { reason: 'forbidden' }`); conversations lost or gained are announced (`conversation.removed` / `conversation.changed`). Whatever made the change, every delivery also checks `comms.use` from the database, so a permission taken away another way stops the very next delivery and closes the socket |
+| Server to browser | `message.created` (acknowledge it: that records "delivered"), `message.updated` (edit, deletion, removal, reaction, pin; `revision` counts text changes), `receipt.updated` (DMs and groups: every member; channels: only that person), `conversation.changed`, `conversation.removed`, `presence`, `presence.snapshot`, `sync.required`, `session.ended`, `closing` |
+| Browser to server | `sync` (ack): `{ conversations: [{ id, lastSeq }] }` for every conversation the person can see now |
+| Who receives what | Decided again from PostgreSQL for **every** delivery: current member (member rows, or the department's current people and head) and `seq > fromSeq` (the history start of M14.1). Rooms are joined by the server only |
+| Catching up | Every message has a gap-free number. A jump in numbers: read `GET /comms/conversations/:id/messages?after=N`. After a reconnect or a `sync.required`, the screens reload everything they show from the database (open conversations, threads, saved messages), so missed edits, deletions, reactions and pins are recovered too. Duplicates (same number, same revision) are dropped |
+| Passive reads | A GET with `X-Aceva-Passive: 1` checks the session exactly as usual but does not count as activity (the screens use it for every read they make on their own). Ignored on changes |
+| Presence | Online / offline only, in Redis only (no history, no table, never a score), shown only to people who share a DM or a group with the person, never in channels |
+| Relay | Plain Redis Pub/Sub on the existing Redis, carrying pointers only (ids and numbers; never message text, cookies or tokens). Not durable: the database and catch-up are the truth; a new message, edit, deletion, removal, reaction or pin whose broadcast was lost is re-sent by the `comms-realtime` outbox reader (within about 10 seconds), rendered from the current database state; changes that went out are recognised by their outbox event id and skipped |
+
+
+## Module 15, part 1: leads and companies
+
+Plan section 20. Every route needs `sales.own` (the Sales role, the Director, the sales-manager duty; the CEO / Owner
+views); everyone else gets 403. What each person sees inside is decided on the server:
+
+- **Your own leads** in full.
+- **`sales.team`:** the leads of everyone in your reporting line.
+- **`sales.all`:** every lead.
+- **Someone else's lead:** only `{ restricted: true, fullName, companyName, owner }`, never the email, phone or notes.
+- **Moving leads and giving a new lead to someone else** is the sales manager's work. That is `sales.targets`, which
+  only the Director and the sales-manager duty hold. The CEO / Owner only views.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/leads?owner&source&country&companyId&q&status&page&pageSize` | `sales.own` | Leads you may see in full (`status`: `active` default, `archived`, `all`) |
+| `POST /sales/leads` | `sales.own` | Add a lead (`company` new, or `companyId`). The same email (trimmed, lower-case) on a lead that is not archived: 409 `duplicate_lead` with `existing.owner`. A new company whose website domain exists is that company. `ownerEmpId` only for the sales manager (an active salesperson in their reporting line) |
+| `POST /sales/leads/check-duplicate {email?, website?}` | `sales.own` | `{ email: {leadId, owner, mine, canOpen} \| null, domain, sharedDomain, company: {companyId, name, leadOwners} \| null }`. At most 30 a minute per person (429 `rate_limited`, logged) |
+| `GET /sales/leads/:id` | `sales.own` | The lead in full, or the restricted view |
+| `PATCH /sales/leads/:id {…, version}` | owner, or the sales manager for their team | 409 `stale_version`, `duplicate_lead`, `lead_archived`. The owner is never changed here |
+| `POST /sales/leads/:id/owner {toEmpId, reason, version}` | sales manager | Move a lead within the team. 409 `same_owner` / `stale_version`; 400 `owner_not_sales` / `owner_not_active` / `unknown_owner` |
+| `GET /sales/companies?q`, `GET /sales/companies/:id` | `sales.own` | Companies (name, website, domain, country, industry); a company's page lists only the leads there you may see in full, plus `otherLeads` |
+| `POST /sales/companies`, `PATCH /sales/companies/:id {…, version}` | `sales.own`; changing: the sales manager, whoever added it, or the owner of one of its leads | 409 `duplicate_company` (`existing`), `stale_version` |
+| `GET/PUT /settings/modules/sales` | view `sales.own`; change `settings.manage` | `sharedWebsiteDomains`: domains that never identify one company (marketplaces, social profiles). Empty until management fills it |
+
+**Duplicate rules:**
+- The database is the lock: partial unique indexes on the normalised email (leads) and the website domain (companies),
+  for rows that are not archived. Two people saving the same email or the same new company domain at the same moment
+  get one row.
+- Without a website, companies are never merged by name.
+- Sub-domains are not merged (`shop.acme.com` is not `acme.com`).
+- A domain match on a company does not block a new lead; it shows who works there (decision D-8 is still open).
+
+**Audit log:**
+- `sales.lead.created`, `sales.lead.updated` (before/after; notes only as `[text]`), `sales.lead.reassigned` (with the
+  reason)
+- `sales.company.created`, `sales.company.updated`
+- `sales.duplicate_check.limited`
+
+Leads and companies are never deleted (a database trigger).
+
+## Module 15, part 2: deals and the pipeline
+
+Plan section 20. Same access rule as leads:
+- **Your own deals** in full.
+- **The team** with `sales.team`.
+- **Every deal** with `sales.all`.
+- **Someone else's deal:** only `{ restricted: true, number, companyName, owner }`.
+
+A deal is addressed by its id or its number (`DL-YYYY-NNNN`). Every change names the version it read (409
+`stale_version`).
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/deals?owner&stage&leadId&wonStatus&status(open\|closed\|all)&page` | `sales.own` | Deals you may see in full |
+| `GET /sales/deals/summary` | `sales.own` | Per stage: the count and the totals per currency (no conversion); pending Won requests |
+| `POST /sales/deals {leadId, service, value, currency, expectedClose, nextStep, nextStepDate}` | the lead's owner, or the sales manager for their team | Starts in New. 400 `lead_needs_company`, `next_step_in_past`; 409 `recontact_later` while a lost deal's re-contact date has not come |
+| `GET /sales/deals/:id` | `sales.own` | The deal with its history and the Module 13 handover (`drafted` / `needs_client`), or the restricted view |
+| `PATCH /sales/deals/:id {…, version}` | owner or sales manager | An open deal that is not waiting for Won confirmation (409 `deal_closed`, `won_pending`) |
+| `POST /sales/deals/:id/move {toStage, version, nextStep?, nextStepDate?, lostReason?, note?}` | owner or sales manager | Between open stages, or to Lost. Lost needs a reason from the settings list (400 `unknown_lost_reason`) and gets `recontactAfter` = today + `recontactMonths`. Until both settings are set, 409 `sales_rules_missing`. Never to Won |
+| `POST /sales/deals/:id/request-won {version}` | owner or sales manager | Won waits for confirmation (`wonStatus: pending`, the stage unchanged) |
+| `POST /sales/deals/:id/confirm-won {version}` | the sales manager of the deal's owner, never the deal's owner or the person who asked (403 `self_approval`; also a database CHECK). A deal the Director owns: the CEO / Owner (`sales.won_confirm_director`, decision B1), who confirms nothing else (403 `owner_confirms_director_deals_only`; also a database trigger) | Won. In the same transaction: history, audit, and the outbox event `sales.deal.won_confirmed` for Module 13 (one draft invoice per deal number) |
+| `POST /sales/deals/:id/reject-won {reason, version}` | the sales manager; or the person who asked, taking their own request back | Back to open |
+| Approvals inbox `won_deal:<id>` | as `confirm-won` / `reject-won` | The same decision from `/approvals` |
+
+**Settings** (`/settings/modules/sales`, changed by `settings.manage` on the live Settings > Sales screen): `lostReasons`
+(empty) and `recontactMonths` (null) until management sets them.
+
+**Currency:** amounts are never converted. The server and the live screens give totals per original currency (PKR and
+USD apart) until management decides the reporting currency and the exchange-rate source.
+
+**Final deals:** Won and Lost deals are final. A database trigger keeps their stage, value, outcome and owner. The history
+(`sales_deal_history`) is insert-only.
+
+**Moving a lead** to another salesperson also moves its open deals.
+
+**Audit actions:** `sales.deal.created`, `.updated`, `.moved`, `.won_requested`, `.won_confirmed`, `.won_rejected`.
+
+## Module 15, part 3: activities, follow-ups and proposal links
+
+Plan section 20. The timeline of a lead and its deals: who did what, when, and whether it was typed in by hand
+(`source: manual`) or came from a tool (`apollo`, `millionverifier`, `mailbox`: written by Module 16 only, once per tool
+id). The timeline is insert-only (a database trigger). An activity on a deal is always on that deal's own lead (a database
+trigger).
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/leads/:id/activities` | who sees the lead in full | The lead's timeline, newest first |
+| `GET /sales/deals/:id/activities` | who sees the deal in full | The deal's entries, and the lead's general entries (no deal) when the caller also sees the lead in full (a Won or Lost deal keeps its former owner after the lead moves), newest first |
+| `POST /sales/leads/:id/activities {kind, summary, at?, meetingAt?, proposalUrl?}` | the lead's owner, or the sales manager for their team (not the CEO / Owner, who only views) | A general entry. 400 for an `at` in the future; 409 for an archived lead |
+| `POST /sales/deals/:id/activities {…same}` | as above | An entry on the deal. Returns `{activity, stageChange, stageNotChanged}` |
+| `GET /sales/follow-ups?scope=mine\|team&status=due\|missed\|all&owner?` | `sales.own`; `team` needs `sales.team` or `sales.all` (403 otherwise) | Open deals whose next step is due today (`due`) or overdue (`missed`), Pakistan time |
+| `POST /sales/deals/:id/follow-up {summary?, nextStep, nextStepDate, version}` | owner or sales manager | The follow-up is done: a `follow_up` activity and the new next step, in one transaction. The stage and the owner do not change. 409 `stale_version`, `deal_closed`, `won_pending`; 400 `next_step_in_past` |
+
+**Kinds logged by hand:** `call`, `email_sent`, `reply`, `meeting`, `linkedin`, `whatsapp`, `fiverr` (Fiverr inquiries,
+no integration), `proposal`, `note`. `meetingAt` only on a meeting; `proposalUrl` only on a proposal (http or https, at
+most 500 characters; also a database CHECK). `follow_up` is written by the follow-up route only.
+
+**Stage moves (forward only):** a contact (`call`, `email_sent`, `linkedin`, `whatsapp`, `fiverr`) moves New to Contacted;
+a `reply` moves Contacted to Replied (on a New deal it is kept and the stage stays New, `needs_contacted`); a `meeting` with `meetingAt` moves to Meeting booked; a `proposal` with `proposalUrl` moves to
+Proposal sent and becomes the deal's `proposalUrl`. A deal is never moved backwards, and never when it is Won, Lost or
+waiting for Won confirmation. The activity is always kept; `stageNotChanged` says why the stage stayed (`not_forward`,
+`deal_closed`, `won_pending`, `needs_contacted`). The move checks the deal's version under a row lock, so it never overwrites a manual change
+made at the same moment. The screens say in plain words whether the deal moved, or why its stage stayed. A move is in the deal's history ("Moved by a logged activity") and audited as `sales.deal.moved`
+with `{by: "activity"}`.
+
+**Last contact:** every logged contact (not a note) updates the lead's `lastActivityAt`, never backwards. Archiving
+inactive leads comes with M15.5.
+
+**Daily reminder:** at 09:00 Pakistan time (job `sales.follow_ups.daily`), the owner of each open deal due that day gets
+one `sales_follow_up` notification (not a deal waiting for its Won confirmation, whose follow-up cannot be completed until it is decided) (dedupe key `sales_follow_up:<deal>:<day>`; running a day again sends nothing).
+
+**Module 4:** each successful POST is recorded as a Sales `create` ("Logged a call on DL-…", "Completed a follow-up on
+DL-…"). The tool actions (`email_sent`, `reply`, `bounce`, `call`, `email_check`) are left to Module 16. A refused request
+leaves no activity.
+
+**Audit actions:** `sales.deal.follow_up_done`, and `sales.deal.moved` for stage moves made by an activity.
+
+## Module 15, part 4: the lead import and the do-not-contact list
+
+Plan section 20: leads come in "by uploading the exported list. The system removes duplicates", and "an unsubscribe or 'do
+not contact' request is saved on the lead, and the system blocks that email from every future sequence". The rules are the
+approved M15.4 decisions 1 to 6.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /sales/leads/import/preview` (multipart: `file`, `source`, `ownerEmpId?`) | `sales.own`; `ownerEmpId` only the sales manager, for their team | Checks the CSV and saves nothing but the preview: each row `ok`, `duplicate` (with the owner), `repeated` (earlier in the file), `dnc` or `invalid` (each problem listed). The preview lasts 30 minutes |
+| `POST /sales/leads/import/:batchId/commit` | whoever made the preview (anyone else: 404) | Adds the rows that are still good, all or nothing. Every row is checked again under the email locks; a row that became a duplicate or do-not-contact meanwhile is skipped, never forced in. Once per preview: again returns the same result. 409 `import_expired`, `import_busy` |
+| `POST /sales/leads/:id/do-not-contact {reason}` | the lead's owner, or the sales manager for their team (not the CEO / Owner) | Saves the request on the lead (`doNotContact: true`). 409 `already_dnc`, `lead_archived` |
+| `GET /sales/do-not-contact?page` | `sales.team` or `sales.all` | The list, newest first, with masked emails (`a***@domain.com`); a lead's name only for who sees that lead in full |
+| `POST /sales/do-not-contact {email, reason}` | the sales manager only (`sales.targets`) | An email with no lead. A lead with that email, whoever owns it, is marked too. 409 `already_listed` |
+
+**The file:** CSV only (UTF-8), at most 2 MB and 5,000 rows, in the existing format: a header naming only the columns
+`name, email, company, website, country, title, source` (in any order; `name` required), or no header and that order.
+Each row follows the same rules as a lead added by hand. The uploader picks the source of the file; a valid `source` on a
+row overrides it (case, spaces and dashes ignored, e.g. `walk-in`); an unknown one makes the row invalid. Who imported it,
+when, for whom, and the file's SHA-256 are kept on the batch (`sales_import_batches`); each lead it added points to it.
+The preview's rows are cleared once it is committed or expires.
+
+**What do-not-contact blocks (server-side, email only):**
+- a lead with a listed email cannot be added, imported, or have its email changed to it (409 `do_not_contact`);
+- outgoing contact cannot be logged on a marked lead: call, email sent, LinkedIn, WhatsApp, meeting, proposal (409
+  `do_not_contact`). A reply, a note (and a Fiverr inquiry, which is incoming) can still be logged.
+
+**Privacy and permanence:** an entry keeps an HMAC-SHA256 of the normalised email (its own secret,
+`SALES_DNC_HMAC_KEY`, with its key id), a masked email, the reason, the source (`manual`; `apollo` and `mailbox` are for
+Module 16 unsubscribes), who added it and when; never the email. Entries are insert-only (database triggers), and a
+lead's `dnc_at` never changes once set, so the protection stays after the lead is archived and its contact details are
+removed (M15.5). A lead and a list entry for the same email are never saved at the same moment (per-email transaction
+lock).
+
+**Fail-safe and key rotation:** without `SALES_DNC_HMAC_KEY` (required in production) everything that must check the list
+is refused with 503 `dnc_unavailable`. Because the email is not stored, a key can never be dropped while entries made
+with it exist: to rotate, set the new key with a new `SALES_DNC_HMAC_KEY_ID` and move the old one to
+`SALES_DNC_HMAC_PREVIOUS_KEYS` (`id:key;id:key`). An entry whose key id is not configured stops every check (503
+`dnc_key_missing`) instead of quietly no longer matching.
+
+**Audit actions:** `sales.leads.import_previewed`, `sales.leads.imported`, `sales.lead.created` (with `importBatch`),
+`sales.lead.do_not_contact`, `sales.dnc.added`. Module 4 records each successful request as a Sales `create`.
+
+## Module 15, part 5: leavers' leads and deals, and archiving inactive leads
+
+Plan section 20: "Leads belong to Aceva, not to the salesperson. When someone leaves, their leads and deals move to the
+sales manager on their last working day (Module 3)", and "Leads with no activity for 12 months are archived and their
+contact details removed. The period is a setting." The rules are the approved M15.5 decisions 7 to 9.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/reassignment-issues` | `sales.team` or `sales.all` (the sales manager; the CEO / Owner views) | Leavers whose leads and deals could not be moved, with what they still own and why nobody could receive them |
+| `PUT /settings/modules/sales {value: {..., archiveMonths}}` | `settings.manage` | The archive period, 1 to 120 months (12 until management changes it) |
+
+There is no route that archives or moves on demand: both happen on their own (below). A lead's view carries `archive`
+(`at`, `reason: inactive`, `inactiveMonths`, `lastActivityAt`, `by`: null for the nightly job, `clearedFields`) while it is
+archived.
+
+**When a salesperson leaves** (Module 3 decides when: 00:00 Pakistan time after the last working day; it ends their duties
+and emits `employee.offboarded`): the reader `sales-offboarding` moves every lead of theirs that is not archived and every
+open deal of theirs, including a deal waiting for its Won confirmation (the request, its requester and the history stay
+exactly as they were; the B1 rule then applies to the new owner unchanged). Won and Lost deals keep their owner (final).
+- The receiver is the one active holder of the `sales_manager` duty. With none, or more than one, it is the event's
+  `managerEmpId`, but only if that person is active, owns and manages sales leads (`sales.own` and `sales.targets`) and
+  is not the CEO / Owner, who only views sales and is never given leads automatically. Otherwise nothing moves and a case
+  is opened for management (one per leaver; `sales.offboarding.no_recipient`), never an arbitrary person.
+- Each move: the deal history (`owner_changed`, no person, reason `employee_left`), an audit entry per lead
+  (`sales.lead.reassigned`, `by: offboarding`) and a summary (`sales.offboarding.reassigned`).
+- Safe to repeat: a per-leaver lock, and only rows the leaver still owns move. A nightly check (02:00 Pakistan time) finds
+  anyone who has left and still owns leads or open deals (a failed or lost event, or someone who left before this
+  existed) and retries open cases; a case closes (`resolvedAt`, `resolvedTo`) once there is nothing left to move.
+
+**Archiving** (the same nightly job, after the leaver check): a lead whose last activity (when it was added, then every
+logged contact; a note is not one) is before the start of the day `archiveMonths` months ago (Pakistan time) is archived:
+`archived_at` is set and email, phone and LinkedIn are removed. The name, company, source, owner, notes, the timeline and
+the audit trail stay, and an insert-only archive record keeps the reason, the period, the last activity, the details
+removed and the job run (`sales.lead.archived`, no person).
+- Never archived: a lead with an open deal (a pending Won request is open), a lead with a Won deal, a lead at a client
+  company (a Won deal at the company, or the company already a Module 13 client).
+- A do-not-contact lead is archived too and stays blocked: the list keeps its keyed hash (M15.4). A changed email on a
+  do-not-contact lead is added to the list as well; a do-not-contact lead whose email the list cannot match is not
+  archived (logged) rather than lose its protection.
+- An archived lead is read-only: it cannot be edited, contacted (also through its old deals), marked, moved or given a
+  deal (409 `lead_archived`). Each contact and each new deal takes the lead's row lock and checks again, so a contact at
+  the same moment as the night run either wins (the lead stays) or is refused.
+- Its email no longer counts as a duplicate: the person can be added or imported again as a new lead, unless the email is
+  on the do-not-contact list.
+- Running the night again changes nothing.
+
+## Module 15, part 5 follow-up: the exceptional Won decision
+
+Approved management decision. When the person who asked for Won has left and Module 15.5 moved the deal to someone else,
+the request can be stranded: B1 lets the CEO / Owner confirm only a deal a Director owns, nobody decides their own deal,
+and there may be no sales manager above the new owner.
+
+| Route | Who | What |
+|---|---|---|
+| `POST /sales/deals/:id/won-exception {decision: confirm\|send_back, reason, version}` | `sales.won_decide_exception` (the Owner role only), with a fresh step-up (as for the Owner's payroll approval, D26) | Confirms the deal as Won or sends the request back. 400 for a reason outside 5 to 500 characters; 403 `not_allowed`, `self_approval`, `step_up_required`; 409 `exception_not_applicable`, `stale_version` |
+
+**When it applies** (all checked again in the transaction under the deal's row lock; otherwise 409
+`exception_not_applicable` with the reason): the deal is open and its Won request pending; the decider is neither the
+current owner nor the person who asked; the person who asked has left; the deal is not one a Director owns (B1 decides
+those, unchanged); the deal was moved by Module 15.5 offboarding after the request (`owner_changed`, `employee_left`);
+and no active holder of `sales.targets` other than the owner and the requester has the current owner in their reporting
+line. Nothing is decided automatically. The deal view's `wonExceptionEligible` is true only for the permission holder and
+only while every condition holds.
+
+**What it does:** in one transaction, an insert-only record (`sales_won_exceptions`: decision, reason, basis, decider,
+the original requester and request time, the owner when it was asked, the current owner, what was checked), then exactly
+the normal confirmation (Won with the Owner as confirmer, history, audit `sales.deal.won_confirmed_exception`, the
+`sales.deal.won_confirmed` event once, so Module 13 makes one draft invoice) or the normal sending back (the deal stays
+open with its owner; history and audit `sales.deal.won_rejected_exception` keep the reason). Earlier history is never
+changed. The database lets a Level 1 confirmer confirm a deal a Director does not own only when a matching "confirm"
+record for that deal, that confirmer and its current owner was written in the same transaction; every other Level 1
+confirmation is still refused (`owner_confirms_director_deals_only`). The usual confirm-won, reject-won and B1 routes
+are unchanged.
+
+## Module 15, part 6: targets, the daily log, the nightly daily report and the dashboard
+
+Plan section 20 ("Daily targets", "Manual daily log", "Daily sales report", "Sales dashboard"); approved decisions 10 to
+16 and the M15.6 answers. Every route needs `sales.own`; what each person sees and changes is decided inside.
+
+| Route | Who | What |
+|---|---|---|
+| `GET /sales/targets?month` | own; the team for `sales.team` / `sales.all` | Daily targets in force today (`daily`), a change set for a later day (`dailyNext`), the month's targets (`monthly`), `canEdit` |
+| `PUT /sales/targets/daily {empId, effectiveFrom, leadsAdded?, emailsChecked?, emailsSent?, followUpsDone?}` | the sales manager (`sales.targets`), for someone in their reporting line who holds `sales.own`, never themselves | A new version from `effectiveFrom` (today or later; 400 `target_in_past`). Whole numbers 0 to 10,000; null clears one; a field left out keeps its value. 403 `own_targets`, 400 `not_sales` |
+| `PUT /sales/targets/monthly {empId, month, meetingsBooked?, proposalsSent?, wonValue?: {amount, currency}}` | as above | A new version for a month (this month or later). The deals-won target has an amount and USD or PKR |
+| `GET /sales/daily-logs/:day?empId` | own; a team member's for `sales.team` / `sales.all` | `{ log }`: the current version, earlier versions, and `locked`; `{ log: null }` when there is none |
+| `PUT /sales/daily-logs/:day {linkedin, whatsapp, fiverr, calls, fieldVisits, note?, version}` | the sales staff, for themselves | Today, or yesterday until its report is built. A new version each time; `version` is the one read (409 `stale_version`); 409 `log_locked` once the report exists (also a database trigger) |
+| `GET /sales/proof-requests?status&empId` | own; the team | Proof requests |
+| `POST /sales/proof-requests {empId, day, note}` | the sales manager of that person (never about themselves) | About a day that has a log (409 `no_log`); one not closed at a time (409 `proof_open`). Notifies the person (`sales_proof_requested`) |
+| `POST /sales/proof-requests/:id/answer {answer}` | the person asked | Once (`open` to `answered`) |
+| `POST /sales/proof-requests/:id/close {note}` | their sales manager | `open` or `answered` to `closed` (final) |
+| `GET /sales/reports/daily?day` and `GET /sales/reports/daily/dates` | own; the team | The nightly reports exactly as built |
+| `GET /sales/dashboard?month` | own figures; the team for `sales.team` / `sales.all` | Pipeline by stage, Won and Lost this month (per currency), consecutive stage moves this month, leads by source and country, each person's progress |
+| `GET /sales/progress?empId` | own; a team member's | One person's progress today and this month |
+
+**What is measured** (Pakistan days): leads added (leads the person added or imported, `created_by`); follow-ups done
+(`follow_up` activities); emails sent (hand-logged `email_sent` activities, until Module 16); emails checked is **not
+measured yet** (`value: null, measured: false`, never 0). Monthly: meetings booked (meeting activities with a date),
+proposals sent (proposal activities with a link), and the person's deals confirmed Won that month, per currency. A day is
+met only when every target that is set and measured is met; unmeasured metrics are left out and listed (`unmeasured`); a
+day with no measurable target set has `met: null` ("no targets set"). Activity on an archived lead and outgoing contact on
+a do-not-contact lead cannot be logged (M15.4, M15.5), so they never count.
+
+**Who is reported on:** the sales staff, the same rule for targets, logs, reports and the dashboard: active employees of
+the Sales department (`dep-sales`) who hold `sales.own`, and the sales managers (holders of `sales.targets` through their
+role or the `sales_manager` duty). Being Level 4, or having the default `sales` role, is not enough on its own: HR,
+Finance or Engineering staff are never included. A target can be set only for sales staff (400 `not_sales_staff`).
+
+**The nightly report** (job `sales.daily_report`, 00:30 Pakistan time; the archive job stays at 02:00): for each working
+day (Module 7's calendar) that has just ended, and every working day of the last 7 still missing a report, each salesperson
+gets one report: the targets in force that day, the measures, the latest log version, and the result. It is built under the
+person's day lock (shared with the log) and inserted once (unique per person and day; insert-only), so a retry, a second
+server or two runs at the same moment change nothing, and later work or a new target never alter it. Then each active
+sales manager gets one `sales_daily_report` notification per day (Module 12: in the app, by email unless switched off,
+dedupe key `sales_daily_report:<manager>:<day>`).
+
+**Money:** every total is per currency (USD and PKR apart), never converted; there is no exchange rate and no forecast. A
+deals-won target counts only deals in its own currency; the other currency is shown apart.
+
+**Stage moves:** counted only from the stage history, only between consecutive stages (New to Contacted, ..., Negotiation
+to Won); a jump or the stage a deal is in now is never counted.
+
+**Audit actions:** `sales.targets.daily_set`, `sales.targets.monthly_set`, `sales.daily_log.saved`,
+`sales.proof.requested`, `sales.proof.answered`, `sales.proof.closed`. Module 4 records each successful change.
+
+## Module 15, part 7: sales commission
+
+Plan section 20 ("Commission"), with the approved M15.7 scope. Finance screens: 10 minutes idle, and **404** for anyone
+without access (also where the service decides access itself). Module 15 never writes to the ledger; approved lines reach
+payroll through a separate, reviewed Module 8 change (not part of this module).
+
+**The baseline:** one immutable row (`sales_commission_baseline`), recorded once when the background workers first start
+with this module. It is the internal eligibility boundary: only an invoice whose **completing payment was posted**
+(`journal_entries.posted_at`) at or after it can earn commission. The moment an event is handled and the payment's own
+(backdatable) date never count. Deals confirmed Won before it get a legacy eligibility snapshot, judged at that moment.
+
+**When a line is made:** the deal's **own** invoice (`invoices.source_deal_number`) is fully paid by posted allocations,
+seen through the Module 13 event `billing.invoice.paid` or the daily reconciliation (01:00 Pakistan time), which finds any
+deal invoice still without a line (a missed event). Partial payments make nothing. One line per deal, per invoice and per
+event (unique), made under the deal's lock: repeats and concurrent runs make nothing twice. Skips are audited once
+(`sales.commission.skipped`: `paid_before_baseline`, `earner_not_eligible_at_won`, `no_eligibility_snapshot`, `deal_not_won`).
+
+**The amount:** the collected base is the posted allocations, in the invoice's currency; the PKR base is each allocation
+at its own payment's recorded exchange rate, rounded half up per allocation; amount = PKR base x rate / 100, rounded half
+up to 2 decimals, **in PKR** (also a database CHECK). The line keeps the rule version and the rate; the rule applied is the
+one in force on the Pakistan day of the posting.
+
+**Eligibility and the earner:** fixed once per Won deal (`sales_commission_eligibility`, insert-only), at the Won
+confirmation: the deal owner, if sales staff under the M15.6 rule (on notice still counts; never the Owner role). Later
+department, role or status changes never change it; no split. When the line is calculated, an earner whose status is
+**left** is held (`earner_left`) for the Owner's final-settlement decision; on notice is not held.
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /sales/commission?status&empId` | own lines (`sales.own`), team (`sales.targets`, reporting line), all (`sales.commission_view`) | `{ scope, lines, totals }`; totals per status: count, PKR commission, collected per currency (never converted) |
+| `GET /sales/commission/:id` | as above | the line with its history and `can` (what the viewer may do now) |
+| `GET /sales/commission/rules` | `sales.commission_approve` (Director), `sales.commission_approve_director` (Owner) | `{ current, versions, baselineAt, baselineDay }` |
+| `PUT /sales/commission/rules {ratePercent, effectiveFrom, reason}` | Director, **step-up** | a new insert-only version; the **first** rule starts exactly on the baseline day (400 `first_rule_baseline_day`; also a trigger), later ones today or later (400 `rule_in_past`); 409 `baseline_missing`; lines waiting for a rate are calculated with the rule in force on their paid day |
+| `POST /sales/commission/:id/approve {version, reason?}` | Director (normal lines); the Director's own line: **only the Owner**, with **step-up** and a reason | from calculated or a manual hold; sets the payroll month (the month of approval); sends `sales.commission.approved`; never your own (403 `self_approval`) |
+| `POST /sales/commission/:id/reject {reason, version}` | normal lines: the Director or `sales.commission_hold` (Director, Finance duty); the Director's own line: **only the Owner**, with step-up | from calculated, held (manual) or approved (not yet in payroll); final |
+| `POST /sales/commission/:id/hold {reason, version}` | `sales.commission_hold` (Director, Finance duty), **normal lines only** | from calculated or approved, for example after a refund or a payment reversal (neither is signalled automatically; no automatic clawback) |
+| `POST /sales/commission/:id/leaver-decision {decision: pay\|forfeit, reason, version}` | the Owner (`sales.commission_approve_director`), **step-up** | only for a line held because the earner left; recorded once |
+
+**Statuses:** `waiting_rate`, `calculated`, `approved`, `rejected`, `held`, `included` (set only by the separate Module 8 change; nothing in M15.7 sets it).
+Errors: 409 `stale_version`, `invalid_transition`, `leaver_decision` (use the leaver route), 403 `self_approval`,
+`not_allowed`, `step_up_required`.
+
+**Approvals inbox:** type `commission` (the Director: normal lines; the Owner: the Director's own lines and leaver-held
+lines). The Owner's decisions need step-up, so the inbox answers 409 `decide_on_commission_page` for them.
+
+**Notifications (Module 12):** `approval_waiting` to the Director (normal line) or the Owner (the Director's own line;
+a leaver-held line); `sales_commission_decided` to the earner when their line is approved, rejected or put on hold
+(active earners only).
+
+**Database:** the baseline, eligibility snapshots, rules and the line history are insert-only; no rule before the baseline,
+and the first on its day; a line needs the eligible snapshot of its deal and a completing payment posted at or after the
+baseline; a line's identity and amounts never change once set; statuses only move forward; an approval is written only by
+the move into approved; `rejected` and `included` are final; nobody decides their own line (CHECK); no delete.
+
 ## Event contracts
 
 Events for other modules are written to the `outbox_events` table in the same transaction as the change, and delivered by

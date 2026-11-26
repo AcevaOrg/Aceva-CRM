@@ -24,6 +24,11 @@ const settingsTable = () => table<SettingsRecord>("system.settings", seedSetting
 const weightsTable = () => table<WeightsVersion>("system.weights", seedWeightVersions);
 const backupTable = () => table<BackupStatus>("system.backup", () => [seedBackupStatus()]);
 
+/** Live notifications (minimal Module 12 core on the server, Cycle 3 foundation): NEXT_PUBLIC_LIVE_MODULES contains m12. */
+const liveNotifications = () => isLive("m12");
+type NotificationWire = Omit<Notification, "body" | "link"> & { body: string | null; link: string | null };
+const fromWire = (n: NotificationWire): Notification => ({ ...n, body: n.body ?? undefined, link: n.link ?? undefined });
+
 /** Module 6 live: a score-weights version from the server as the Settings screen uses it (whole percents, unchanged). */
 const toWeightsVersion = (v: ScoreWeightsVersionView): WeightsVersion => ({
   id: v.id,
@@ -40,33 +45,42 @@ const toWeightsVersion = (v: ScoreWeightsVersionView): WeightsVersion => ({
 
 export const notificationsApi = {
   /** GET /notifications */
-  list: () => mock(() => notifications().filter((n) => n.empId === getViewer().employee.empId), { delay: 120 }),
+  list: () =>
+    liveNotifications()
+      ? http.get<NotificationWire[]>("/notifications").then((rows) => rows.map(fromWire))
+      : mock(() => notifications().filter((n) => n.empId === getViewer().employee.empId), { delay: 120 }),
 
   /** POST /notifications/read { ids } (no ids = all) */
   markRead: (ids?: string[]) =>
-    mock(() => {
-      const me = getViewer().employee.empId;
-      notifications().forEach((n) => {
-        if (n.empId === me && (!ids || ids.includes(n.id))) n.read = true;
-      });
-    }),
+    liveNotifications()
+      ? http.post<{ updated: number }>("/notifications/read", ids?.length ? { ids } : {}).then(() => undefined)
+      : mock(() => {
+          const me = getViewer().employee.empId;
+          notifications().forEach((n) => {
+            if (n.empId === me && (!ids || ids.includes(n.id))) n.read = true;
+          });
+        }),
 
   /** GET /notifications/prefs */
   getPrefs: () =>
-    mock<NotificationPrefs>(() => {
+    liveNotifications()
+      ? http.get<NotificationPrefs>("/notifications/prefs")
+      : mock<NotificationPrefs>(() => {
       const me = getViewer().employee.empId;
       return prefsTable().find((p) => p.empId === me) ?? { email: {}, dailySummary: true };
     }),
 
-  /** PATCH /notifications/prefs */
+  /** PATCH /notifications/prefs (the server refuses turning off approvals and security alerts) */
   savePrefs: (prefs: NotificationPrefs) =>
-    mock(() => {
-      const me = getViewer().employee.empId;
-      const list = prefsTable();
-      const i = list.findIndex((p) => p.empId === me);
-      if (i >= 0) list[i] = { ...prefs, empId: me };
-      else list.push({ ...prefs, empId: me });
-    }),
+    liveNotifications()
+      ? http.patch<NotificationPrefs>("/notifications/prefs", prefs).then(() => undefined)
+      : mock(() => {
+          const me = getViewer().employee.empId;
+          const list = prefsTable();
+          const i = list.findIndex((p) => p.empId === me);
+          if (i >= 0) list[i] = { ...prefs, empId: me };
+          else list.push({ ...prefs, empId: me });
+        }),
 };
 
 /* ---------------- Audit log ---------------- */

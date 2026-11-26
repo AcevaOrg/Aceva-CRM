@@ -77,7 +77,8 @@ function LeadBody({ d }: { d: Detail }) {
   // Moving a lead between salespeople is the sales manager's job: the Director.
   const canReassign = !!viewer && isSalesManager(viewer);
   // The owner and the Director work the lead; the CEO / Founder / Owner only views it.
-  const canWork = !!viewer && canWorkOn(viewer, lead.ownerEmpId);
+  // An archived lead is read-only for everyone (the server refuses changes too).
+  const canWork = !!viewer && canWorkOn(viewer, lead.ownerEmpId) && !lead.archived;
   const [logOpen, setLogOpen] = React.useState(false);
   const [dealOpen, setDealOpen] = React.useState(false);
   const [verifyOpen, setVerifyOpen] = React.useState(false);
@@ -140,10 +141,22 @@ function LeadBody({ d }: { d: Detail }) {
         }
       />
 
-      {!canWork && (
+      {lead.archived ? (
         <div className="mb-5">
-          <MakerCheckerNote reason="View only. The salesperson who owns this lead works it; the Director (sales manager) can move it." />
+          <MakerCheckerNote
+            reason={
+              lead.archiveInfo
+                ? `Archived on ${formatDate(lead.archiveInfo.at)}${lead.archiveInfo.byJob ? " by the nightly check" : ""}: no activity for ${lead.archiveInfo.inactiveMonths} months. Email, phone and LinkedIn were removed; the notes and the timeline are kept. Read only.`
+                : "Archived. Read only."
+            }
+          />
         </div>
+      ) : (
+        !canWork && (
+          <div className="mb-5">
+            <MakerCheckerNote reason="View only. The salesperson who owns this lead works it; the Director (sales manager) can move it." />
+          </div>
+        )
       )}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -246,7 +259,7 @@ function LeadBody({ d }: { d: Detail }) {
             </CardContent>
           </Card>
 
-          <NotesCard leadId={lead.id} notes={lead.notes} editable={canWork} />
+          <NotesCard leadId={lead.id} notes={lead.notes} version={lead.version} editable={canWork} />
 
           {canReassign && (
             <Card>
@@ -262,7 +275,15 @@ function LeadBody({ d }: { d: Detail }) {
                 <EmployeeSelect
                   value={lead.ownerEmpId}
                   filter={(e) => e.role === "sales"}
-                  onChange={(empId) => empId && empId !== lead.ownerEmpId && reassign.mutate({ id: lead.id, empId }, { onSuccess: () => toast.success("Lead moved", { description: "Open deals moved with it." }) })}
+                  onChange={async (empId) => {
+                    if (!empId || empId === lead.ownerEmpId) return;
+                    const reason = await askReason({ title: "Move this lead", description: "The reason is saved with the change.", confirmLabel: "Move lead" });
+                    if (reason)
+                      reassign.mutate(
+                        { id: lead.id, empId, reason, version: lead.version },
+                        { onSuccess: () => toast.success("Lead moved", { description: "Open deals moved with it." }), onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't move the lead.") },
+                      );
+                  }}
                 />
               </CardContent>
             </Card>
@@ -270,14 +291,14 @@ function LeadBody({ d }: { d: Detail }) {
         </div>
       </div>
 
-      {canWork && logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} />}
+      {canWork && logOpen && <LogActivityDialog open onOpenChange={setLogOpen} leadId={lead.id} deals={deals} doNotContact={lead.doNotContact} />}
       <CreateDealSheet open={canWork && dealOpen} onOpenChange={setDealOpen} leadId={lead.id} leadName={lead.name} defaultCurrency={lead.country === "Pakistan" ? "PKR" : "USD"} />
       {canWork && verifyOpen && <VerifyEmailsDialog open onOpenChange={setVerifyOpen} />}
     </>
   );
 }
 
-function NotesCard({ leadId, notes, editable }: { leadId: string; notes?: string; editable: boolean }) {
+function NotesCard({ leadId, notes, version, editable }: { leadId: string; notes?: string; version?: number; editable: boolean }) {
   const [editing, setEditing] = React.useState(false);
   const [text, setText] = React.useState(notes ?? "");
   const update = useUpdateLead();
@@ -309,7 +330,7 @@ function NotesCard({ leadId, notes, editable }: { leadId: string; notes?: string
               <Button size="sm" variant="outline" onClick={() => { setText(notes ?? ""); setEditing(false); }}>
                 Cancel
               </Button>
-              <Button size="sm" loading={update.isPending} onClick={() => update.mutate({ id: leadId, notes: text }, { onSuccess: () => { setEditing(false); toast.success("Notes saved"); } })}>
+              <Button size="sm" loading={update.isPending} onClick={() => update.mutate({ id: leadId, notes: text, version }, { onSuccess: () => { setEditing(false); toast.success("Notes saved"); }, onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save the notes.") })}>
                 Save
               </Button>
             </div>

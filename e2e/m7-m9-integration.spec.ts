@@ -1,17 +1,17 @@
 import { expect, test } from '@playwright/test';
 import { apiAs, openAs } from './auth-helpers';
-import { FIXTURE_CEO } from './paths';
 import { screenLoadsFromServer, stepUpApi } from './live-screen';
 
 /**
  * Cross-module flow through the real API, checked on the real screens:
- *   pay on file (M3) -> payroll calculated for September, which locks the attendance month (M7 -> M8)
- *   -> prepared by Finance, approved by the Director after confirming again (M8, one step since D25; the CEO only views)
- *   -> a balanced salary entry waiting in the ledger, approved at its tier (M9)
+ *   pay on file (M3) -> payroll calculated for September, which leaves the attendance month open (M7 -> M8)
+ *   -> prepared by Finance, approved by the Director after confirming again, which locks the month (M8, one step since
+ *      D25; the Owner approves only a run the Director prepared, D26)
+ *   -> a balanced salary entry waiting in the ledger, approved by the Director whatever its amount (M9, D26)
  *   -> the run screen and the ledger screen show the same entry; the employee sees their payslip.
  */
 const DIRECTOR = 'ACV-0003';
-const OWNER = 'ACV-0001';
+const OWNER = 'ACV-0001'; // the CEO / Founder / Owner (one person in the final company structure)
 const DEV1 = 'ACV-0006';
 const DEV2 = 'ACV-0007';
 const FINANCE = 'ACV-0010';
@@ -32,7 +32,7 @@ test.describe.configure({ mode: 'serial' });
 
 let entryId = '';
 
-test('M3 -> M7 -> M8: pay on file, the run is calculated (locking the attendance month), prepared and approved by the Director', async ({ playwright }) => {
+test('M3 -> M7 -> M8: pay on file, the run is calculated (the attendance month stays open), prepared, and approved by the Director (locking the month)', async ({ playwright }) => {
   // Real timing: two "confirm again" steps by the Director, each waiting for a fresh authenticator code (never reused).
   test.setTimeout(120_000);
   const director = await apiAs(playwright, DIRECTOR);
@@ -47,21 +47,29 @@ test('M3 -> M7 -> M8: pay on file, the run is calculated (locking the attendance
   expect((await fin.post('/payroll/runs', { month: MONTH })).status()).toBe(201);
   const calculated = await fin.post(`/payroll/runs/${RUN}/calculate`);
   expect(calculated.status(), await calculated.text()).toBe(200);
-  // the attendance month is now locked: a correction for a day in it is refused
+  // calculating does NOT lock the attendance month (D26): check-ins, corrections and leave stay possible until approval
   const dev1 = await apiAs(playwright, DEV1);
-  const correction = await dev1.post('/attendance/corrections', { date: `${MONTH}-15`, checkIn: '09:00', reason: 'Forgot to check in (browser test)' });
-  expect([400, 409]).toContain(correction.status());
+  const monthLocked = async () => ((await (await dev1.get(`/attendance/me?month=${MONTH}`)).json()) as { locked: boolean }).locked;
+  expect(await monthLocked()).toBe(false);
   expect((await fin.post(`/payroll/runs/${RUN}/prepare`)).status()).toBe(200);
   expect((await fin.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(404); // the preparer never approves (no permission: a finance screen answers 404)
   expect((await director.post(`/payroll/runs/${RUN}/review`)).status()).toBe(404); // no separate review step since D25
-  const ceo = await apiAs(playwright, FIXTURE_CEO);
-  expect((await ceo.post(`/payroll/runs/${RUN}/approve`)).status()).toBe(404); // D25: the CEO only views payroll
+  const owner = await apiAs(playwright, OWNER);
+  const byOwner = await owner.post(`/payroll/runs/${RUN}/approve`);
+  expect(byOwner.status()).toBe(403); // D26: the Owner approves only a run the Director prepared; Finance prepared this one
+  expect((await byOwner.json()).code).toBe('owner_approves_director_only');
+  expect(await monthLocked()).toBe(false); // nothing was approved yet
 
   await stepUpApi(director, DIRECTOR); // a fresh "confirm again" for the approval
   const approved = await director.post(`/payroll/runs/${RUN}/approve`);
   expect(approved.status(), await approved.text()).toBe(200);
   const run = await approved.json();
   expect(run.salaryEntry.status).toBe('pending_approval');
+  // approving the payroll locks the attendance month: a correction for a day in it is now refused
+  expect(await monthLocked()).toBe(true);
+  const correction = await dev1.post('/attendance/corrections', { date: `${MONTH}-15`, checkIn: '09:00', reason: 'Forgot to check in (browser test)' });
+  expect(correction.status()).toBe(409);
+  expect((await correction.json()).code).toBe('period_locked');
   entryId = run.salaryEntry.id ?? '';
   if (!entryId) {
     const list = await (await fin.get(`/journal-entries?source=payroll&status=pending_approval`)).json();
@@ -85,14 +93,20 @@ test('M8 -> M9: the run screen and the ledger screen show the same balanced sala
   await context.close();
 });
 
-test('M9: the salary entry is approved at its tier (never by the preparer), and the employee sees the payslip', async ({ browser, playwright }) => {
+test('M9: the Director approves the salary entry whatever its amount (D26), never the preparer, and the employee sees the payslip', async ({ browser, playwright }) => {
   const fin = await apiAs(playwright, FINANCE);
   const entry = await (await fin.get(`/journal-entries/${entryId}`)).json();
-  expect((await fin.post(`/journal-entries/${entryId}/approve`)).status()).toBe(404); // the maker never approves
-  const approverId = entry.requiredLevel === 3 ? DIRECTOR : entry.requiredLevel === 2 ? FIXTURE_CEO : OWNER;
-  const approver = await apiAs(playwright, approverId);
-  await stepUpApi(approver, approverId);
-  const posted = await approver.post(`/journal-entries/${entryId}/approve`);
+  expect((await fin.post(`/journal-entries/${entryId}/approve`)).status()).toBe(404); // the maker (Finance prepared the run) never approves
+  expect(entry.requiredLevel).toBe(2); // D26: no amount tiers; the Director (level 2) approves any amount
+  // the Owner approves only entries the Director made; this one Finance made
+  const owner = await apiAs(playwright, OWNER);
+  await stepUpApi(owner, OWNER);
+  const byOwner = await owner.post(`/journal-entries/${entryId}/approve`);
+  expect(byOwner.status()).toBe(403);
+  expect((await byOwner.json()).code).toBe('approval_limit');
+  const director = await apiAs(playwright, DIRECTOR);
+  await stepUpApi(director, DIRECTOR); // the salary total is above the "confirm again" amount
+  const posted = await director.post(`/journal-entries/${entryId}/approve`);
   expect(posted.status(), await posted.text()).toBe(200);
   expect((await (await fin.get(`/payroll/runs/${RUN}`)).json()).salaryEntry.status).toBe('posted');
 

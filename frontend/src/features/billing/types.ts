@@ -32,6 +32,8 @@ export interface ReminderEvent {
   status: "scheduled" | "sent" | "skipped";
   sentAt?: string;
   reason?: string;
+  /** Live: who the reminder is for (the client by email, the assigned staff member in the app). */
+  audience?: "customer" | "staff";
 }
 
 export interface Invoice {
@@ -63,6 +65,18 @@ export interface Invoice {
   createdAt: string;
   sentAt?: string;
   cancelReason?: string;
+  /** Live (Module 9): the status of the invoice's ledger entry, e.g. pending_approval until the Director approves it. */
+  ledgerEntryStatus?: string;
+  /** Live: the reversing entry made when a posted invoice is cancelled. */
+  cancelEntryNumber?: string;
+  cancelEntryStatus?: string;
+  /** Live: payments recorded but still waiting for approval (not counted as paid yet). */
+  pendingPayments?: Money;
+  /** Live: when the invoice email reached the client's mail server. */
+  emailedAt?: string;
+  /** Live: the staff member reminded about it. */
+  assignedTo?: string;
+  recurringRuleId?: string;
 }
 
 export interface Customer {
@@ -75,6 +89,21 @@ export interface Customer {
   termsDays: number;
   address: string;
   taxId?: string;
+  /** Live: created automatically from a Won deal; Finance confirms it before its invoice can be issued. */
+  needsReview?: boolean;
+  createdFromDeal?: string;
+}
+
+/** Live: a Won deal whose client name matched several clients: Finance chooses the right one (never chosen silently). */
+export interface DealHandover {
+  id: string;
+  dealNumber: string;
+  clientName: string;
+  service: string;
+  value: Money;
+  ownerEmpId: string;
+  candidates: { id: string; name: string; email?: string; country?: string }[];
+  createdAt: string;
 }
 
 export interface CustomerSummary extends Customer {
@@ -96,6 +125,9 @@ export interface Payment {
   reference?: string;
   ledgerEntryNumber?: string;
   recordedBy: string;
+  /** Live: the payment's ledger entry status (paid only once posted). */
+  ledgerEntryStatus?: string;
+  bankAccountName?: string;
 }
 
 export type SubscriptionCategory = "sales_tools" | "domains_email" | "ai" | "hosting" | "api" | "dev_tools" | "crm";
@@ -132,6 +164,32 @@ export interface Subscription {
   seats?: number;
   usage?: SubscriptionUsage;
   notes?: string;
+  /** Live: SUB-YYYY-NNNN. */
+  number?: string;
+  /** What is tracked for usage (a reading is typed in by hand: no provider API is connected). */
+  usageSetup?: { metric?: string; unit?: string; limit?: number };
+  /** Live: monthly cost records, newest first. */
+  costs?: SubscriptionCost[];
+}
+
+/** What a subscription cost in a month: Estimated unless backed by a bill or the provider's invoice reference. */
+export interface SubscriptionCost {
+  id: string;
+  month: string;
+  amount: Money;
+  estimated: boolean;
+  reference?: string;
+  billId?: string;
+  note?: string;
+  updatedAt: string;
+}
+
+export interface SubscriptionCostInput {
+  month: string;
+  amount: string;
+  currency: Currency;
+  estimated: boolean;
+  reference?: string;
 }
 
 export interface RenewalDecision {
@@ -162,7 +220,13 @@ export interface BillingOverview {
   renewalsSoon: Subscription[];
   draftsFromSales: Invoice[];
   history: MonthlyBilling[];
+  /** 0 = USD amounts are converted at each invoice's own rate (live). */
   usdRate: number;
+  /** Live: are customer emails switched on in the billing settings? */
+  customerEmailsEnabled?: boolean;
+  /** Live: Won deals waiting for Finance to choose their client. */
+  dealsNeedingClient?: DealHandover[];
+  drafts?: number;
 }
 
 export interface InvoiceDetail {
@@ -170,6 +234,39 @@ export interface InvoiceDetail {
   customer: Customer;
   payments: Payment[];
   reminders: ReminderEvent[];
+  /** Live: emails to the client (the invoice and reminders) with their status. */
+  emails?: { id: string; kind: "invoice" | "reminder"; status: string; note?: string; sentAt?: string; createdAt: string }[];
+  recurringRule?: RecurringRule;
+}
+
+export interface RecurringRule {
+  id: string;
+  kind: "recurring" | "rental";
+  period: BillingPeriod;
+  total: Money;
+  startDate: string;
+  endDate?: string;
+  nextPeriodStart?: string;
+  status: "active" | "ended";
+  endReason?: string;
+  invoiceCount: number;
+}
+
+export interface BankAccountOption {
+  id: string;
+  label: string;
+  currency: Currency;
+}
+
+export interface NewCustomerInput {
+  name: string;
+  contactName?: string;
+  email?: string;
+  country?: string;
+  address?: string;
+  currency: Currency;
+  termsDays: number;
+  taxId?: string;
 }
 
 export interface NewInvoiceInput {
@@ -184,6 +281,8 @@ export interface NewInvoiceInput {
   lines: Omit<InvoiceLine, "id">[];
   reminders: ReminderRule[];
   notes?: string;
+  /** Live: the same key sent again (a retry, a double click) returns the same draft. */
+  requestKey?: string;
 }
 
 export interface RecordPaymentInput {
@@ -191,4 +290,8 @@ export interface RecordPaymentInput {
   amount: string;
   method: PaymentMethod;
   reference?: string;
+  /** Live: the Module 9 bank account it was received in. */
+  bankAccountId?: string;
+  /** Live: the same key sent again records nothing more. */
+  requestKey?: string;
 }

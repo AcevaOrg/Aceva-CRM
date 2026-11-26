@@ -19,9 +19,10 @@ import { useViewer } from "@/lib/auth/viewer";
 import { formatDate } from "@/lib/dates";
 import { formatMoneyCompact } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { isLive } from "@/lib/api/http";
 import { canWorkOn, type DealRow } from "../api";
-import { useDeals, useMoveDeal } from "../hooks";
-import { convert, LOST_REASONS, OPEN_STAGES, SERVICE_LABEL, STAGE_META, STAGES } from "../logic";
+import { useDeals, useLostReasons, useMoveDeal } from "../hooks";
+import { convert, OPEN_STAGES, SERVICE_LABEL, STAGE_META, STAGES, totalsByCurrency } from "../logic";
 import type { DealService, DealStage } from "../types";
 import { DealValue, FollowUpDue } from "./sales-ui";
 
@@ -43,6 +44,7 @@ function PipelineInner() {
   const deals = useDeals();
   const move = useMoveDeal();
   const askReason = useReason();
+  const lost = useLostReasons();
   const lookup = useLookup();
   const [currency, setCurrency] = useUrlState<"USD" | "PKR">("cur", "USD");
   const [owner, setOwner] = useUrlState<string>("owner", "");
@@ -52,24 +54,34 @@ function PipelineInner() {
 
   const all = deals.data ?? [];
   const list = all.filter((d) => (!owner || d.ownerEmpId === owner) && (!service || d.service === service));
+  // Live mode never converts (no approved exchange-rate source): totals stay per original currency. Demo data converts.
+  const live = isLive("m15");
   const sum = (ds: DealRow[]) => ds.reduce((s, d) => s + convert(d.value, currency), 0);
+  const total = (ds: DealRow[]) =>
+    live ? totalsByCurrency(ds.map((d) => d.value)).map((t) => formatMoneyCompact(t)).join(" · ") || "0" : formatMoneyCompact(sum(ds), currency);
   const open = list.filter((d) => OPEN_STAGES.includes(d.stage));
   const pending = list.filter((d) => d.wonStatus === "pending");
   const wonMonth = list.filter((d) => d.stage === "won" && d.wonStatus === "confirmed" && new Date(d.handover?.at ?? d.updatedAt).getTime() >= since);
 
   const columns: KanbanColumn[] = STAGES.map((s) => {
     const inCol = list.filter((d) => d.stage === s);
-    return { id: s, title: STAGE_META[s].label, color: STAGE_META[s].color, subtitle: <span className="font-mono tabular">{formatMoneyCompact(sum(inCol), currency)}</span> };
+    return { id: s, title: STAGE_META[s].label, color: STAGE_META[s].color, subtitle: <span className="font-mono tabular">{total(inCol)}</span> };
   });
 
   const onMove = async (d: DealRow, to: string) => {
     const stage = to as DealStage;
     let reason: string | undefined;
     if (stage === "lost") {
+      // Wait for the settings when the screen has not loaded them yet (never read a missing answer as "not set").
+      const rules = lost.data ?? (await lost.refetch()).data;
+      if (!rules?.lostReasons.length || !rules.recontactMonths) {
+        toast.error("Deals can't be marked as lost yet", { description: "The Director sets the lost reasons and the re-contact period in Settings > Sales." });
+        return;
+      }
       const r = await askReason({
         title: `Why was ${d.companyName} lost?`,
-        description: "A reason is required. The lead can be contacted again after 6 months (a setting).",
-        options: LOST_REASONS,
+        description: `A reason is required. The lead can be contacted again after ${rules.recontactMonths} months (a setting).`,
+        options: rules.lostReasons,
         confirmLabel: "Mark as lost",
         destructive: true,
       });
@@ -77,11 +89,11 @@ function PipelineInner() {
       reason = r;
     }
     move.mutate(
-      { id: d.id, stage, reason },
+      { id: d.id, stage, reason, version: d.version },
       {
         onSuccess: (res) => {
           if (res.pending) toast(`${d.companyName}: waiting for confirmation`, { description: `${res.confirmer} confirms Won deals. You'll be told when it's done.`, icon: <Hourglass className="size-4" /> });
-          else if (res.handover) toast.success(`${d.companyName} won`, { description: `Client created, draft invoice ${res.handover.invoiceNumber} in Billing, CTO notified.` });
+          else if (res.handover) toast.success(`${d.companyName} won`, { description: res.handover.invoiceNumber ? `Client created, draft invoice ${res.handover.invoiceNumber} in Billing, CTO notified.` : "Billing prepares the draft invoice for Finance." });
           else if (res.recontactAfter) toast(`${d.companyName} marked as lost`, { description: `You can contact them again after ${formatDate(res.recontactAfter)}.` });
           else toast.success(`Moved to ${STAGE_META[stage].label}`);
         },
@@ -120,14 +132,14 @@ function PipelineInner() {
                 </option>
               ))}
             </NativeSelect>
-            <SegmentedControl value={currency} onChange={setCurrency} options={[{ value: "USD", label: "USD" }, { value: "PKR", label: "PKR" }]} ariaLabel="Display currency" />
+            {!live && <SegmentedControl value={currency} onChange={setCurrency} options={[{ value: "USD", label: "USD" }, { value: "PKR", label: "PKR" }]} ariaLabel="Display currency" />}
           </>
         }
       />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Open pipeline" value={formatMoneyCompact(sum(open), currency)} hint={`${open.length} open deals`} icon={<Wallet />} accent="var(--zone-sales)" />
-        <StatCard label="Won in the last 30 days" value={formatMoneyCompact(sum(wonMonth), currency)} hint={`${wonMonth.length} deals`} icon={<Trophy />} />
+        <StatCard label="Open pipeline" value={total(open)} hint={`${open.length} open deals${live ? " · per currency" : ""}`} icon={<Wallet />} accent="var(--zone-sales)" />
+        <StatCard label="Won in the last 30 days" value={total(wonMonth)} hint={`${wonMonth.length} deals${live ? " · per currency" : ""}`} icon={<Trophy />} />
         <StatCard label="Waiting for confirmation" value={pending.length} hint={team ? "Won deals, confirmed by the Director" : "Won, with the Director"} icon={<Hourglass />} />
         <StatCard label="Without a next step date" value={open.filter((d) => !d.nextStepDate).length} hint="every open deal needs one" icon={<TriangleAlert />} />
       </div>
@@ -176,7 +188,7 @@ function DealCard({ d, currency }: { d: DealRow; currency: "USD" | "PKR" }) {
             {d.leadName} · {SERVICE_LABEL[d.service]}
           </p>
         </div>
-        <DealValue value={d.value} display={currency} compact className="shrink-0 text-[12.5px] font-semibold" />
+        <DealValue value={d.value} display={isLive("m15") ? undefined : currency} compact className="shrink-0 text-[12.5px] font-semibold" />
       </div>
       {open &&
         (d.nextStepDate ? (
@@ -196,7 +208,7 @@ function DealCard({ d, currency }: { d: DealRow; currency: "USD" | "PKR" }) {
       )}
       {d.stage === "won" && d.wonStatus === "confirmed" && (
         <Badge tone="success" className="w-fit">
-          <CircleCheck /> Handed over · {d.handover?.invoiceNumber}
+          <CircleCheck /> Handed over{d.handover?.invoiceNumber ? ` · ${d.handover.invoiceNumber}` : ""}
         </Badge>
       )}
       {d.stage === "lost" && <p className="text-[12px] text-muted-foreground">Lost: {d.lostReason}</p>}

@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
+import { PASSIVE_REQUEST_HEADER, SCREEN_HEADER } from '@aceva/contracts';
 import { CryptoService } from '../auth/crypto.service';
 import { ENV } from '../config/config.module';
 import type { Env } from '../config/env';
@@ -58,9 +59,16 @@ export class AccessGuard implements CanActivate {
 
     // 1. Who is calling?
     const financeScreen = !!this.reflector.getAllAndOverride<boolean>(FINANCE_SCREEN, targets);
-    // Does this request keep the session alive? Yes, unless the route says when it counts (the activity heartbeat).
+    // Does this request keep the session alive? Yes, unless the route says when it counts (the activity heartbeat), or
+    // it is a read a screen makes on its own (Module 14 marks those with the passive header: only reads can be passive,
+    // and the header can only make a session end sooner, never later).
     const countsWhen = this.reflector.getAllAndOverride<((r: Request) => boolean) | undefined>(SESSION_ACTIVITY, targets);
-    const identity = await this.identity.resolve(request, { financeScreen, touch: countsWhen ? countsWhen(request) === true : true });
+    const passive = !changesData && request.header(PASSIVE_REQUEST_HEADER) === '1';
+    const touch = !passive && (countsWhen ? countsWhen(request) === true : true);
+    // The screen's own word that it is a finance screen (the heartbeat): the 10-minute limit applies, and the session
+    // remembers it for its live socket. It can only make the limit stricter.
+    const financeIdle = financeScreen || request.header(SCREEN_HEADER) === 'finance';
+    const identity = await this.identity.resolve(request, { financeScreen: financeIdle, touch });
     const actor = identity ? await this.loadActor(identity.empId) : null;
     if (!identity || !actor) {
       await this.audit.record({ actorId: null, action: 'access.denied', targetType: 'route', targetId: route, outcome: 'denied', reason: 'unauthenticated', ...client });

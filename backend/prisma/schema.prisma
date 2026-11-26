@@ -421,8 +421,12 @@ model Department {
   updatedBy      String?   @map("updated_by") @db.Uuid
 
   employees Employee[]
-  head      Employee?  @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
+  head      Employee?      @relation("DepartmentHead", fields: [headEmployeeId], references: [id])
   weightVersions ScoreWeightVersion[]
+  /// Module 14 department channels (back-relation only).
+  channels  Conversation[]
+  /// Module 14 announcements sent to this department (back-relation only).
+  announcements AnnouncementDepartment[]
 
   @@index([headEmployeeId])
   @@map("departments")
@@ -546,6 +550,70 @@ model Employee {
   payslips              Payslip[]
   finalSettlements      FinalSettlement[]
   journalLines          JournalLine[]
+
+  // Cycle 3 foundation (back-relations only)
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+  invoicesAssigned       Invoice[]               @relation("InvoiceAssignee")
+  recurringRulesAssigned RecurringBillingRule[]  @relation("RecurringRuleAssignee")
+  subscriptionsOwned     Subscription[]          @relation("SubscriptionOwner")
+
+  // Module 14 (back-relations only)
+  conversationMemberships ConversationMember[]
+  conversationReads       ConversationRead[]
+  departmentChannelAccess DepartmentChannelAccess[]
+  messagesAuthored        Message[]                 @relation("MessageAuthor")
+  messageMentions         MessageMention[]          @relation("MessageMentioned")
+  messageReactions        MessageReaction[]
+  savedMessages           SavedMessage[]
+  announcementsAuthored   Announcement[]            @relation("AnnouncementAuthor")
+  announcementsPinned     Announcement[]            @relation("AnnouncementPinnedBy")
+  announcementAcks        AnnouncementAck[]
+  meetingsOrganized       Meeting[]                 @relation("MeetingOrganizer")
+  meetingNotesEdited      Meeting[]                 @relation("MeetingNotesEditor")
+  meetingsCancelled       Meeting[]                 @relation("MeetingCanceller")
+  meetingParticipations   MeetingParticipant[]      @relation("MeetingParticipant")
+  meetingInvitesSent      MeetingParticipant[]      @relation("MeetingInviter")
+  commsFilesUploaded      CommsFile[]
+  messageTaskLinks        MessageTaskLink[]
+  meetingTaskLinks        MeetingTaskLink[]
+
+  // Module 15 (back-relations only)
+  salesLeadsOwned         SalesLead[]               @relation("SalesLeadOwner")
+  salesDealsOwned         SalesDeal[]               @relation("SalesDealOwner")
+  salesWonRequested       SalesDeal[]               @relation("SalesDealWonRequester")
+  salesWonConfirmed       SalesDeal[]               @relation("SalesDealWonConfirmer")
+  salesDealHistory        SalesDealHistory[]
+  salesActivities         SalesActivity[]
+  salesDncEntries         SalesDncEntry[]
+  salesImportsMade        SalesImportBatch[]        @relation("SalesImportCreatedBy")
+  salesImportsOwned       SalesImportBatch[]        @relation("SalesImportOwner")
+  salesLeadsArchived      SalesLeadArchive[]
+  salesReassignIssues     SalesReassignmentIssue[]  @relation("SalesReassignLeaver")
+  salesReassignResolved   SalesReassignmentIssue[]  @relation("SalesReassignResolvedTo")
+  salesWonExceptionsMade  SalesWonException[]       @relation("SalesWonExceptionDecider")
+  salesWonExceptionsAsked SalesWonException[]       @relation("SalesWonExceptionRequester")
+  salesWonExceptionsWas   SalesWonException[]       @relation("SalesWonExceptionOwnerAtRequest")
+  salesWonExceptionsOwner SalesWonException[]       @relation("SalesWonExceptionCurrentOwner")
+  salesDailyTargets       SalesDailyTarget[]        @relation("SalesDailyTargetFor")
+  salesDailyTargetsSet    SalesDailyTarget[]        @relation("SalesDailyTargetSetBy")
+  salesMonthlyTargets     SalesMonthlyTarget[]      @relation("SalesMonthlyTargetFor")
+  salesMonthlyTargetsSet  SalesMonthlyTarget[]      @relation("SalesMonthlyTargetSetBy")
+  salesDailyLogs          SalesDailyLog[]
+  salesDailyReports       SalesDailyReport[]
+  salesProofRequests      SalesProofRequest[]       @relation("SalesProofFor")
+  salesProofRequested     SalesProofRequest[]       @relation("SalesProofRequestedBy")
+  salesProofClosed        SalesProofRequest[]       @relation("SalesProofClosedBy")
+  // Module 15.7: commission
+  salesCommissionRulesSet       SalesCommissionRule[]      @relation("SalesCommissionRuleSetBy")
+  salesCommissionEarned         SalesCommissionLine[]      @relation("SalesCommissionEarner")
+  salesCommissionWonOwned       SalesCommissionLine[]      @relation("SalesCommissionWonOwner")
+  salesCommissionHeld           SalesCommissionLine[]      @relation("SalesCommissionHeldBy")
+  salesCommissionApproved       SalesCommissionLine[]      @relation("SalesCommissionApprovedBy")
+  salesCommissionRejected       SalesCommissionLine[]      @relation("SalesCommissionRejectedBy")
+  salesCommissionLeaverDecided  SalesCommissionLine[]      @relation("SalesCommissionLeaverDecidedBy")
+  salesCommissionEvents         SalesCommissionLineEvent[]
+  salesCommissionEligibility    SalesCommissionEligibility[]
 
   @@index([departmentId])
   @@index([officeId])
@@ -885,8 +953,10 @@ model AuditLog {
 }
 
 /// Events for other modules (see packages/contracts). Written in the same transaction as the
-/// change. The outbox dispatcher (backend/src/events/outbox-dispatcher.service.ts) hands each event to every consumer
-/// registered for its type and version, then sets processed_at. Failures are retried with a growing delay.
+/// change. Two readers exist: the outbox dispatcher (backend/src/events/outbox-dispatcher.service.ts, Modules 4 to 9)
+/// hands each event to every consumer registered for its type and version, then sets processed_at; the Cycle 3 consumer
+/// runner (outbox-consumer-runner.service.ts: notifications, Modules 13 and 14) records its own progress in
+/// outbox_consumptions and never touches processed_at.
 model OutboxEvent {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type          String
@@ -906,6 +976,8 @@ model OutboxEvent {
   lockedBy      String?   @map("locked_by")
 
   deliveries OutboxDelivery[]
+
+  consumptions OutboxConsumption[]
 
   @@index([type, version, createdAt])
   @@index([processedAt])
@@ -1126,6 +1198,8 @@ model Project {
 
   tasks       Task[]
   repeatRules TaskRepeatRule[]
+  /// Module 14 project channels (back-relation only).
+  channels    Conversation[]
 
   @@map("projects")
 }
@@ -1202,6 +1276,9 @@ model Task {
   reviews     TaskReview[]
   history     TaskHistory[]
   scorecardTasks ScorecardTask[]
+  /// Module 14 links (back-relations only).
+  messageLinks   MessageTaskLink[]
+  meetingLinks   MeetingTaskLink[]
 
   @@unique([repeatRuleId, occurrenceOn])
   @@index([assigneeId, status])
@@ -2249,10 +2326,13 @@ model Party {
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy  String?   @map("updated_by") @db.Uuid
 
-  lines    JournalLine[]
-  invoices Invoice[]
-  bills    Bill[]
-  payments Payment[]
+  lines          JournalLine[]
+  invoices       Invoice[]
+  bills          Bill[]
+  payments       Payment[]
+  billingProfile BillingProfile?
+  recurringRules RecurringBillingRule[]
+  salesCompanies SalesCompany[]
 
   @@index([kind, name])
   @@map("parties")
@@ -2433,11 +2513,49 @@ model Invoice {
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   updatedBy      String?   @map("updated_by") @db.Uuid
 
-  party       Party               @relation(fields: [partyId], references: [id])
-  lines       InvoiceLine[]
-  allocations PaymentAllocation[]
+  // ---- Module 13 (customer billing) extends this table; Module 9 still writes every ledger entry. ----
+  /// draft (no ledger entry, temporary DRAFT- number) -> issued (INV- number, entry submitted) -> cancelled.
+  /// Paid / part paid / overdue are still calculated, never stored. Rows that existed before M13 are issued.
+  status            InvoiceStatus @default(issued)
+  kind              InvoiceKind   @default(one_time)
+  termsDays         Int?          @map("terms_days")
+  /// The billing period this invoice covers (recurring and rental invoices).
+  periodStart       DateTime?     @map("period_start") @db.Date
+  periodEnd         DateTime?     @map("period_end") @db.Date
+  recurringRuleId   String?       @map("recurring_rule_id") @db.Uuid
+  /// Reminder days relative to the due date (-3 = 3 days before).
+  reminderOffsets   Int[]         @default([]) @map("reminder_offsets")
+  /// The staff member reminded about this invoice.
+  assignedToId      String?       @map("assigned_to_id") @db.Uuid
+  /// M15 connection point: a confirmed Won deal creates exactly one draft (unique).
+  sourceDealNumber  String?       @unique @map("source_deal_number")
+  sourceDealOwnerId String?       @map("source_deal_owner_id") @db.Uuid
+  /// The client's retry key: the same create request never makes a second invoice.
+  requestKey        String?       @unique @map("request_key")
+  issuedAt          DateTime?     @map("issued_at") @db.Timestamptz(3)
+  issuedBy          String?       @map("issued_by") @db.Uuid
+  emailedAt         DateTime?     @map("emailed_at") @db.Timestamptz(3)
+  cancelledBy       String?       @map("cancelled_by") @db.Uuid
+  cancelReason      String?       @map("cancel_reason")
+  /// The reversing entry made when an invoice whose entry was posted is cancelled.
+  cancelEntryId     String?       @unique @map("cancel_entry_id") @db.Uuid
+  /// When the "invoice paid" and "invoice overdue" events were sent (each once).
+  paidEventAt       DateTime?     @map("paid_event_at") @db.Timestamptz(3)
+  overdueEventAt    DateTime?     @map("overdue_event_at") @db.Timestamptz(3)
 
+  party         Party                  @relation(fields: [partyId], references: [id])
+  lines         InvoiceLine[]
+  allocations   PaymentAllocation[]
+  recurringRule RecurringBillingRule?  @relation(fields: [recurringRuleId], references: [id])
+  /// Module 15.7: the commission line of a deal's own invoice (a relation only; no column on invoices).
+  salesCommissionLine SalesCommissionLine?
+  assignedTo    Employee?              @relation("InvoiceAssignee", fields: [assignedToId], references: [id])
+  reminders     InvoiceReminder[]
+  emails        BillingCustomerEmail[]
+
+  @@unique([recurringRuleId, periodStart])
   @@index([partyId])
+  @@index([status, dueDate])
   @@map("invoices")
 }
 
@@ -2501,6 +2619,8 @@ model Payment {
   method         String?
   reference      String?
   journalEntryId String?          @unique @map("journal_entry_id") @db.Uuid
+  /// M13: the client's retry key, so recording the same payment twice never makes a second one.
+  requestKey     String?          @unique @map("request_key")
   createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   createdBy      String?          @map("created_by") @db.Uuid
 
@@ -2600,4 +2720,1636 @@ model FinanceSetting {
   updatedBy             String?  @map("updated_by") @db.Uuid
 
   @@map("finance_settings")
+}
+
+// ============================================================================================================
+// Cycle 3 shared foundation: outbox readers, notifications (minimal Module 12 core), module-owned settings.
+// ============================================================================================================
+
+/// A module that reads outbox events. It sees only events written after it was first registered (started_at),
+/// so switching a new reader on never replays the past.
+model OutboxConsumer {
+  name      String   @id
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(3)
+
+  consumptions OutboxConsumption[]
+
+  @@map("outbox_consumers")
+}
+
+enum OutboxConsumptionStatus {
+  done
+  failed
+  dead
+  skipped
+
+  @@map("outbox_consumption_status")
+}
+
+/// One row per reader and event: handled (done), to be tried again (failed), given up after the last attempt (dead) or
+/// unreadable for this reader (skipped). Unique per reader and event, so each reader processes each event once.
+model OutboxConsumption {
+  id            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  consumer      String
+  eventId       String                  @map("event_id") @db.Uuid
+  status        OutboxConsumptionStatus
+  attempts      Int                     @default(0)
+  /// Never message bodies or personal data: the error class and a short message only.
+  lastError     String?                 @map("last_error")
+  nextAttemptAt DateTime?               @map("next_attempt_at") @db.Timestamptz(3)
+  processedAt   DateTime?               @map("processed_at") @db.Timestamptz(3)
+  createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  reader OutboxConsumer @relation(fields: [consumer], references: [name])
+  event  OutboxEvent    @relation(fields: [eventId], references: [id])
+
+  @@unique([consumer, eventId])
+  @@index([consumer, status, nextAttemptAt])
+  @@map("outbox_consumptions")
+}
+
+/// An in-app notification (the bell). One per recipient and dedupe key, so a retried event never creates a second one.
+model Notification {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId   String    @map("recipient_id") @db.Uuid
+  /// One of notificationTypeSchema (packages/contracts/src/notifications.ts).
+  type          String
+  title         String
+  body          String?
+  /// An app path such as /approvals (never an external URL).
+  link          String?
+  /// Approvals and security alerts: always shown and always emailed (plan section 17).
+  essential     Boolean
+  dedupeKey     String    @map("dedupe_key")
+  sourceEventId String?   @map("source_event_id") @db.Uuid
+  readAt        DateTime? @map("read_at") @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipient  Employee               @relation(fields: [recipientId], references: [id])
+  deliveries NotificationDelivery[]
+
+  @@unique([recipientId, dedupeKey])
+  @@index([recipientId, createdAt])
+  @@map("notifications")
+}
+
+/// A person's choices. Only emails can be turned off, and never for the essential types (database rule too).
+model NotificationPreference {
+  employeeId   String   @id @map("employee_id") @db.Uuid
+  /// Notification types whose email this person turned off.
+  emailOff     String[] @default([]) @map("email_off")
+  /// Stored for the daily summary email (Module 12); the summary itself is not sent yet.
+  dailySummary Boolean  @default(true) @map("daily_summary")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("notification_preferences")
+}
+
+enum NotificationDeliveryStatus {
+  pending
+  sending
+  sent
+  failed
+  skipped
+  /// The server stopped while sending: the outcome is unknown, so it is never sent again automatically.
+  unknown
+
+  @@map("notification_delivery_status")
+}
+
+/// One email per notification at most (unique), sent by the delivery worker with retries.
+model NotificationDelivery {
+  id             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notificationId String                     @map("notification_id") @db.Uuid
+  channel        String                     @default("email")
+  status         NotificationDeliveryStatus @default(pending)
+  /// Why it was skipped (turned_off, no_email, recipient_left), or the last error class.
+  note           String?
+  toAddress      String?                    @map("to_address")
+  attempts       Int                        @default(0)
+  nextAttemptAt  DateTime                   @default(now()) @map("next_attempt_at") @db.Timestamptz(3)
+  claimedAt      DateTime?                  @map("claimed_at") @db.Timestamptz(3)
+  sentAt         DateTime?                  @map("sent_at") @db.Timestamptz(3)
+  createdAt      DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+
+  @@unique([notificationId, channel])
+  @@index([status, nextAttemptAt])
+  @@map("notification_deliveries")
+}
+
+/// Settings owned by one module (the pattern until Module 12's settings screen exists). The value is validated by the
+/// module's own schema; version gives optimistic locking; every change is audited.
+model ModuleSetting {
+  module    String   @id
+  value     Json
+  version   Int      @default(1)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  @@map("module_settings")
+}
+
+// ============================================================================================================
+// Module 13: customer billing, subscriptions and renewal management (plan section 18).
+// Invoices, invoice lines, payments and the ledger stay in Module 9 (the tables above); these tables add the
+// billing life cycle around them. Only Module 9 writes money.
+// ============================================================================================================
+
+enum InvoiceStatus {
+  draft
+  issued
+  cancelled
+
+  @@map("invoice_status")
+}
+
+enum InvoiceKind {
+  one_time
+  recurring
+  rental
+
+  @@map("invoice_kind")
+}
+
+enum BillingPeriod {
+  monthly
+  quarterly
+  yearly
+
+  @@map("billing_period")
+}
+
+enum RecurringRuleStatus {
+  active
+  ended
+
+  @@map("recurring_rule_status")
+}
+
+enum ReminderAudience {
+  customer
+  staff
+
+  @@map("reminder_audience")
+}
+
+enum ReminderStatus {
+  scheduled
+  sent
+  skipped
+
+  @@map("reminder_status")
+}
+
+enum CustomerEmailStatus {
+  pending
+  sending
+  sent
+  failed
+  skipped
+  unknown
+
+  @@map("customer_email_status")
+}
+
+enum SubscriptionStatus {
+  active
+  cancelled
+
+  @@map("subscription_status")
+}
+
+enum DealHandoverStatus {
+  drafted
+  needs_client
+
+  @@map("deal_handover_status")
+}
+
+/// A confirmed Won deal received from Module 15 (one row per deal number). drafted = its draft invoice exists;
+/// needs_client = several clients have exactly its client name, and Finance chooses the right one (never chosen silently).
+model DealHandover {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealNumber        String             @unique @map("deal_number")
+  /// The event payload (client, service, value, currency, owner).
+  payload           Json
+  status            DealHandoverStatus
+  candidatePartyIds String[]           @map("candidate_party_ids") @db.Uuid
+  invoiceId         String?            @unique @map("invoice_id") @db.Uuid
+  sourceEventId     String?            @map("source_event_id") @db.Uuid
+  resolvedBy        String?            @map("resolved_by") @db.Uuid
+  resolvedAt        DateTime?          @map("resolved_at") @db.Timestamptz(3)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status])
+  @@map("deal_handovers")
+}
+
+enum SubscriptionPeriod {
+  monthly
+  quarterly
+  yearly
+  usage
+
+  @@map("subscription_period")
+}
+
+enum RenewalEventKind {
+  alert
+  renewed
+  changed
+  cancelled
+
+  @@map("renewal_event_kind")
+}
+
+/// A client's billing details (the client itself is the Module 9 party).
+model BillingProfile {
+  partyId         String   @id @map("party_id") @db.Uuid
+  contactName     String?  @map("contact_name")
+  termsDays       Int      @map("terms_days")
+  taxId           String?  @map("tax_id")
+  notes           String?
+  /// A client created automatically from a Won deal: Finance reviews it before its invoice can be issued.
+  needsReview     Boolean  @default(false) @map("needs_review")
+  createdFromDeal String?  @map("created_from_deal")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?  @map("created_by") @db.Uuid
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?  @map("updated_by") @db.Uuid
+
+  party Party @relation(fields: [partyId], references: [id])
+
+  @@map("billing_profiles")
+}
+
+/// A recurring or rental billing rule. Each period it creates one draft invoice (unique per rule and period start)
+/// for the finance duty person to check and issue.
+model RecurringBillingRule {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId         String              @map("party_id") @db.Uuid
+  kind            InvoiceKind
+  period          BillingPeriod
+  currency        Currency
+  /// [{ description, quantity, unitPrice, accountId }]
+  lines           Json
+  termsDays       Int                 @map("terms_days")
+  reminderOffsets Int[]               @map("reminder_offsets")
+  assignedToId    String?             @map("assigned_to_id") @db.Uuid
+  notes           String?
+  startDate       DateTime            @map("start_date") @db.Date
+  /// The last day billed; null = until stopped.
+  endDate         DateTime?           @map("end_date") @db.Date
+  /// The start of the next period to bill.
+  nextPeriodStart DateTime            @map("next_period_start") @db.Date
+  status          RecurringRuleStatus @default(active)
+  endedAt         DateTime?           @map("ended_at") @db.Timestamptz(3)
+  endedBy         String?             @map("ended_by") @db.Uuid
+  endReason       String?             @map("end_reason")
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?             @map("created_by") @db.Uuid
+  updatedAt       DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?             @map("updated_by") @db.Uuid
+
+  party      Party     @relation(fields: [partyId], references: [id])
+  assignedTo Employee? @relation("RecurringRuleAssignee", fields: [assignedToId], references: [id])
+  invoices   Invoice[]
+
+  @@index([status, nextPeriodStart])
+  @@map("recurring_billing_rules")
+}
+
+/// Reminder history: one row per invoice, reminder day and audience (unique), so a reminder is never sent twice.
+model InvoiceReminder {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId       String           @map("invoice_id") @db.Uuid
+  offsetDays      Int              @map("offset_days")
+  audience        ReminderAudience
+  scheduledFor    DateTime         @map("scheduled_for") @db.Date
+  status          ReminderStatus   @default(scheduled)
+  /// Why it was skipped (paid, cancelled, customer emails off...).
+  reason          String?
+  sentAt          DateTime?        @map("sent_at") @db.Timestamptz(3)
+  notificationId  String?          @map("notification_id") @db.Uuid
+  customerEmailId String?          @map("customer_email_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@unique([invoiceId, offsetDays, audience])
+  @@index([status, scheduledFor])
+  @@map("invoice_reminders")
+}
+
+/// Emails to customers (the invoice itself and reminders), sent by a worker with retries. Unique per dedupe key.
+model BillingCustomerEmail {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId      String              @map("invoice_id") @db.Uuid
+  /// invoice or reminder
+  kind           String
+  reminderOffset Int?                @map("reminder_offset")
+  toAddress      String              @map("to_address")
+  dedupeKey      String              @unique @map("dedupe_key")
+  status         CustomerEmailStatus @default(pending)
+  attempts       Int                 @default(0)
+  nextAttemptAt  DateTime            @map("next_attempt_at") @db.Timestamptz(3)
+  sentAt         DateTime?           @map("sent_at") @db.Timestamptz(3)
+  lastError      String?             @map("last_error")
+  note           String?
+  createdBy      String?             @map("created_by") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([invoiceId])
+  @@map("billing_customer_emails")
+}
+
+/// Aceva's own tools and services (Apollo, domains, mailboxes, AI tools, hosting, APIs...).
+model Subscription {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// SUB-2026-0001, from a database sequence.
+  number          String             @unique @default(dbgenerated("((('SUB-'::text || to_char(now(), 'YYYY'::text)) || '-'::text) || lpad((nextval('subscription_seq'::regclass))::text, 4, '0'::text))"))
+  vendor          String
+  product         String
+  category        String
+  /// The person responsible: renewal alerts go to them.
+  ownerId         String             @map("owner_id") @db.Uuid
+  plan            String
+  cost            Decimal            @db.Decimal(14, 2)
+  currency        Currency
+  period          SubscriptionPeriod
+  renewalDate     DateTime           @map("renewal_date") @db.Date
+  alertDaysBefore Int                @map("alert_days_before")
+  seats           Int?
+  usageMetric     String?            @map("usage_metric")
+  usageUnit       String?            @map("usage_unit")
+  usageLimit      Decimal?           @map("usage_limit") @db.Decimal(18, 4)
+  notes           String?
+  status          SubscriptionStatus @default(active)
+  cancelledAt     DateTime?          @map("cancelled_at") @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?            @map("created_by") @db.Uuid
+  updatedAt       DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?            @map("updated_by") @db.Uuid
+
+  owner         Employee                   @relation("SubscriptionOwner", fields: [ownerId], references: [id])
+  renewalEvents SubscriptionRenewalEvent[]
+  usage         UsageSnapshot[]
+  costs         SubscriptionCost[]
+
+  @@index([status, renewalDate])
+  @@map("subscriptions")
+}
+
+/// Renewal alerts and decisions (renewed, changed, cancelled). Insert-only. One alert per subscription and renewal date.
+model SubscriptionRenewalEvent {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String           @map("subscription_id") @db.Uuid
+  kind           RenewalEventKind
+  /// The renewal date this alert or decision is about.
+  renewalDate    DateTime         @map("renewal_date") @db.Date
+  newRenewalDate DateTime?        @map("new_renewal_date") @db.Date
+  oldCost        Decimal?         @map("old_cost") @db.Decimal(14, 2)
+  newCost        Decimal?         @map("new_cost") @db.Decimal(14, 2)
+  oldPlan        String?          @map("old_plan")
+  newPlan        String?          @map("new_plan")
+  note           String?
+  actorId        String?          @map("actor_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId])
+  @@map("subscription_renewal_events")
+}
+
+/// A usage reading. Entered by hand (no provider API is connected yet); a cost on it is always an estimate. Insert-only.
+model UsageSnapshot {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  readingDate    DateTime @map("reading_date") @db.Date
+  used           Decimal  @db.Decimal(18, 4)
+  /// The limit at the time of the reading (defaults to the subscription's limit).
+  limit          Decimal? @db.Decimal(18, 4)
+  estimatedCost  Decimal? @map("estimated_cost") @db.Decimal(14, 2)
+  /// manual only for now; api is reserved for a provider connection.
+  source         String   @default("manual")
+  note           String?
+  enteredBy      String?  @map("entered_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@index([subscriptionId, readingDate])
+  @@map("usage_snapshots")
+}
+
+/// What a subscription cost in a month. Estimated unless it is backed by a Module 9 bill or the provider's invoice reference.
+model SubscriptionCost {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String   @map("subscription_id") @db.Uuid
+  /// YYYY-MM
+  month          String
+  amount         Decimal  @db.Decimal(14, 2)
+  currency       Currency
+  estimated      Boolean
+  billId         String?  @map("bill_id") @db.Uuid
+  reference      String?
+  note           String?
+  enteredBy      String?  @map("entered_by") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy      String?  @map("updated_by") @db.Uuid
+
+  subscription Subscription @relation(fields: [subscriptionId], references: [id])
+
+  @@unique([subscriptionId, month])
+  @@map("subscription_costs")
+}
+
+// ============================================================================================================
+// Module 14, part 1 (M14.1): conversations and messages (plan section 19).
+// Message text lives only in messages.body and message_revisions.body. It is never copied into the audit log, the
+// outbox or the application logs. Nothing here is hard-deleted (database triggers); retention periods are not decided
+// yet, so nothing is deleted automatically.
+// ============================================================================================================
+
+enum ConversationKind {
+  dm
+  group
+  channel
+
+  @@map("conversation_kind")
+}
+
+/// What a channel is for: a department (members follow the employee records) or a project (members managed by hand).
+enum ChannelScope {
+  department
+  project
+
+  @@map("channel_scope")
+}
+
+enum ConversationRole {
+  member
+  moderator
+
+  @@map("conversation_role")
+}
+
+/// Why an older version of a message was kept: the author edited it, the author deleted it, or a moderator removed it.
+enum MessageRevisionKind {
+  edited
+  deleted
+  removed
+
+  @@map("message_revision_kind")
+}
+
+/// A direct message (two people), a group, or a department or project channel.
+model Conversation {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind          ConversationKind
+  channelScope  ChannelScope?    @map("channel_scope")
+  name          String?
+  topic         String?
+  /// Department channels: the department whose current employees (and head) are members.
+  departmentId  String?          @map("department_id") @db.Uuid
+  /// Project channels: the project's name and code (copied from the Module 5 project when one is chosen).
+  projectName   String?          @map("project_name")
+  projectCode   String?          @map("project_code")
+  /// Project channels: the Module 5 project it belongs to (null for channels made before projects could be chosen).
+  projectId     String?          @map("project_id") @db.Uuid
+  /// DMs only: the two people's ids in sorted order, so the same pair can never get a second DM (unique).
+  dmKey         String?          @unique @map("dm_key")
+  /// The last sequence number given to a message here. Raised in the same transaction as the message insert, under
+  /// this row's lock, so concurrent sends are numbered one after another and a rolled-back send leaves no gap.
+  lastSeq       Int              @default(0) @map("last_seq")
+  lastMessageAt DateTime?        @map("last_message_at") @db.Timestamptz(3)
+  createdById   String           @map("created_by_id") @db.Uuid
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
+  archivedAt    DateTime?        @map("archived_at") @db.Timestamptz(3)
+  archivedById  String?          @map("archived_by_id") @db.Uuid
+
+  department       Department?               @relation(fields: [departmentId], references: [id])
+  project          Project?                  @relation(fields: [projectId], references: [id])
+  members          ConversationMember[]
+  reads            ConversationRead[]
+  messages         Message[]
+  pins             PinnedMessage[]
+  departmentAccess DepartmentChannelAccess[]
+
+  files          CommsFile[]
+
+  @@index([departmentId])
+  @@index([projectId])
+  @@index([kind])
+  @@map("conversations")
+}
+
+/// People added to a conversation by hand (DM and group members, project channel members, moderators, and anyone added
+/// to a department channel beyond its department). One row per person and conversation; leaving sets left_at.
+model ConversationMember {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String           @map("conversation_id") @db.Uuid
+  employeeId     String           @map("employee_id") @db.Uuid
+  role           ConversationRole @default(member)
+  addedById      String?          @map("added_by_id") @db.Uuid
+  /// The conversation's last message number when this person was added (or added again): they see only later messages.
+  joinedSeq      Int              @default(0) @map("joined_seq")
+  joinedAt       DateTime         @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt         DateTime?        @map("left_at") @db.Timestamptz(3)
+  removedById    String?          @map("removed_by_id") @db.Uuid
+  updatedAt      DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@unique([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("conversation_members")
+}
+
+/// How far each person has received and read a conversation (sequence numbers). Kept apart from the member rows because
+/// department channel members are worked out from the employee records and have no member row.
+model ConversationRead {
+  conversationId   String   @map("conversation_id") @db.Uuid
+  employeeId       String   @map("employee_id") @db.Uuid
+  lastDeliveredSeq Int      @default(0) @map("last_delivered_seq")
+  lastReadSeq      Int      @default(0) @map("last_read_seq")
+  updatedAt        DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("conversation_reads")
+}
+
+/// When someone became a member of a department channel through the employee records (hired into the department,
+/// moved into it, or made its head): they see only messages after from_seq. Written by database triggers on employees
+/// and departments, so every way of changing a department is covered. No row = a member since before the channel existed.
+model DepartmentChannelAccess {
+  conversationId String   @map("conversation_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  fromSeq        Int      @map("from_seq")
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([conversationId, employeeId])
+  @@index([employeeId])
+  @@map("department_channel_access")
+}
+
+/// One message. seq is unique per conversation and has no gaps; client_key is the sender's retry key (unique per author).
+/// A deleted or removed message keeps its row as a placeholder with an empty body; the text is kept in message_revisions.
+model Message {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String               @map("conversation_id") @db.Uuid
+  seq            Int
+  authorId       String               @map("author_id") @db.Uuid
+  /// A reply: the top-level message of the same conversation it answers.
+  parentId       String?              @map("parent_id") @db.Uuid
+  /// Plain text, at most 4,000 characters. Empty only once deleted.
+  body           String
+  clientKey      String               @map("client_key") @db.Uuid
+  /// SHA-256 of what was first sent with this retry key, so a retry with different content is refused.
+  requestHash    String               @map("request_hash")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt       DateTime?            @map("edited_at") @db.Timestamptz(3)
+  /// How many older versions are kept in message_revisions.
+  revision       Int                  @default(0)
+  deletedAt      DateTime?            @map("deleted_at") @db.Timestamptz(3)
+  deletedById    String?              @map("deleted_by_id") @db.Uuid
+  deletedAs      MessageRevisionKind? @map("deleted_as")
+
+  conversation Conversation      @relation(fields: [conversationId], references: [id])
+  author       Employee          @relation("MessageAuthor", fields: [authorId], references: [id])
+  parent       Message?          @relation("MessageReplies", fields: [parentId], references: [id])
+  replies      Message[]         @relation("MessageReplies")
+  revisions    MessageRevision[]
+  reactions    MessageReaction[]
+  mentions     MessageMention[]
+  saves        SavedMessage[]
+  pin          PinnedMessage?
+
+  files        CommsFile[]
+  taskLink     MessageTaskLink?
+
+  @@unique([conversationId, seq])
+  @@unique([authorId, clientKey])
+  @@index([conversationId, parentId, seq])
+  @@index([authorId, createdAt])
+  @@map("messages")
+}
+
+/// Older versions of a message (insert-only). Kept in the database for the retention period, never shown in the app.
+model MessageRevision {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId   String              @map("message_id") @db.Uuid
+  revision    Int
+  kind        MessageRevisionKind
+  /// The text as it was before this change.
+  body        String
+  changedById String              @map("changed_by_id") @db.Uuid
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message Message @relation(fields: [messageId], references: [id])
+
+  @@unique([messageId, revision])
+  @@map("message_revisions")
+}
+
+/// Someone mentioned in a message (by Emp-ID; always a member of the conversation).
+model MessageMention {
+  messageId  String   @map("message_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  employee Employee @relation("MessageMentioned", fields: [employeeId], references: [id])
+
+  @@id([messageId, employeeId])
+  @@index([employeeId])
+  @@map("message_mentions")
+}
+
+model MessageReaction {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  emoji      String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([messageId, employeeId, emoji])
+  @@map("message_reactions")
+}
+
+/// A person's own saved messages (private to them).
+model SavedMessage {
+  employeeId String   @map("employee_id") @db.Uuid
+  messageId  String   @map("message_id") @db.Uuid
+  savedAt    DateTime @default(now()) @map("saved_at") @db.Timestamptz(3)
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+  message  Message  @relation(fields: [messageId], references: [id])
+
+  @@id([employeeId, messageId])
+  @@index([employeeId, savedAt])
+  @@map("saved_messages")
+}
+
+/// A message pinned in its conversation (once).
+model PinnedMessage {
+  messageId      String   @id @map("message_id") @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  pinnedById     String   @map("pinned_by_id") @db.Uuid
+  pinnedAt       DateTime @default(now()) @map("pinned_at") @db.Timestamptz(3)
+
+  message      Message      @relation(fields: [messageId], references: [id])
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId])
+  @@map("pinned_messages")
+}
+
+/// Module 14: an announcement to the whole company or to chosen departments (plan section 19). Who it reaches follows the
+/// CURRENT employee records (like department channels): someone who joins a department later sees its announcements.
+/// Never deleted; only the pin can change (database triggers).
+model Announcement {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String
+  body        String
+  authorId    String    @map("author_id") @db.Uuid
+  /// Everyone in the company (otherwise: the departments in announcement_departments).
+  audienceAll Boolean   @map("audience_all")
+  requiresAck Boolean   @map("requires_ack")
+  pinned      Boolean   @default(false)
+  pinnedAt    DateTime? @map("pinned_at") @db.Timestamptz(3)
+  pinnedById  String?   @map("pinned_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  author      Employee                 @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+  pinnedBy    Employee?                @relation("AnnouncementPinnedBy", fields: [pinnedById], references: [id])
+  departments AnnouncementDepartment[]
+  acks        AnnouncementAck[]
+
+  @@index([createdAt])
+  @@map("announcements")
+}
+
+/// The departments an announcement is for (none when it is for everyone).
+model AnnouncementDepartment {
+  announcementId String @map("announcement_id") @db.Uuid
+  departmentId   String @map("department_id") @db.Uuid
+
+  announcement Announcement @relation(fields: [announcementId], references: [id])
+  department   Department   @relation(fields: [departmentId], references: [id])
+
+  @@id([announcementId, departmentId])
+  @@index([departmentId])
+  @@map("announcement_departments")
+}
+
+/// "I've read this": one row per person, insert-only (the record of who acknowledged and when).
+model AnnouncementAck {
+  announcementId String   @map("announcement_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  ackedAt        DateTime @default(now()) @map("acked_at") @db.Timestamptz(3)
+
+  announcement Announcement @relation(fields: [announcementId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id])
+
+  @@id([announcementId, employeeId])
+  @@index([employeeId])
+  @@map("announcement_acks")
+}
+
+/// A meeting invitee's answer.
+enum MeetingRsvp {
+  pending
+  yes
+  no
+  maybe
+
+  @@map("meeting_rsvp")
+}
+
+/// Module 14: a meeting (plan section 19: "create a meeting, invite participants, set date/time, share an agenda and attach
+/// notes or files"). Private to its organizer and the people invited. Never deleted: a cancelled meeting stays, read-only.
+model Meeting {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title            String
+  startsAt         DateTime  @map("starts_at") @db.Timestamptz(3)
+  durationMin      Int       @map("duration_min")
+  location         String
+  agenda           String    @default("")
+  /// Written by the organizer during or after the meeting; read by everyone invited.
+  notes            String?
+  notesUpdatedAt   DateTime? @map("notes_updated_at") @db.Timestamptz(3)
+  notesUpdatedById String?   @map("notes_updated_by_id") @db.Uuid
+  organizerId      String    @map("organizer_id") @db.Uuid
+  cancelledAt      DateTime? @map("cancelled_at") @db.Timestamptz(3)
+  cancelledById    String?   @map("cancelled_by_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  organizer      Employee             @relation("MeetingOrganizer", fields: [organizerId], references: [id])
+  notesUpdatedBy Employee?            @relation("MeetingNotesEditor", fields: [notesUpdatedById], references: [id])
+  cancelledBy    Employee?            @relation("MeetingCanceller", fields: [cancelledById], references: [id])
+  participants   MeetingParticipant[]
+  files          CommsFile[]
+  taskLinks      MeetingTaskLink[]
+
+  @@index([organizerId, startsAt])
+  @@index([startsAt])
+  @@map("meetings")
+}
+
+/// Someone invited to a meeting, with their answer. Invitations are never withdrawn (the meeting is cancelled instead).
+model MeetingParticipant {
+  meetingId   String      @map("meeting_id") @db.Uuid
+  employeeId  String      @map("employee_id") @db.Uuid
+  rsvp        MeetingRsvp @default(pending)
+  respondedAt DateTime?   @map("responded_at") @db.Timestamptz(3)
+  invitedAt   DateTime    @default(now()) @map("invited_at") @db.Timestamptz(3)
+  invitedById String      @map("invited_by_id") @db.Uuid
+
+  meeting   Meeting  @relation(fields: [meetingId], references: [id])
+  employee  Employee @relation("MeetingParticipant", fields: [employeeId], references: [id])
+  invitedBy Employee @relation("MeetingInviter", fields: [invitedById], references: [id])
+
+  @@id([meetingId, employeeId])
+  @@index([employeeId])
+  @@map("meeting_participants")
+}
+
+/// Where a shared file is in its malware check: files are opened only once "clean".
+enum CommsFileScan {
+  scanning
+  clean
+  blocked
+
+  @@map("comms_file_scan")
+}
+
+/// Module 14: a file shared in a conversation (attached to a message) or added to a meeting (plan section 19: "File
+/// sharing with file-type and size limits, malware scanning, private storage and permission-checked download links").
+/// The bytes are in private storage (never a public folder); a download goes through the API, which checks access every
+/// time. A blocked file's bytes are removed; the record stays. Never deleted.
+model CommsFile {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// A conversation file (then attached to one message when it is sent), or a meeting file.
+  conversationId String?       @map("conversation_id") @db.Uuid
+  messageId      String?       @map("message_id") @db.Uuid
+  meetingId      String?       @map("meeting_id") @db.Uuid
+  uploaderId     String        @map("uploader_id") @db.Uuid
+  fileName       String        @map("file_name")
+  mimeType       String        @map("mime_type")
+  sizeBytes      Int           @map("size_bytes")
+  sha256         String
+  storageKey     String        @unique @map("storage_key")
+  scanStatus     CommsFileScan @default(scanning) @map("scan_status")
+  /// What ClamAV found in a blocked file (a signature name, never file content).
+  scanSignature  String?       @map("scan_signature")
+  scannedAt      DateTime?     @map("scanned_at") @db.Timestamptz(3)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// A conversation file uploaded but never sent: its bytes were removed after the grace period (the record stays).
+  discardedAt    DateTime?     @map("discarded_at") @db.Timestamptz(3)
+
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
+  message      Message?      @relation(fields: [messageId], references: [id])
+  meeting      Meeting?      @relation(fields: [meetingId], references: [id])
+  uploader     Employee      @relation(fields: [uploaderId], references: [id])
+
+  @@index([messageId])
+  @@index([meetingId])
+  @@index([conversationId])
+  @@index([scanStatus])
+  @@index([uploaderId, createdAt])
+  @@map("comms_files")
+}
+
+/// Module 14: a message linked to the Module 5 task it is about (one task per message). Only someone who may see the task
+/// links it; people who may not see it are told only that a task is linked, never which.
+model MessageTaskLink {
+  messageId  String   @id @map("message_id") @db.Uuid
+  taskId     String   @map("task_id") @db.Uuid
+  linkedById String   @map("linked_by_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(3)
+
+  message  Message  @relation(fields: [messageId], references: [id])
+  task     Task     @relation(fields: [taskId], references: [id])
+  linkedBy Employee @relation(fields: [linkedById], references: [id])
+
+  @@index([taskId])
+  @@map("message_task_links")
+}
+
+/// Module 14: Module 5 tasks a meeting is about (linked by its organizer).
+model MeetingTaskLink {
+  meetingId  String   @map("meeting_id") @db.Uuid
+  taskId     String   @map("task_id") @db.Uuid
+  linkedById String   @map("linked_by_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at") @db.Timestamptz(3)
+
+  meeting  Meeting  @relation(fields: [meetingId], references: [id])
+  task     Task     @relation(fields: [taskId], references: [id])
+  linkedBy Employee @relation(fields: [linkedById], references: [id])
+
+  @@id([meetingId, taskId])
+  @@index([taskId])
+  @@map("meeting_task_links")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15: sales and CRM (plan section 20). M15.1: leads and companies.
+// ---------------------------------------------------------------------------
+
+/// Where a lead came from (plan section 20). Always recorded.
+enum SalesLeadSource {
+  apollo
+  fiverr
+  linkedin
+  referral
+  website
+  field
+  walk_in
+
+  @@map("sales_lead_source")
+}
+
+/// The email check result. Module 16 (MillionVerifier) fills it in later; Module 15 only stores it ("unchecked").
+enum SalesEmailCheck {
+  unchecked
+  valid
+  invalid
+  catch_all
+  unknown
+
+  @@map("sales_email_check")
+}
+
+/// One record per company (plan section 20). `domain` is the normalised website domain: at most one company that is not
+/// archived per domain (partial unique index in the migration), so the same company is never entered twice.
+model SalesCompany {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  website    String?
+  /// The normalised website domain ("acme.com"): null when there is no website, or when the website's domain is a shared
+  /// one (a marketplace or social profile) listed in the sales settings.
+  domain     String?
+  country    String?
+  industry   String?
+  /// The Module 9 client, once the company is one (Won deal handover, M15.2). Read-only for Module 15.
+  partyId    String?   @map("party_id") @db.Uuid
+  /// Optimistic locking: an edit names the version it read.
+  version    Int       @default(1)
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy  String?   @map("updated_by") @db.Uuid
+
+  party Party?      @relation(fields: [partyId], references: [id])
+  leads SalesLead[]
+  deals SalesDeal[]
+
+  @@index([name])
+  @@map("sales_companies")
+}
+
+/// One record per person (plan section 20). Each lead has exactly one owner (a salesperson's Emp-ID). `emailNormalized`
+/// is unique among leads that are not archived (partial unique index in the migration): the database, not the screen,
+/// is what makes a second copy impossible.
+model SalesLead {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullName        String          @map("full_name")
+  jobTitle        String?         @map("job_title")
+  companyId       String?         @map("company_id") @db.Uuid
+  email           String?
+  /// Lower-case, trimmed email used for the duplicate check. Null exactly when `email` is null (CHECK in the migration).
+  emailNormalized String?         @map("email_normalized")
+  phone           String?
+  linkedinUrl     String?         @map("linkedin_url")
+  country         String?
+  industry        String?
+  source          SalesLeadSource
+  ownerId         String          @map("owner_id") @db.Uuid
+  emailCheck      SalesEmailCheck @default(unchecked) @map("email_check")
+  emailCheckedAt  DateTime?       @map("email_checked_at") @db.Timestamptz(3)
+  notes           String?
+  /// When the lead was added; logged contacts move it forward (M15.3). What counts as "activity" for the 12-month
+  /// archive rule is still a management decision (D-10).
+  lastActivityAt  DateTime        @default(now()) @map("last_activity_at") @db.Timestamptz(3)
+  version         Int             @default(1)
+  archivedAt      DateTime?       @map("archived_at") @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy       String?         @map("created_by") @db.Uuid
+  updatedAt       DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy       String?         @map("updated_by") @db.Uuid
+  /// M15.4: when a do-not-contact request was saved on the lead. Once set it never changes (a trigger checks it).
+  dncAt           DateTime?       @map("dnc_at") @db.Timestamptz(3)
+  /// M15.4: the import that added the lead (who imported it and when is on the batch).
+  importBatchId   String?         @map("import_batch_id") @db.Uuid
+
+  company    SalesCompany?   @relation(fields: [companyId], references: [id])
+  deals      SalesDeal[]
+  activities SalesActivity[]
+  owner   Employee      @relation("SalesLeadOwner", fields: [ownerId], references: [id])
+  importBatch SalesImportBatch? @relation(fields: [importBatchId], references: [id])
+  dncEntries  SalesDncEntry[]
+  archives    SalesLeadArchive[]
+
+  @@index([ownerId])
+  @@index([companyId])
+  @@index([lastActivityAt])
+  @@map("sales_leads")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.2: deals and the pipeline (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// The eight pipeline stages of plan section 20, in order. Won and Lost are final.
+enum SalesDealStage {
+  new
+  contacted
+  replied
+  meeting_booked
+  proposal_sent
+  negotiation
+  won
+  lost
+
+  @@map("sales_deal_stage")
+}
+
+/// The services Aceva sells (plan section 20).
+enum SalesDealService {
+  website
+  custom_software
+  ai_automation
+  mobile_app
+  ecommerce
+
+  @@map("sales_deal_service")
+}
+
+/// Won is marked by the salesperson (pending) and confirmed by the sales manager (confirmed). A request sent back is none again.
+enum SalesWonStatus {
+  none
+  pending
+  confirmed
+
+  @@map("sales_won_status")
+}
+
+/// What a deal history row records.
+enum SalesDealEvent {
+  created
+  stage_changed
+  won_requested
+  won_rejected
+  won_confirmed
+  owner_changed
+
+  @@map("sales_deal_event")
+}
+
+/// One sales opportunity with a company (plan section 20). Its owner is the lead's owner. The number (DL-YYYY-NNNN) is
+/// what people and Module 13 see. CHECKs in the migration: an open deal has a next step with a date; a Lost deal has a
+/// reason and a re-contact date; a Won deal is confirmed; a pending Won request sits in an open stage.
+model SalesDeal {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// DL-YYYY-NNNN from the sales_deal_seq sequence (default in the migration).
+  number           String           @unique @default(dbgenerated("((('DL-'::text || to_char(now(), 'YYYY'::text)) || '-'::text) || lpad((nextval('sales_deal_seq'::regclass))::text, 4, '0'::text))"))
+  leadId           String           @map("lead_id") @db.Uuid
+  companyId        String           @map("company_id") @db.Uuid
+  ownerId          String           @map("owner_id") @db.Uuid
+  service          SalesDealService
+  value            Decimal          @db.Decimal(12, 2)
+  currency         Currency
+  expectedClose    DateTime         @map("expected_close") @db.Date
+  stage            SalesDealStage   @default(new)
+  nextStep         String?          @map("next_step")
+  nextStepDate     DateTime?        @map("next_step_date") @db.Date
+  /// M15.3: the proposal's link (link only; files would need the Module 14 safety pipeline).
+  proposalUrl      String?          @map("proposal_url")
+  lostReason       String?          @map("lost_reason")
+  lostNote         String?          @map("lost_note")
+  recontactAfter   DateTime?        @map("recontact_after") @db.Date
+  wonStatus        SalesWonStatus   @default(none) @map("won_status")
+  wonRequestedAt   DateTime?        @map("won_requested_at") @db.Timestamptz(3)
+  wonRequestedById String?          @map("won_requested_by_id") @db.Uuid
+  wonConfirmedAt   DateTime?        @map("won_confirmed_at") @db.Timestamptz(3)
+  wonConfirmedById String?          @map("won_confirmed_by_id") @db.Uuid
+  /// When the deal became Won or Lost.
+  closedAt         DateTime?        @map("closed_at") @db.Timestamptz(3)
+  version          Int              @default(1)
+  archivedAt       DateTime?        @map("archived_at") @db.Timestamptz(3)
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy        String?          @map("created_by") @db.Uuid
+  updatedAt        DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedBy        String?          @map("updated_by") @db.Uuid
+
+  lead           SalesLead          @relation(fields: [leadId], references: [id])
+  company        SalesCompany       @relation(fields: [companyId], references: [id])
+  owner          Employee           @relation("SalesDealOwner", fields: [ownerId], references: [id])
+  wonRequestedBy Employee?          @relation("SalesDealWonRequester", fields: [wonRequestedById], references: [id])
+  wonConfirmedBy Employee?          @relation("SalesDealWonConfirmer", fields: [wonConfirmedById], references: [id])
+  history        SalesDealHistory[]
+  activities     SalesActivity[]
+  wonExceptions  SalesWonException[]
+  commissionLine SalesCommissionLine?
+  commissionEligibility SalesCommissionEligibility?
+
+  @@index([ownerId, stage])
+  @@index([leadId])
+  @@index([companyId])
+  @@index([stage])
+  @@map("sales_deals")
+}
+
+/// Every stage change and Won decision of a deal, in order. Insert-only (a trigger refuses changes and removal).
+model SalesDealHistory {
+  id        String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId    String          @map("deal_id") @db.Uuid
+  event     SalesDealEvent
+  fromStage SalesDealStage? @map("from_stage")
+  toStage   SalesDealStage  @map("to_stage")
+  /// Null for a change made by the system (for example a lead moved when its owner left, M15.5).
+  actorId   String?         @map("actor_id") @db.Uuid
+  reason    String?
+  note      String?
+  at        DateTime        @default(now()) @db.Timestamptz(3)
+
+  deal  SalesDeal @relation(fields: [dealId], references: [id])
+  actor Employee? @relation(fields: [actorId], references: [id])
+
+  @@index([dealId, at])
+  @@map("sales_deal_history")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.3: activities and follow-ups (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// What an activity on the timeline is. follow_up = a deal's next step was done (POST /sales/deals/:id/follow-up).
+enum SalesActivityKind {
+  call
+  email_sent
+  reply
+  meeting
+  linkedin
+  whatsapp
+  fiverr
+  proposal
+  note
+  follow_up
+
+  @@map("sales_activity_kind")
+}
+
+/// One contact on a lead's (and optionally a deal's) timeline. Insert-only: a mistake is corrected by a new entry.
+/// source = manual for entries typed in by hand; Module 16 writes tool entries (apollo, millionverifier, mailbox) with
+/// the tool's own id in externalId, unique per tool, so a sync never counts the same item twice.
+model SalesActivity {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId      String            @map("lead_id") @db.Uuid
+  /// The deal it is about, when there is one (always a deal of the same lead: a trigger checks it).
+  dealId      String?           @map("deal_id") @db.Uuid
+  /// Who did it (null only for a tool activity not linked to an employee, Module 16).
+  actorId     String?           @map("actor_id") @db.Uuid
+  kind        SalesActivityKind
+  source      String            @default("manual")
+  /// When it happened (it can be earlier than when it was typed in).
+  occurredAt  DateTime          @map("occurred_at") @db.Timestamptz(3)
+  summary     String
+  meetingAt   DateTime?         @map("meeting_at") @db.Timestamptz(3)
+  proposalUrl String?           @map("proposal_url")
+  externalId  String?           @map("external_id")
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead  SalesLead  @relation(fields: [leadId], references: [id])
+  deal  SalesDeal? @relation(fields: [dealId], references: [id])
+  actor Employee?  @relation(fields: [actorId], references: [id])
+
+  @@index([leadId, occurredAt])
+  @@index([dealId, occurredAt])
+  @@index([actorId, occurredAt])
+  @@map("sales_activities")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.4: the do-not-contact list and the lead import (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// The do-not-contact list. Insert-only (triggers): an entry is never changed or removed, also after its lead is archived.
+/// It keeps a keyed hash (HMAC-SHA256, its own secret) of the normalised email and a masked form, never the email.
+model SalesDncEntry {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// HMAC-SHA256 of the normalised email, hex (null for a lead marked while it had no email).
+  emailHmac   String?  @map("email_hmac")
+  /// Which key made the hash (SALES_DNC_HMAC_KEY_ID), so older entries still match after a key rotation.
+  keyId       String?  @map("key_id")
+  /// "a***@domain.com".
+  maskedEmail String?  @map("masked_email")
+  /// The lead it was marked on (null for an email added without a lead).
+  leadId      String?  @map("lead_id") @db.Uuid
+  reason      String
+  /// manual (a person in Aceva); apollo and mailbox are for unsubscribes reported by Module 16.
+  source      String   @default("manual")
+  createdBy   String?  @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead    SalesLead? @relation(fields: [leadId], references: [id])
+  creator Employee?  @relation(fields: [createdBy], references: [id])
+
+  @@index([leadId])
+  @@index([createdAt])
+  @@map("sales_dnc_entries")
+}
+
+/// A lead import: the parsed rows wait here for 30 minutes between the preview and the commit (then they are cleared).
+/// It records who imported for whom, the file's SHA-256, and the result.
+model SalesImportBatch {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdBy   String          @map("created_by") @db.Uuid
+  ownerId     String          @map("owner_id") @db.Uuid
+  source      SalesLeadSource
+  fileName    String          @map("file_name")
+  fileSha256  String          @map("file_sha256")
+  rowCount    Int             @map("row_count")
+  /// The checked rows of the preview; emptied once the batch is committed or has expired.
+  rows        Json            @default("[]")
+  /// previewed, committed or expired.
+  status      String          @default("previewed")
+  expiresAt   DateTime        @map("expires_at") @db.Timestamptz(3)
+  committedAt DateTime?       @map("committed_at") @db.Timestamptz(3)
+  /// What the commit did: { created, skipped: [{line, status}] } (no personal data).
+  result      Json?
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  creator Employee    @relation("SalesImportCreatedBy", fields: [createdBy], references: [id])
+  owner   Employee    @relation("SalesImportOwner", fields: [ownerId], references: [id])
+  leads   SalesLead[]
+
+  @@index([createdBy, createdAt])
+  @@map("sales_import_batches")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.5: leads and deals when a salesperson leaves, and archiving inactive leads (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// Why and when a lead was archived, and which contact details were removed. Insert-only (triggers).
+model SalesLeadArchive {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId         String   @map("lead_id") @db.Uuid
+  archivedAt     DateTime @map("archived_at") @db.Timestamptz(3)
+  /// inactive: no activity for the set number of months.
+  reason         String
+  inactiveMonths Int      @map("inactive_months")
+  lastActivityAt DateTime @map("last_activity_at") @db.Timestamptz(3)
+  clearedFields  String[] @map("cleared_fields")
+  /// Who archived it; null when the nightly job did (then `job` names the run).
+  archivedBy     String?  @map("archived_by") @db.Uuid
+  job            String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  lead     SalesLead @relation(fields: [leadId], references: [id])
+  archiver Employee? @relation(fields: [archivedBy], references: [id])
+
+  @@index([leadId, archivedAt])
+  @@map("sales_lead_archives")
+}
+
+/// A leaver whose leads and deals could not be moved (no single sales manager, and their manager cannot receive them).
+/// It waits for management; a later run that moves them (or finds nothing left) marks it resolved.
+model SalesReassignmentIssue {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId   String    @map("employee_id") @db.Uuid
+  /// The employee.offboarded event, when it came from one (null when the nightly check found it).
+  eventId      String?   @map("event_id") @db.Uuid
+  /// no_recipient
+  reason       String
+  details      Json
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(3)
+  resolvedToId String?   @map("resolved_to_id") @db.Uuid
+
+  employee   Employee  @relation("SalesReassignLeaver", fields: [employeeId], references: [id])
+  resolvedTo Employee? @relation("SalesReassignResolvedTo", fields: [resolvedToId], references: [id])
+
+  @@index([employeeId])
+  @@map("sales_reassignment_issues")
+}
+
+/// M15.5 follow-up: an exceptional Won decision (confirm or send back) on a request whose requester has left and that nobody
+/// else could decide. Insert-only (triggers). It keeps the original request (who asked, when, who owned the deal then).
+model SalesWonException {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId           String   @map("deal_id") @db.Uuid
+  /// confirm or send_back
+  decision         String
+  reason           String
+  /// requester_left_no_confirmer
+  basis            String
+  decidedById      String   @map("decided_by_id") @db.Uuid
+  requesterId      String   @map("requester_id") @db.Uuid
+  requestedAt      DateTime @map("requested_at") @db.Timestamptz(3)
+  ownerAtRequestId String   @map("owner_at_request_id") @db.Uuid
+  currentOwnerId   String   @map("current_owner_id") @db.Uuid
+  /// What was checked: the moves after the request, and that no sales manager could decide.
+  details          Json
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  deal           SalesDeal @relation(fields: [dealId], references: [id])
+  decidedBy      Employee  @relation("SalesWonExceptionDecider", fields: [decidedById], references: [id])
+  requester      Employee  @relation("SalesWonExceptionRequester", fields: [requesterId], references: [id])
+  ownerAtRequest Employee  @relation("SalesWonExceptionOwnerAtRequest", fields: [ownerAtRequestId], references: [id])
+  currentOwner   Employee  @relation("SalesWonExceptionCurrentOwner", fields: [currentOwnerId], references: [id])
+
+  @@index([dealId, createdAt])
+  @@map("sales_won_exceptions")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.6: targets, the manual daily log, the nightly daily report (plan section 20).
+// ---------------------------------------------------------------------------
+
+/// A salesperson's daily targets from a day on (insert-only: a change is a new row; the latest row for the latest
+/// effective day on or before a day is in force that day). Null = no target for that metric.
+model SalesDailyTarget {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String   @map("employee_id") @db.Uuid
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  leadsAdded    Int?     @map("leads_added")
+  emailsChecked Int?     @map("emails_checked")
+  emailsSent    Int?     @map("emails_sent")
+  followUpsDone Int?     @map("follow_ups_done")
+  setById       String   @map("set_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee @relation("SalesDailyTargetFor", fields: [employeeId], references: [id])
+  setBy    Employee @relation("SalesDailyTargetSetBy", fields: [setById], references: [id])
+
+  @@index([employeeId, effectiveFrom, createdAt])
+  @@map("sales_daily_targets")
+}
+
+/// A salesperson's targets for a month (insert-only; the latest row for the month is in force). The deals-won target has
+/// an amount and a currency (both or neither); only deals in that currency count toward it.
+model SalesMonthlyTarget {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId     String    @map("employee_id") @db.Uuid
+  month          String
+  meetingsBooked Int?      @map("meetings_booked")
+  proposalsSent  Int?      @map("proposals_sent")
+  wonAmount      Decimal?  @map("won_amount") @db.Decimal(14, 2)
+  wonCurrency    Currency? @map("won_currency")
+  setById        String    @map("set_by_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee @relation("SalesMonthlyTargetFor", fields: [employeeId], references: [id])
+  setBy    Employee @relation("SalesMonthlyTargetSetBy", fields: [setById], references: [id])
+
+  @@index([employeeId, month, createdAt])
+  @@map("sales_monthly_targets")
+}
+
+/// The manual daily log (self-reported counts). Insert-only: every save is a new version; the highest version is current.
+model SalesDailyLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  day         DateTime @db.Date
+  version     Int
+  linkedin    Int
+  whatsapp    Int
+  fiverr      Int
+  calls       Int
+  fieldVisits Int      @map("field_visits")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee            @relation(fields: [employeeId], references: [id])
+  reports  SalesDailyReport[]
+  proofs   SalesProofRequest[]
+
+  @@unique([employeeId, day, version])
+  @@map("sales_daily_logs")
+}
+
+/// The nightly report of one person for one working day, exactly as built: the targets, the measures, the log version and
+/// the result at that moment. Insert-only, one per person and day: never rebuilt or overwritten.
+model SalesDailyReport {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String   @map("employee_id") @db.Uuid
+  day         DateTime @db.Date
+  generatedAt DateTime @map("generated_at") @db.Timestamptz(3)
+  job         String
+  /// The daily targets in force that day (null = none).
+  targets     Json?
+  /// { metric: { value, measured, target, met } }
+  metrics     Json
+  /// Every target set and measurable was met; null when none was set.
+  met         Boolean?
+  logId       String?  @map("log_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  employee Employee       @relation(fields: [employeeId], references: [id])
+  log      SalesDailyLog? @relation(fields: [logId], references: [id])
+
+  @@unique([employeeId, day])
+  @@index([day])
+  @@map("sales_daily_reports")
+}
+
+/// A sales manager's request for proof of a day's self-reported work: open, then answered by the salesperson, then
+/// closed by the manager. Only its status, answer and closing change (a trigger keeps the rest); never deleted.
+model SalesProofRequest {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String    @map("employee_id") @db.Uuid
+  day           DateTime  @db.Date
+  logId         String    @map("log_id") @db.Uuid
+  status        String    @default("open")
+  note          String
+  requestedById String    @map("requested_by_id") @db.Uuid
+  requestedAt   DateTime  @default(now()) @map("requested_at") @db.Timestamptz(3)
+  answer        String?
+  answeredAt    DateTime? @map("answered_at") @db.Timestamptz(3)
+  closeNote     String?   @map("close_note")
+  closedById    String?   @map("closed_by_id") @db.Uuid
+  closedAt      DateTime? @map("closed_at") @db.Timestamptz(3)
+
+  employee    Employee      @relation("SalesProofFor", fields: [employeeId], references: [id])
+  log         SalesDailyLog @relation(fields: [logId], references: [id])
+  requestedBy Employee      @relation("SalesProofRequestedBy", fields: [requestedById], references: [id])
+  closedBy    Employee?     @relation("SalesProofClosedBy", fields: [closedById], references: [id])
+
+  @@index([employeeId, day])
+  @@index([status])
+  @@map("sales_proof_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Module 15.7: sales commission (plan section 20 "Commission"; the approved M15.7 scope).
+// ---------------------------------------------------------------------------
+
+/// waiting_rate: paid, but no commission rule was in force on the paid day yet. included: taken into a payroll run (M8).
+enum SalesCommissionStatus {
+  waiting_rate
+  calculated
+  approved
+  rejected
+  held
+  included
+
+  @@map("sales_commission_status")
+}
+
+/// earner_left: the earner was no longer active when the invoice became fully paid (the Owner decides). manual: held by the
+/// Director or the Finance duty, for example after a refund or a payment reversal (neither is signalled automatically).
+enum SalesCommissionHoldReason {
+  earner_left
+  manual
+
+  @@map("sales_commission_hold_reason")
+}
+
+/// The Owner's final-settlement decision on a leaver-held line.
+enum SalesCommissionLeaverDecision {
+  pay
+  forfeit
+
+  @@map("sales_commission_leaver_decision")
+}
+
+/// How a deal's eligibility was fixed: at its Won confirmation, or (a deal confirmed before the baseline) at the baseline.
+enum SalesCommissionEligibilityBasis {
+  won_confirmation
+  legacy_baseline
+
+  @@map("sales_commission_eligibility_basis")
+}
+
+/// What made a line: the "invoice paid" event, or the daily reconciliation (a missed event).
+enum SalesCommissionLineSource {
+  event
+  reconciliation
+
+  @@map("sales_commission_line_source")
+}
+
+enum SalesCommissionEventKind {
+  waiting_rate
+  calculated
+  approved
+  rejected
+  held
+  leaver_decided
+  included
+
+  @@map("sales_commission_event_kind")
+}
+
+/// The one M15.7 baseline (insert-only, a single row): the internal eligibility boundary. Only invoices whose completing
+/// payment was posted at or after it can earn commission; the first rule starts on its business day.
+model SalesCommissionBaseline {
+  id          Int      @id @default(1)
+  baselineAt  DateTime @map("baseline_at") @db.Timestamptz(3)
+  /// The Pakistan business day of baselineAt (also a CHECK).
+  businessDay DateTime @map("business_day") @db.Date
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("sales_commission_baseline")
+}
+
+/// Whether a Won deal's owner may earn commission, fixed once (insert-only): at the Won confirmation, or at the baseline
+/// for a deal confirmed before it. Later department, role or status changes never change it.
+model SalesCommissionEligibility {
+  id             String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId         String                          @unique @map("deal_id") @db.Uuid
+  /// The deal owner at Won confirmation (the earner if eligible).
+  earnerId       String                          @map("earner_id") @db.Uuid
+  eligible       Boolean
+  basis          SalesCommissionEligibilityBasis
+  evaluatedAt    DateTime                        @map("evaluated_at") @db.Timestamptz(3)
+  /// What the rule saw (for the record): department code, role key, employment status.
+  departmentCode String                          @map("department_code")
+  roleKey        String                          @map("role_key")
+  status         String
+  createdAt      DateTime                        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  deal   SalesDeal            @relation(fields: [dealId], references: [id])
+  earner Employee             @relation(fields: [earnerId], references: [id])
+  line   SalesCommissionLine?
+
+  @@map("sales_commission_eligibility")
+}
+
+/// A version of the company commission rule (insert-only; the rule in force on a day is the latest version whose
+/// effective day is on or before it). Only the Director sets it, with step-up and a reason.
+model SalesCommissionRule {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  version       Int      @unique
+  /// Percent of the collected PKR value, 0.01 to 100.
+  ratePercent   Decimal  @map("rate_percent") @db.Decimal(5, 2)
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  reason        String
+  setById       String   @map("set_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  setBy Employee              @relation("SalesCommissionRuleSetBy", fields: [setById], references: [id])
+  lines SalesCommissionLine[]
+
+  @@index([effectiveFrom])
+  @@map("sales_commission_rules")
+}
+
+/// One commission line per Won deal, from the deal's own invoice once it is fully paid by posted payments. The amount is
+/// in PKR: the collected base converted with each payment's recorded exchange rate (never an invented rate).
+model SalesCommissionLine {
+  id                String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId            String                         @unique @map("deal_id") @db.Uuid
+  invoiceId         String                         @unique @map("invoice_id") @db.Uuid
+  /// The billing.invoice.paid outbox event this line came from (null when the reconciliation made it).
+  paidEventId       String?                        @unique @map("paid_event_id") @db.Uuid
+  source            SalesCommissionLineSource
+  /// The deal's eligibility snapshot (eligible), fixed at Won confirmation or at the baseline.
+  eligibilityId     String                         @unique @map("eligibility_id") @db.Uuid
+  earnerId          String                         @map("earner_id") @db.Uuid
+  /// The deal owner at Won confirmation (frozen; always the earner: no split commission).
+  wonOwnerId        String                         @map("won_owner_id") @db.Uuid
+  invoiceCurrency   Currency                       @map("invoice_currency")
+  /// The posted allocations of the invoice, in its currency.
+  collectedBase     Decimal                        @map("collected_base") @db.Decimal(14, 2)
+  /// The same allocations in PKR, each at its payment's recorded exchange rate (rounded half up per allocation).
+  basePkr           Decimal                        @map("base_pkr") @db.Decimal(14, 2)
+  /// When the completing payment's ledger entry was posted (the invoice became fully paid); at or after the baseline.
+  fullyPaidAt       DateTime                       @map("fully_paid_at") @db.Timestamptz(3)
+  /// The Pakistan business day of fullyPaidAt (never the payment's own, backdatable date). The rule in force on it applies.
+  paidOn            DateTime                       @map("paid_on") @db.Date
+  ruleId            String?                        @map("rule_id") @db.Uuid
+  ruleVersion       Int?                           @map("rule_version")
+  ratePercent       Decimal?                       @map("rate_percent") @db.Decimal(5, 2)
+  /// The commission, in PKR (null only while waiting for a rate).
+  amount            Decimal?                       @db.Decimal(14, 2)
+  currency          Currency                       @default(PKR)
+  status            SalesCommissionStatus
+  calculatedAt      DateTime?                      @map("calculated_at") @db.Timestamptz(3)
+  holdReason        SalesCommissionHoldReason?     @map("hold_reason")
+  holdNote          String?                        @map("hold_note")
+  heldById          String?                        @map("held_by_id") @db.Uuid
+  heldAt            DateTime?                      @map("held_at") @db.Timestamptz(3)
+  approvedById      String?                        @map("approved_by_id") @db.Uuid
+  approvedAt        DateTime?                      @map("approved_at") @db.Timestamptz(3)
+  /// The payroll month the approval is for (M8 takes the line into the next editable run from this month on).
+  payrollMonth      String?                        @map("payroll_month")
+  rejectedById      String?                        @map("rejected_by_id") @db.Uuid
+  rejectedAt        DateTime?                      @map("rejected_at") @db.Timestamptz(3)
+  rejectReason      String?                        @map("reject_reason")
+  leaverDecision    SalesCommissionLeaverDecision? @map("leaver_decision")
+  leaverDecidedById String?                        @map("leaver_decided_by_id") @db.Uuid
+  leaverDecidedAt   DateTime?                      @map("leaver_decided_at") @db.Timestamptz(3)
+  leaverReason      String?                        @map("leaver_reason")
+  includedAt        DateTime?                      @map("included_at") @db.Timestamptz(3)
+  version           Int                            @default(1)
+  createdAt         DateTime                       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  deal            SalesDeal                  @relation(fields: [dealId], references: [id])
+  invoice         Invoice                    @relation(fields: [invoiceId], references: [id])
+  earner          Employee                   @relation("SalesCommissionEarner", fields: [earnerId], references: [id])
+  wonOwner        Employee                   @relation("SalesCommissionWonOwner", fields: [wonOwnerId], references: [id])
+  rule            SalesCommissionRule?       @relation(fields: [ruleId], references: [id])
+  eligibility     SalesCommissionEligibility @relation(fields: [eligibilityId], references: [id])
+  heldBy          Employee?                  @relation("SalesCommissionHeldBy", fields: [heldById], references: [id])
+  approvedBy      Employee?                  @relation("SalesCommissionApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy      Employee?                  @relation("SalesCommissionRejectedBy", fields: [rejectedById], references: [id])
+  leaverDecidedBy Employee?                  @relation("SalesCommissionLeaverDecidedBy", fields: [leaverDecidedById], references: [id])
+  events          SalesCommissionLineEvent[]
+
+  @@index([earnerId, status])
+  @@index([status])
+  @@map("sales_commission_lines")
+}
+
+/// Every step of a commission line, insert-only (calculated, waiting for a rate, held, approved, rejected, leaver
+/// decision, included in payroll). actorId null = the system.
+model SalesCommissionLineEvent {
+  id         String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lineId     String                   @map("line_id") @db.Uuid
+  event      SalesCommissionEventKind
+  fromStatus SalesCommissionStatus?   @map("from_status")
+  toStatus   SalesCommissionStatus    @map("to_status")
+  actorId    String?                  @map("actor_id") @db.Uuid
+  reason     String?
+  at         DateTime                 @default(now()) @db.Timestamptz(3)
+
+  line  SalesCommissionLine @relation(fields: [lineId], references: [id])
+  actor Employee?           @relation(fields: [actorId], references: [id])
+
+  @@index([lineId, at])
+  @@map("sales_commission_line_events")
 }

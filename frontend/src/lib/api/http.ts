@@ -7,7 +7,7 @@
  */
 import type { ApiErrorBody } from "@/types";
 import { useSession } from "@/lib/auth/session";
-import { getCsrf } from "./csrf";
+import { getCsrf, setCsrf } from "./csrf";
 import { ApiError } from "./mock";
 
 export const API_MODE = (process.env.NEXT_PUBLIC_API_MODE ?? "mock") as "mock" | "live";
@@ -16,6 +16,11 @@ const LIVE_MODULES = (process.env.NEXT_PUBLIC_LIVE_MODULES ?? "")
   .split(",")
   .map((m) => m.trim().toLowerCase())
   .filter(Boolean);
+
+/** The API server's origin (Module 14's WebSocket connects there, at /socket.io). */
+export function apiOrigin(): string {
+  return new URL(BASE, typeof window === "undefined" ? "http://localhost" : window.location.origin).origin;
+}
 
 /** Is this module talking to the real API (true) or the in-browser mock data (false)? */
 export const isLive = (module: string) => API_MODE === "live" || LIVE_MODULES.includes(module.toLowerCase());
@@ -75,14 +80,40 @@ function handleAuthFailure(status: number, path: string, body: { code?: string; 
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json"): Promise<T> {
-  const headers: Record<string, string> = {};
+/** The change requests that need no session (and so no CSRF token): signing in and the forgotten-password pages. */
+const NO_SESSION_PATHS = ["/auth/login", "/auth/password/forgot", "/auth/password/reset"];
+
+let csrfLookup: Promise<string | null> | null = null;
+
+/**
+ * This tab's CSRF token, fetched with GET /auth/me when the tab has none yet. The token is kept per tab (sessionStorage),
+ * so a newly opened tab only has it once its first /auth/me call has returned. Without this, a change made before that
+ * (an early click) was sent without the token and refused. The read is passive (it does not count as activity), one
+ * lookup at a time is shared by every request waiting for it, and a failure simply leaves the request without a token.
+ */
+function loadCsrf(): Promise<string | null> {
+  csrfLookup ??= fetch(url("/auth/me"), { credentials: "include", headers: { "X-Aceva-Passive": "1" } })
+    .then((res) => (res.ok ? (res.json() as Promise<{ csrfToken?: string }>) : null))
+    .then((me) => {
+      if (me?.csrfToken && !getCsrf()) setCsrf(me.csrfToken);
+      return getCsrf();
+    })
+    .catch(() => null)
+    .finally(() => {
+      csrfLookup = null;
+    });
+  return csrfLookup;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, params?: Params, as: "json" | "blob" = "json", extraHeaders: Record<string, string> = {}): Promise<T> {
+  const headers: Record<string, string> = { ...extraHeaders };
   const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   // A multipart body sets its own Content-Type (with the boundary).
   if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   // Module 2: the session is an HttpOnly cookie; a change request also carries this tab's CSRF token.
-  if (method !== "GET") {
-    const csrf = getCsrf();
+  if (method !== "GET" && !headers["X-CSRF-Token"]) {
+    // Read at once (sign-out clears the token right after starting its request); fetched only when this tab has none.
+    const csrf = getCsrf() ?? (isLive("m2") && !NO_SESSION_PATHS.includes(path) ? await loadCsrf() : null);
     if (csrf) headers["X-CSRF-Token"] = csrf;
   }
   let res: Response;
@@ -106,8 +137,14 @@ async function request<T>(method: string, path: string, body?: unknown, params?:
 }
 
 export const http = {
-  get: <T>(path: string, params?: Params) => request<T>("GET", path, undefined, params),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  get: <T>(path: string, params?: Params, headers?: Record<string, string>) => request<T>("GET", path, undefined, params, "json", headers),
+  /**
+   * Module 14: a read the screen makes on its own (live updates, catching up). The server checks the session exactly as
+   * usual but does not count it as the person's activity, so an open screen never keeps an idle session alive. (Real
+   * activity is reported by the "still here" heartbeat, only for minutes with mouse or keyboard use.)
+   */
+  getPassive: <T>(path: string, params?: Params) => request<T>("GET", path, undefined, params, "json", { "X-Aceva-Passive": "1" }),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) => request<T>("POST", path, body, undefined, "json", headers),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   delete: <T>(path: string, body?: unknown) => request<T>("DELETE", path, body),

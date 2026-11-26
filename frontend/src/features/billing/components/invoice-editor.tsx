@@ -13,6 +13,7 @@ import { Field } from "@/components/ui/field";
 import { Input, Textarea } from "@/components/ui/input";
 import { PageHeader } from "@/components/layout/page-header";
 import { RequireAccess } from "@/components/shared/can";
+import { isLive } from "@/lib/api/http";
 import { ApiError } from "@/lib/api/mock";
 import { formatDate, isoDay } from "@/lib/dates";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,8 @@ const schema = z
 type FormValues = z.infer<typeof schema>;
 
 const REMINDER_OPTIONS = [-7, -3, -1, 0, 3, 7, 14];
+/** Live: no sales tax on invoices (decision D13), so there is no tax column. */
+const LIVE = isLive("m13");
 
 export function InvoiceEditor() {
   return (
@@ -68,6 +71,8 @@ function InvoiceEditorForm() {
   const create = useCreateInvoice();
   const [sending, setSending] = React.useState<"draft" | "send" | null>(null);
   const today = isoDay(new Date());
+  // One key per form: sending it again (a retry, a double click) returns the same draft instead of a second invoice.
+  const requestKey = React.useMemo(() => crypto.randomUUID(), []);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -80,7 +85,7 @@ function InvoiceEditorForm() {
       issueDate: today,
       termsDays: "14",
       currency: "PKR",
-      lines: [{ description: "", qty: "1", rate: "", taxRate: "15" }],
+      lines: [{ description: "", qty: "1", rate: "", taxRate: LIVE ? "0" : "15" }],
       reminders: DEFAULT_REMINDERS.map((r) => r.offsetDays),
       notes: "",
     },
@@ -103,8 +108,8 @@ function InvoiceEditorForm() {
     if (!c) return;
     setValue("currency", c.currency);
     setValue("termsDays", String(c.termsDays));
-    // Sindh sales tax on services for local customers; exports are zero-rated.
-    (form.getValues("lines") ?? []).forEach((_, i) => setValue(`lines.${i}.taxRate`, c.currency === "PKR" ? "15" : "0"));
+    // Mock data only: Sindh sales tax on services for local customers; exports are zero-rated. Live has no tax (D13).
+    if (!LIVE) (form.getValues("lines") ?? []).forEach((_, i) => setValue(`lines.${i}.taxRate`, c.currency === "PKR" ? "15" : "0"));
   };
 
   const submit = (send: boolean) =>
@@ -122,11 +127,16 @@ function InvoiceEditorForm() {
         lines: values.lines.map((l) => ({ description: l.description.trim(), qty: Number(l.qty), rate: Number(l.rate).toFixed(2), taxRate: Number(l.taxRate) || undefined })),
         reminders: values.reminders.map((offsetDays) => ({ offsetDays })),
         notes: values.notes.trim() || undefined,
+        requestKey,
       };
       try {
         const inv = await create.mutateAsync({ input, send });
-        toast.success(send ? `${inv.number} sent to ${customer?.name}` : `${inv.number} saved as a draft`, {
-          description: send ? "Reminders are scheduled. The invoice is posted to the ledger." : "Nothing was sent yet.",
+        toast.success(send ? (LIVE ? `${inv.number} issued to ${customer?.name}` : `${inv.number} sent to ${customer?.name}`) : `${inv.number} saved as a draft`, {
+          description: send
+            ? LIVE
+              ? "Its ledger entry waits for approval; the client is emailed once it is approved. Reminders are scheduled."
+              : "Reminders are scheduled. The invoice is posted to the ledger."
+            : "Nothing was sent yet, and nothing is in the ledger.",
         });
         router.push(`/billing/invoices/${inv.id}`);
       } catch (e) {
@@ -149,7 +159,7 @@ function InvoiceEditorForm() {
               Save draft
             </Button>
             <Button onClick={() => submit(true)} loading={sending === "send"} disabled={!!sending}>
-              <Send /> Send invoice
+              <Send /> {LIVE ? "Issue invoice" : "Send invoice"}
             </Button>
           </>
         }
@@ -231,14 +241,14 @@ function InvoiceEditorForm() {
             <CardHeader>
               <div>
                 <CardTitle>Lines</CardTitle>
-                <CardDescription>Tax: 15% Sindh sales tax on services for local customers; exports are zero-rated.</CardDescription>
+                <CardDescription>{LIVE ? "No sales tax is added to invoices (decision D13)." : "Tax: 15% Sindh sales tax on services for local customers; exports are zero-rated."}</CardDescription>
               </div>
             </CardHeader>
             <CardContent className="grid gap-3">
               {fields.map((f, i) => {
                 const le = errors.lines?.[i];
                 return (
-                  <div key={f.id} className="grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-[1fr_70px_120px_70px_auto] sm:items-start sm:border-0 sm:p-0">
+                  <div key={f.id} className={cn("grid gap-2 rounded-lg border border-border p-3 sm:items-start sm:border-0 sm:p-0", LIVE ? "sm:grid-cols-[1fr_70px_120px_auto]" : "sm:grid-cols-[1fr_70px_120px_70px_auto]")}>
                     <Field label={i === 0 ? "Description" : undefined} error={le?.description?.message}>
                       <Input placeholder="What are you billing for?" aria-label={`Line ${i + 1} description`} {...register(`lines.${i}.description`)} aria-invalid={!!le?.description || undefined} />
                     </Field>
@@ -248,14 +258,16 @@ function InvoiceEditorForm() {
                     <Field label={i === 0 ? "Rate" : undefined} error={le?.rate?.message}>
                       <Input inputMode="decimal" placeholder="0.00" className="text-right font-mono" aria-label={`Line ${i + 1} rate`} {...register(`lines.${i}.rate`)} aria-invalid={!!le?.rate || undefined} />
                     </Field>
-                    <Field label={i === 0 ? "Tax %" : undefined}>
-                      <NativeSelect aria-label={`Line ${i + 1} tax`} {...register(`lines.${i}.taxRate`)}>
-                        <option value="0">0%</option>
-                        <option value="13">13%</option>
-                        <option value="15">15%</option>
-                        <option value="16">16%</option>
-                      </NativeSelect>
-                    </Field>
+                    {!LIVE && (
+                      <Field label={i === 0 ? "Tax %" : undefined}>
+                        <NativeSelect aria-label={`Line ${i + 1} tax`} {...register(`lines.${i}.taxRate`)}>
+                          <option value="0">0%</option>
+                          <option value="13">13%</option>
+                          <option value="15">15%</option>
+                          <option value="16">16%</option>
+                        </NativeSelect>
+                      </Field>
+                    )}
                     <div className={cn("flex items-center justify-between gap-2 sm:justify-end", i === 0 && "sm:mt-[22px]")}>
                       <span className="font-mono text-[12.5px] tabular text-muted-foreground sm:hidden">{lineAmount(lines[i] ?? { qty: 0, rate: "0" }).toFixed(2)}</span>
                       <Button type="button" size="icon-sm" variant="ghost" onClick={() => remove(i)} disabled={fields.length === 1} aria-label={`Remove line ${i + 1}`}>
@@ -266,7 +278,7 @@ function InvoiceEditorForm() {
                 );
               })}
               {errors.lines?.root?.message && <p className="text-xs text-danger">{errors.lines.root.message}</p>}
-              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => append({ description: "", qty: "1", rate: "", taxRate: v.currency === "PKR" ? "15" : "0" })}>
+              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => append({ description: "", qty: "1", rate: "", taxRate: !LIVE && v.currency === "PKR" ? "15" : "0" })}>
                 <Plus /> Add line
               </Button>
             </CardContent>
@@ -276,7 +288,10 @@ function InvoiceEditorForm() {
             <CardHeader>
               <div>
                 <CardTitle>Reminders</CardTitle>
-                <CardDescription>Sent by email from accounts@acevatech.com. Paid invoices never get another reminder.</CardDescription>
+                <CardDescription>
+                  The client gets them by email once customer emails are set up in the billing settings; the assigned staff member is reminded in the app. Paid and cancelled
+                  invoices never get a reminder.
+                </CardDescription>
               </div>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-[auto_1fr]">

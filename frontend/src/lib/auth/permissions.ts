@@ -22,6 +22,12 @@ export const PERMISSIONS = [
   "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.export",
   "integrations.view", "integrations.manage",
   "approval.approve", "duty.assign", "auth.set_temporary_password", "auth.reset_two_factor",
+  // M15.2, decision B1: the Owner confirms a Won deal the Director owns, and only such a deal
+  "sales.won_confirm_director",
+  // M15.5 follow-up: the Owner's exceptional decision on a Won request stranded by a leaver (the server checks when)
+  "sales.won_decide_exception",
+  // M15.7: the Owner approves the Director's own commission and decides leaver-held commission; hold or reject a line
+  "sales.commission_approve_director", "sales.commission_hold",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -74,6 +80,12 @@ const OWNER: Permission[] = [
   // Decision D25: only for the Director's own items (leave, corrections, journal entries, hire requests)
   "leave.approve", "attendance.approve_correction", "approval.approve", "finance.entry_approve", "people.approve_hire", "payroll.approve",
   "auth.unlock_account", "auth.reset_two_factor",
+  // M15.2, decision B1: a Won deal the Director owns, and only such a deal (the server checks it)
+  "sales.won_confirm_director",
+  // M15.5 follow-up: the exceptional Won decision, only when the requester has left and nobody else can decide
+  "sales.won_decide_exception",
+  // M15.7: the Director's own commission and leaver-held commission (with step-up)
+  "sales.commission_approve_director",
 ];
 
 /** L2 Director: the approver for everything and the org administrator, plus HR duty and sales-manager duty. Prepares no finance items. */
@@ -88,7 +100,7 @@ const DIRECTOR: Permission[] = [
   "statements.view", "statements.export", "sheet.view", "insights.view",
   "audit.view", "settings.view", "settings.manage", "backup.view",
   "billing.view", "subscriptions.view", "subscriptions.manage",
-  "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.export",
+  "sales.own", "sales.team", "sales.all", "sales.targets", "sales.commission_view", "sales.commission_approve", "sales.commission_hold", "sales.export",
   "integrations.view", "integrations.manage",
 ];
 
@@ -121,7 +133,7 @@ export const DUTY_PERMISSIONS: Record<Duty, Permission[]> = {
   finance: [
     "finance.view", "finance.entry_create", "finance.close", "payroll.view", "payroll.prepare",
     "statements.view", "sheet.view", "sheet.import", "insights.view",
-    "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view",
+    "billing.view", "billing.manage", "subscriptions.view", "sales.commission_view", "sales.commission_hold",
     "people.view_pay",
   ],
   hr: ["people.view_job", "people.view_personal", "people.manage", "auth.unlock_account", "auth.set_temporary_password", "auth.reset_two_factor"],

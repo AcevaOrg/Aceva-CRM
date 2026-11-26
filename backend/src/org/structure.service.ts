@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { CreateDepartmentRequest, CreateOfficeRequest, UpdateDepartmentRequest, UpdateOfficeRequest } from '@aceva/contracts';
 import type { Actor } from '../access/access.types';
+import { AccessChangeNotifier } from '../access/access-change.notifier';
 import { AuditService } from '../access/audit.service';
 import type { RequestInfo } from '../access/decorators';
 import { Prisma } from '../generated/prisma/client';
@@ -23,12 +24,13 @@ export class StructureService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly accessChanges: AccessChangeNotifier,
   ) {}
 
   // ---------------------------------------------------------------- departments
 
   async createDepartment(actor: Actor, dto: CreateDepartmentRequest, client: RequestInfo) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const code = `dep-${slug(dto.name)}`;
       if (await tx.department.findFirst({ where: { OR: [{ code }, { name: { equals: dto.name, mode: 'insensitive' } }] } })) {
         throw new ConflictException({ statusCode: 409, code: 'department_exists', message: 'A department with this name already exists' });
@@ -43,10 +45,13 @@ export class StructureService {
       );
       return { id: created.code, name: created.name, headEmpId: head?.empId ?? null };
     });
+    await this.accessChanges.changed([result.headEmpId]);
+    return result;
   }
 
   async updateDepartment(actor: Actor, code: string, dto: UpdateDepartmentRequest, client: RequestInfo) {
-    return this.prisma.$transaction(async (tx) => {
+    let headsChanged: Array<string | null> = [];
+    const result = await this.prisma.$transaction(async (tx) => {
       const department = await tx.department.findFirst({ where: { code, archivedAt: null }, include: { head: { select: { empId: true } } } });
       if (!department) throw new NotFoundException('Department not found');
 
@@ -84,8 +89,12 @@ export class StructureService {
         },
         tx,
       );
+      if ('head' in after) headsChanged = [before.head, after.head];
       return { id: code, name: dto.name ?? department.name, headEmpId: 'head' in after ? after.head : (department.head?.empId ?? null) };
     });
+    // The old and the new head gain or lose the department's channels: live connections follow at once.
+    await this.accessChanges.changed(headsChanged);
+    return result;
   }
 
   async deactivateDepartment(actor: Actor, code: string, reason: string, client: RequestInfo) {

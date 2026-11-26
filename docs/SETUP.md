@@ -74,11 +74,11 @@ Install the three services with your operating system's normal installer or pack
 | Rebuild your local database from scratch (deletes its data) | `npm run db:reset -w backend`, then `npm run db:seed` and the demo logins again |
 | Type check, lint | `npm run typecheck`, `npm run lint` |
 | Build the shared contracts (after pulling changes) | `npm run build -w @aceva/contracts`. Backend and frontend read `@aceva/contracts` from its git-ignored `dist` folder |
-| Unit and database tests (use `aceva_test`, rebuilt each run; need PostgreSQL and Redis) | `npm test` |
+| Unit and database tests (use the approved disposable test database in `TEST_DATABASE_URL`, rebuilt each run; need PostgreSQL and Redis; see "Test database guard" below) | `npm test` |
 | Browser tests (real backend and frontend on ports 4100 and 3100; need PostgreSQL, Redis and Mailpit) | once: `npx playwright install chromium`; then `npm run test:e2e` |
 | Build everything | `npm run build` |
 | Run the API | `npm run build -w backend` then `npm start -w backend` (http://localhost:4000/api/docs) |
-| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9` and `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1`, then `npm run dev -w aceva-digital-system-web` (leave a module out to keep it on demo data) |
+| Run the website against the real API | in `frontend/.env.local`: `NEXT_PUBLIC_API_MODE=live`, `NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1` and `NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9,m12,m13,m14`, then `npm run dev -w aceva-digital-system-web`. Without these the website runs on in-browser demo data: nothing is shared between people and Messages opens no live connection. See "Local real-time development" below |
 | Only the Module 4 database tests | `npm run build:contracts`, then `npm test -w backend -- m4-` |
 | Only the Module 5 database tests | `npm run build:contracts`, then `npm test -w backend -- m5-` |
 | Only the Module 6 database tests | `npm run build:contracts`, then `npm test -w backend -- m6-` |
@@ -94,10 +94,56 @@ The database tests (`aceva_test`) switch off the background work (the outbox dis
 test file (`backend/test/global-setup.ts`, `switchOffBackgroundWork`), so no test finds background jobs or summary jobs
 left in `aceva_test`.
 
+**Test database guard.** The backend tests and the browser tests EMPTY AND REBUILD the database in `TEST_DATABASE_URL`
+(the whole `public` schema). `backend/test/helpers/db-guard.ts` refuses that before anything is touched unless:
+- the database name is **exactly** an approved disposable test database: `aceva_m15_test`, or a name listed in
+  `ACEVA_APPROVED_TEST_DATABASES` (comma-separated; CI lists its throw-away `aceva_test` container);
+- it is not `aceva_dev`, `aceva_shadow` or `aceva_realtime_dev` (always refused, even when listed);
+- the host is this computer (`localhost`, `127.0.0.1`, `::1`), and the database is not chosen in the query string.
+The reset checks a second time after connecting (`SELECT current_database()` must be the approved name). There is no
+fallback: a database that is not approved stops the run. Create the disposable database once, as the PostgreSQL
+superuser (the app user may not create databases):
+`createdb -h 127.0.0.1 -p 5432 -U postgres -O aceva_app aceva_m15_test`, then point `TEST_DATABASE_URL` in
+`backend/.env` at it. Optional: `TEST_REDIS_PREFIX=aceva:m15test:` keeps the run's Redis keys apart.
+
 Browser downloads for the tests go to Playwright's default folder. To keep them on another drive, set
 `PLAYWRIGHT_BROWSERS_PATH` to a folder of your choice before `npx playwright install chromium` and before the tests.
 If your system drive is short of space, move npm's download cache in your user-level npm config
 (`npm config set cache <folder> --location=user`), never in the repository.
+
+## Local real-time development (Messages between two people)
+
+To try Module 14 for real (two people chatting live), the website, the API, PostgreSQL, Redis and Mailpit must all run,
+on a database with every migration. Use a database of its own, for example `aceva_realtime_dev`, so `aceva_dev`,
+`aceva_test` and `aceva_shadow` are never touched (`aceva_test` is rebuilt by the tests).
+
+1. **Database.** As the PostgreSQL administrator (the app user `aceva_app` may not create databases):
+   `psql -U postgres -h localhost -c "CREATE DATABASE aceva_realtime_dev OWNER aceva_app;"`
+2. **`backend/.env`** (from `backend/.env.example`; git-ignored, never committed). Point `DATABASE_URL` at the new
+   database; keep `SHADOW_DATABASE_URL` and `TEST_DATABASE_URL` as they are. The other values that matter here:
+   `PORT=4000`, `CORS_ORIGIN=http://localhost:3000` and `APP_URL=http://localhost:3000` (the API and the live
+   connection accept only this origin), `REDIS_URL` with your Redis password, `DATA_ENCRYPTION_KEY` (a random key, see
+   "Needed once"), `SMTP_HOST=127.0.0.1` and `SMTP_PORT=1025` (Mailpit), `FILE_STORAGE_ROOT`. Optional: `CLAMD_HOST` /
+   `CLAMD_PORT` (without a running ClamAV, shared files stay "Scanning..." and cannot be opened; messages work). There
+   are no other secrets: sessions are random tokens kept in PostgreSQL and Redis.
+3. **Tables and demo people** (all three use `DATABASE_URL` from `backend/.env`):
+   `npm run db:migrate`, then `npm run db:seed`, then the demo logins (`DEMO_PASSWORD`, at least 10 characters, set in
+   your shell or in `backend/.env`): `npm run db:seed:passwords -w backend`. Never `db:reset` a database you want to keep.
+4. **`frontend/.env.local`** (git-ignored; only public values, everything `NEXT_PUBLIC_` is visible in the browser):
+   ```
+   NEXT_PUBLIC_API_MODE=live
+   NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+   NEXT_PUBLIC_LIVE_MODULES=m1,m2,m3,m4,m5,m6,m7,m8,m9,m12,m13,m14
+   ```
+   The API address must be absolute: a relative `/api/v1` would send the live connection to the website's own server,
+   which has none. Restart `npm run dev` after changing this file (the values are built into the page).
+5. **Start**, each in its own terminal: Redis and Mailpit (already running if you use Docker or the services above);
+   the API: `npm run build -w backend`, then `npm start -w backend` (check http://localhost:4000/api/v1/health); the
+   website: `npm run dev -w aceva-digital-system-web`.
+6. **Open http://localhost:3000** (not http://127.0.0.1:3000: the live connection is refused from any other origin).
+   Sign in as two people in two separate browser profiles or a normal and a private window (the session is one
+   cookie per browser profile), for example ACV-0006 Fahad Khan and ACV-0007 Mariam Shah (developers: no authenticator
+   needed), with the demo password. Open the same conversation on both: messages appear on the other screen at once.
 
 ## Signing in to the demo
 Everyone in the demo roster signs in with their Emp-ID (for example `ACV-0009`) and the `DEMO_PASSWORD` you chose. The
@@ -193,6 +239,87 @@ No new environment variables. Module 6 uses `OUTBOX_DISPATCH_INTERVAL_MS` (the m
    `npm run build:contracts`, then `npm test -w backend -- m6-`.
    The Node warning "Calling client.query() when the client is already executing a query" in the test output comes from
    Prisma's PostgreSQL adapter. It also appears in the Module 1 to 5 tests and is harmless.
+
+## Cycle 3 migrations (notifications, Module 13 billing, Module 14 messaging)
+
+The order on a new or a main-built database is: Modules 1 to 3, M4, M5, `20261118090000_cycle3_foundation`, M6,
+M7 to M9 (`20261119090000` to `20261119090500`), `20261119110000_m13_billing`, `20261120090000_m14_messaging`.
+`npm run db:migrate` applies whatever is pending, also a migration older than ones already applied.
+The later Module 14 parts add, in this order: `20261123090000_m14_announcements`, `20261123100000_m14_meetings`,
+`20261123110000_m14_files`, `20261123120000_m14_links` and `20261124090000_m14_file_safety`. All are additive: new
+types, tables, indexes, constraints, functions and triggers, plus two new nullable columns on tables of the same module
+(`conversations.project_id`, `comms_files.discarded_at`), whose new CHECKs every existing row already satisfies.
+
+**Backup and rollback (production).** Prisma has no "down" migrations, so the supported way back is the backup:
+1. Before `npx prisma migrate deploy`, take a full backup of the database (`pg_dump -Fc -f before-m14.dump <db>`) and
+   keep it until the release is accepted.
+2. If a migration fails part-way, `npx prisma migrate status` shows it as failed and later ones do not run. Restore the
+   backup (simplest), or remove by hand what the failed migration had created and run
+   `npx prisma migrate resolve --rolled-back <name>` before deploying again.
+3. To undo the Module 14 parts after they applied, restore the backup taken in step 1. Nothing in other modules' tables
+   is changed by them, but anything written to the new tables (announcements, meetings, files, links) after the
+   deployment is lost with the restore, and the shared files of those days stay in `FILE_STORAGE_ROOT` without records.
+   Deleting rows from `_prisma_migrations` or dropping objects by hand is not a supported rollback.
+4. Never run these steps against a database you cannot restore (locally: aceva_test is rebuilt by the tests; aceva_dev
+   is rebuilt with `npm run db:reset -w backend`).
+
+- `20261118090000_cycle3_foundation` keeps its original name (it needs only the employees and the event outbox).
+- The billing migration was first named `20261119090000_m13_billing`. After Modules 7 to 9 moved to `20261119090000`,
+  that name would run before the Module 9 tables it changes (invoices, payments, parties), so it is now
+  `20261119110000_m13_billing`. Its SQL is unchanged (checksum `490c44fc923b...`). **Only** a database that already
+  applied the old name needs one step before `npm run db:migrate`, which records the same migration under its new name
+  without running it again:
+  `npx prisma migrate resolve --applied 20261119110000_m13_billing` (in `backend/`, with `DATABASE_URL` set to that
+  database). The old name stays in its history as an applied migration and is harmless.
+- A database built from the Cycle 3 branch before Modules 4 to 6 were merged also has the old Module 7 to 9 names
+  (`20261112190000_...` to `20261117090000_...`). Main renamed those and moved the holidays table from Module 7 into
+  Module 5, so `20261116100000_m5_tasks` fails there with "relation holidays already exists". The step above does not fix
+  that; such a database has to be upgraded by hand or rebuilt (`npm run db:reset -w backend`).
+
+## Module 14 file scanning (ClamAV)
+
+Every file shared in Module 14 (messages and meetings) is checked by ClamAV before anyone can open it. The backend talks
+to the ClamAV daemon (`clamd`) over TCP with its standard `INSTREAM` command: `CLAMD_HOST` (default `127.0.0.1`),
+`CLAMD_PORT` (default `3310`), `CLAMD_TIMEOUT_MS` (default `60000`). No npm package is involved.
+
+- **Fail closed.** Every upload is checked in memory before it is stored. A file with malware is blocked for good: its
+  bytes are never written, the record and the finding stay, audited. While clamd cannot be reached, the upload is kept
+  but stays "Scanning..." and can never be downloaded until a check says clean.
+- **Retries and recovery.** The scan job (`comms.file.scan`) tries again after 1 minute, then follows the job runner's
+  limit of **five attempts** (back-offs of 1 minute, 5 minutes, 30 minutes and 2 hours, about 2.6 hours in all); after
+  the fifth failure the job is marked failed. A sweep that runs every 15 minutes on each server
+  (`CommsFileMaintenance`, only with background workers on) arms the job again, at most once every **6 hours** per file,
+  for as long as the file is still unchecked. So a long outage never leaves a file forgotten, and the file stays closed
+  the whole time.
+- **Files never sent.** A file uploaded to a conversation but not sent within **24 hours** is discarded by the same
+  sweep: its record is marked (never deleted) and then its bytes are removed. A file attached to a message, and a meeting
+  file, is never touched; a send racing the discard is decided by the database (one of them wins, the other changes
+  nothing).
+- **Upload limit.** 10 uploads a minute and 60 an hour per person (`429 rate_limited` with `retryAfterSec`), like the
+  limit of 30 messages a minute.
+- **Memory.** clamd keeps its signatures in memory (about 1 GB). Start it when you work on or test file sharing.
+- **With Docker:** `docker compose --profile scanner up -d clamav` (image `clamav/clamav:1.5.5`, the official Cisco Talos
+  image). It uses the image's own healthcheck (`clamdcheck.sh`: clamd must answer PING on 3310) with the image's 6-minute
+  start period, because the first start downloads the signatures; `docker compose ps` shows `healthy` once it answers.
+  The backend does not need to wait for it: until clamd answers, uploads stay unopenable and are checked again (fail
+  closed). **Not runtime-tested here** (Docker is not installed on the development machine); the image tag and the
+  healthcheck were checked against Docker Hub and the image's Dockerfile.
+- **Without Docker (Windows):** download the official portable `clamav-<version>.win.x64.zip` from clamav.net (check its
+  `.sig` against the Talos key), unzip it, then with a `freshclam.conf` (`DatabaseDirectory <folder>`,
+  `DatabaseMirror database.clamav.net`) run `freshclam.exe --config-file=freshclam.conf` once, and with a `clamd.conf`
+  (`DatabaseDirectory <folder>`, `TCPSocket 3310`, `TCPAddr 127.0.0.1`) run `clamd.exe --config-file=clamd.conf --foreground`.
+- **Tests.** `backend/test/m14-clamav.test.ts` and the Playwright file tests in `e2e/m14-collab.spec.ts` and
+  `e2e/m14-review.spec.ts` need clamd running (like PostgreSQL and Redis). They use the harmless EICAR test sample,
+  assembled at run time so no source file contains it. The scanner-outage test in `e2e/m14-review.spec.ts` stops and
+  starts clamd itself: set `CLAMD_EXE` (path to `clamd.exe`) and `CLAMD_CONF` (its `clamd.conf`) when running it. The
+  other backend file tests use a controllable stand-in scanner.
+
+## HTTPS (production requirement)
+
+Plan section 19 asks for HTTPS. Locally everything runs over plain HTTP on 127.0.0.1 (no certificates are set up in this
+repository). In production the website, the API and the live connection (`/socket.io`) must be served over HTTPS only,
+by the hosting or a reverse proxy in front of the servers; the session cookie is only safe there. This is a deployment
+step, not something the code switches on.
 
 ## Not used locally (on purpose)
 MinIO or any other object storage: uploaded files are kept in the private folder `FILE_STORAGE_ROOT`

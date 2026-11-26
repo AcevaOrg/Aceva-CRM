@@ -992,7 +992,7 @@ describe('M5 approvals inbox: task reviews and extension requests', () => {
     expect((await post(DEV2, `task_review:${a.id}`, 'approve', { rating: 5 })).status).toBe(403); // not waiting for the assignee
     expect((await post(DIRECTOR, `task_review:${a.id}`, 'approve', { rating: 5 })).status).toBe(403);
     const ok = await post(CTO, `task_review:${a.id}`, 'approve', { rating: 4, comment: 'Good' });
-    expect(ok.status).toBeLessThan(300);
+    expect(ok.status).toBe(200); // a decision creates nothing: 200, not 201
     expect(ok.body).toEqual({ ok: true });
     expect(await statusOf(a.id)).toBe('approved');
     expect((await prisma.taskReview.findFirstOrThrow({ where: { taskId: a.id } })).rating).toBe(4);

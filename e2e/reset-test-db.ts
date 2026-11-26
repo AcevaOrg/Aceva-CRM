@@ -2,12 +2,14 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../backend/src/generated/prisma/client';
 import { seedDevPasswords } from '../backend/prisma/seed-dev-passwords';
 import { createFixtureStaff } from '../backend/test/helpers/people';
+import { databaseNameOf } from '../backend/test/helpers/db-guard';
 import { testDatabaseUrl } from '../backend/test/helpers/env';
 import { resetTestDatabase, TEST_PASSWORD } from '../backend/test/helpers/reset-db';
 import { FIXTURE_HR } from './paths';
 
 /**
- * Rebuild and seed the aceva_test database. Runs before the test backend starts.
+ * Rebuild and seed the approved disposable test database (TEST_DATABASE_URL, checked by db-guard.ts). Runs before the
+ * test backend starts.
  * The demo seed has no separate HR officer (the Director holds HR duty), so the browser tests add one here, in the test
  * database only.
  */
@@ -24,7 +26,7 @@ async function main(): Promise<void> {
 }
 
 main()
-  .then(() => console.log('aceva_test rebuilt and seeded (with the test-only HR officer)'))
+  .then(() => console.log(`${databaseNameOf(testDatabaseUrl())} rebuilt and seeded (with the test-only HR officer)`))
   .catch((error) => {
     console.error(error);
     process.exit(1);

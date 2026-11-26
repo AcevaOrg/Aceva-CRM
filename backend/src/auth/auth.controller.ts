@@ -85,7 +85,9 @@ export class AuthController {
   @ApiOperation({ summary: 'Who am I, how far has my login got, and what may I do? Also returns the CSRF token for change requests.' })
   async me(@CurrentActor() actor: Actor, @Req() req: Request) {
     const token = (req.cookies as Record<string, string> | undefined)?.[SESSION_COOKIE] ?? null;
-    const identity = await this.identity.resolve(req, { financeScreen: false });
+    // The guard has already checked (and counted) this request: here only the login stage is needed, so the second look is
+    // passive (it must not undo what the guard recorded, such as the request coming from a finance screen).
+    const identity = await this.identity.resolve(req, { financeScreen: false, touch: false });
     return this.auth.me(actor, token, identity?.stage ?? 'ok');
   }
 

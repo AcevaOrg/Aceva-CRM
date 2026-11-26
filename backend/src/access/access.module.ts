@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { AccessChangeNotifier } from './access-change.notifier';
 import { AccessController } from './access.controller';
 import { AccessGuard } from './access.guard';
 import { AuditService } from './audit.service';
@@ -19,10 +20,11 @@ import { ScopeService } from './scope.service';
     PermissionService,
     ScopeService,
     HierarchyService,
+    AccessChangeNotifier,
     { provide: HierarchyCache, useClass: PostgresHierarchyCache },
     // Every route is protected by default.
     { provide: APP_GUARD, useClass: AccessGuard },
   ],
-  exports: [AuditService, PermissionService, ScopeService, HierarchyService, HierarchyCache],
+  exports: [AuditService, PermissionService, ScopeService, HierarchyService, HierarchyCache, AccessChangeNotifier],
 })
 export class AccessModule {}
